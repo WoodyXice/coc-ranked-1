@@ -4,6 +4,16 @@ on:
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing stable Git tag, for example v1.2.0
+        required: true
+        type: string
+
+concurrency:
+  group: windows-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -13,23 +23,33 @@ jobs:
     runs-on: windows-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          persist-credentials: false
-      - name: Verify release version
+      - name: Verify release tag
         id: version
         shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          $tag = $env:GITHUB_REF_NAME
-          $version = (Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json).version
+          $tag = $env:RELEASE_TAG
           if ($tag -cnotmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
             throw "Invalid stable release tag: $tag"
           }
-          if ($tag -cne "v$version") {
-            throw "Tag $tag does not match package.json version $version"
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "version=$($tag.Substring(1))" >> $env:GITHUB_OUTPUT
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event_name == 'push' && github.sha || format('refs/tags/{0}', steps.version.outputs.tag) }}
+          persist-credentials: false
+      - name: Verify package version
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $version = (Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json).version
+          if ($version -cne $env:RELEASE_VERSION) {
+            throw "Tag version $env:RELEASE_VERSION does not match package.json version $version"
           }
-          "version=$version" >> $env:GITHUB_OUTPUT
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24'
@@ -81,9 +101,10 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
           RELEASE_VERSION: ${{ needs.build.outputs.version }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
+          gh release create "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes \
             "release/COC-Ranked-Setup-${RELEASE_VERSION}-x64.exe" \
             "release/COC-Ranked-Setup-${RELEASE_VERSION}-x64.exe.blockmap" \

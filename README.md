@@ -36,7 +36,7 @@ git push origin main
 git push origin v1.2.1
 ```
 
-GitHub Actions 会构建两种 EXE 和更新清单，完成后发布正式版。打包后的安装版从此仓库的 Releases 获取更新。
+GitHub Actions 会构建两种 EXE 和更新清单，完成后发布正式版。如果需要手动补发，可以在 Actions 中运行「Windows release」并输入尚未发布的现有标签。打包后的安装版从此仓库的 Releases 获取更新。
 
 ## 素材来源
 
