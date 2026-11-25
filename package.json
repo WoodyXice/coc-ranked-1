@@ -1,0 +1,46 @@
+{
+  "name": "coc-ranked",
+  "version": "1.1.4",
+  "description": "部落冲突排位助手",
+  "author": "COC Ranked",
+  "private": true,
+  "type": "module",
+  "main": "desktop/main.mjs",
+  "scripts": {
+    "build": "vite build",
+    "start": "electron .",
+    "package:windows": "npm run build && electron-builder --win portable --x64",
+    "package:directory": "npm run build && electron-builder --win dir --x64"
+  },
+  "dependencies": {
+    "exceljs": "4.4.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "5.0.4",
+    "electron": "45.5.0",
+    "electron-builder": "26.18.0",
+    "html-to-image": "1.11.13",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "vite": "6.4.2"
+  },
+  "build": {
+    "appId": "local.coc.ranked",
+    "productName": "部落冲突排位助手",
+    "artifactName": "COC-排位助手.${ext}",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "desktop/**",
+      "dist/renderer/**",
+      "analytics.mjs",
+      "collector.mjs",
+      "files.mjs"
+    ],
+    "win": {
+      "icon": "desktop/ranked.ico",
+      "signAndEditExecutable": false
+    }
+  }
+}

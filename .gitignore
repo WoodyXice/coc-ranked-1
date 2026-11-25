@@ -1,0 +1,11 @@
+node_modules/
+dist/
+release/
+/*.exe
+/*.xlsx
+/COC-*.png
+accounts.json
+defense-notes.json
+ranked-snapshots/
+*.log
+.env*

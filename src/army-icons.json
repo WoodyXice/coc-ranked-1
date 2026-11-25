@@ -1,0 +1,734 @@
+{
+  "source": "https://github.com/ClashKingInc/ClashKingAssets/tree/996a639ec887560bead815f76bc3942d1c931930/assets",
+  "policy": "https://supercell.com/en/fan-content-policy/",
+  "entries": {
+    "equipment:0": {
+      "name": "野蛮人木偶",
+      "file": "equipment-0.webp"
+    },
+    "equipment:1": {
+      "name": "狂暴药水瓶",
+      "file": "equipment-1.webp"
+    },
+    "equipment:10": {
+      "name": "巨型手套",
+      "file": "equipment-10.webp"
+    },
+    "equipment:11": {
+      "name": "治疗胡须",
+      "file": "equipment-11.webp"
+    },
+    "equipment:12": {
+      "name": "急速药水瓶",
+      "file": "equipment-12.webp"
+    },
+    "equipment:13": {
+      "name": "火箭飞矛",
+      "file": "equipment-13.webp"
+    },
+    "equipment:14": {
+      "name": "尖刺足球",
+      "file": "equipment-14.webp"
+    },
+    "equipment:15": {
+      "name": "冰封箭矢",
+      "file": "equipment-15.webp"
+    },
+    "equipment:16": {
+      "name": "擎天箭矢",
+      "file": "equipment-16.webp"
+    },
+    "equipment:17": {
+      "name": "巨型箭矢",
+      "file": "equipment-17.webp"
+    },
+    "equipment:19": {
+      "name": "英雄火炬",
+      "file": "equipment-19.webp"
+    },
+    "equipment:2": {
+      "name": "弓箭手木偶",
+      "file": "equipment-2.webp"
+    },
+    "equipment:20": {
+      "name": "天使木偶",
+      "file": "equipment-20.webp"
+    },
+    "equipment:22": {
+      "name": "巨大火球",
+      "file": "equipment-22.webp"
+    },
+    "equipment:24": {
+      "name": "狂暴宝石",
+      "file": "equipment-24.webp"
+    },
+    "equipment:3": {
+      "name": "隐形药水瓶",
+      "file": "equipment-3.webp"
+    },
+    "equipment:32": {
+      "name": "灵蛇手镯",
+      "file": "equipment-32.webp"
+    },
+    "equipment:34": {
+      "name": "治疗书卷",
+      "file": "equipment-34.webp"
+    },
+    "equipment:35": {
+      "name": "暗黑皇冠",
+      "file": "equipment-35.webp"
+    },
+    "equipment:39": {
+      "name": "克隆魔镜",
+      "file": "equipment-39.webp"
+    },
+    "equipment:4": {
+      "name": "永恒书卷",
+      "file": "equipment-4.webp"
+    },
+    "equipment:40": {
+      "name": "雷电战靴",
+      "file": "equipment-40.webp"
+    },
+    "equipment:41": {
+      "name": "熔岩气球玩偶",
+      "file": "equipment-41.webp"
+    },
+    "equipment:42": {
+      "name": "护卫玩偶",
+      "file": "equipment-42.webp"
+    },
+    "equipment:43": {
+      "name": "暗黑魔球",
+      "file": "equipment-43.webp"
+    },
+    "equipment:44": {
+      "name": "铁甲短裤",
+      "file": "equipment-44.webp"
+    },
+    "equipment:47": {
+      "name": "贵族哑铃",
+      "file": "equipment-47.webp"
+    },
+    "equipment:48": {
+      "name": "动作人偶",
+      "file": "equipment-48.webp"
+    },
+    "equipment:49": {
+      "name": "陨石法杖",
+      "file": "equipment-49.webp"
+    },
+    "equipment:5": {
+      "name": "生命宝石",
+      "file": "equipment-5.webp"
+    },
+    "equipment:50": {
+      "name": "冷冽冰晶",
+      "file": "equipment-50.webp"
+    },
+    "equipment:51": {
+      "name": "木棍马驹",
+      "file": "equipment-51.webp"
+    },
+    "equipment:52": {
+      "name": "烈焰之心",
+      "file": "equipment-52.webp"
+    },
+    "equipment:53": {
+      "name": "火箭背包",
+      "file": "equipment-53.webp"
+    },
+    "equipment:56": {
+      "name": "爆震器",
+      "file": "equipment-56.webp"
+    },
+    "equipment:57": {
+      "name": "助燃器",
+      "file": "equipment-57.webp"
+    },
+    "equipment:59": {
+      "name": "雷电獠牙",
+      "file": "equipment-59.webp"
+    },
+    "equipment:6": {
+      "name": "寻踪飞盾",
+      "file": "equipment-6.webp"
+    },
+    "equipment:60": {
+      "name": "反击卡组",
+      "file": "equipment-60.webp"
+    },
+    "equipment:61": {
+      "name": "传送吊坠",
+      "file": "equipment-61.webp"
+    },
+    "equipment:7": {
+      "name": "皇家宝石",
+      "file": "equipment-7.webp"
+    },
+    "equipment:8": {
+      "name": "地震金靴",
+      "file": "equipment-8.webp"
+    },
+    "equipment:9": {
+      "name": "野猪骑士木偶",
+      "file": "equipment-9.webp"
+    },
+    "heroes:0": {
+      "name": "野蛮人之王",
+      "file": "heroes-0.webp"
+    },
+    "heroes:1": {
+      "name": "弓箭女皇",
+      "file": "heroes-1.webp"
+    },
+    "heroes:2": {
+      "name": "大守护者",
+      "file": "heroes-2.webp"
+    },
+    "heroes:4": {
+      "name": "飞盾战神",
+      "file": "heroes-4.webp"
+    },
+    "heroes:6": {
+      "name": "亡灵王子",
+      "file": "heroes-6.webp"
+    },
+    "heroes:7": {
+      "name": "飞龙公爵",
+      "file": "heroes-7.webp"
+    },
+    "pets:0": {
+      "name": "莱希",
+      "file": "pets-0.webp"
+    },
+    "pets:1": {
+      "name": "大牦",
+      "file": "pets-1.webp"
+    },
+    "pets:10": {
+      "name": "灵狐",
+      "file": "pets-10.webp"
+    },
+    "pets:11": {
+      "name": "愤怒水母",
+      "file": "pets-11.webp"
+    },
+    "pets:16": {
+      "name": "阿啾",
+      "file": "pets-16.webp"
+    },
+    "pets:17": {
+      "name": "贪婪渡鸦",
+      "file": "pets-17.webp"
+    },
+    "pets:2": {
+      "name": "闪枭",
+      "file": "pets-2.webp"
+    },
+    "pets:3": {
+      "name": "独角",
+      "file": "pets-3.webp"
+    },
+    "pets:4": {
+      "name": "凤凰",
+      "file": "pets-4.webp"
+    },
+    "pets:7": {
+      "name": "猛蜥",
+      "file": "pets-7.webp"
+    },
+    "pets:8": {
+      "name": "地兽",
+      "file": "pets-8.webp"
+    },
+    "pets:9": {
+      "name": "冰牙",
+      "file": "pets-9.webp"
+    },
+    "siegeMachines:135": {
+      "name": "部队发射器",
+      "file": "siegeMachines-135.webp"
+    },
+    "siegeMachines:188": {
+      "name": "空中战车",
+      "file": "siegeMachines-188.webp"
+    },
+    "siegeMachines:51": {
+      "name": "攻城战车",
+      "file": "siegeMachines-51.webp"
+    },
+    "siegeMachines:52": {
+      "name": "攻城飞艇",
+      "file": "siegeMachines-52.webp"
+    },
+    "siegeMachines:62": {
+      "name": "攻城气球",
+      "file": "siegeMachines-62.webp"
+    },
+    "siegeMachines:75": {
+      "name": "攻城训练营",
+      "file": "siegeMachines-75.webp"
+    },
+    "siegeMachines:87": {
+      "name": "攻城滚木车",
+      "file": "siegeMachines-87.webp"
+    },
+    "siegeMachines:91": {
+      "name": "攻城烈焰车",
+      "file": "siegeMachines-91.webp"
+    },
+    "siegeMachines:92": {
+      "name": "攻城钻机",
+      "file": "siegeMachines-92.webp"
+    },
+    "spells:0": {
+      "name": "雷电法术",
+      "file": "spells-0.webp"
+    },
+    "spells:1": {
+      "name": "疗伤法术",
+      "file": "spells-1.webp"
+    },
+    "spells:10": {
+      "name": "地震法术",
+      "file": "spells-10.webp"
+    },
+    "spells:109": {
+      "name": "冰障法术",
+      "file": "spells-109.webp"
+    },
+    "spells:11": {
+      "name": "急速法术",
+      "file": "spells-11.webp"
+    },
+    "spells:120": {
+      "name": "图腾法术",
+      "file": "spells-120.webp"
+    },
+    "spells:123": {
+      "name": "愤怒法术",
+      "file": "spells-123.webp"
+    },
+    "spells:153": {
+      "name": "英勇法术",
+      "file": "spells-153.webp"
+    },
+    "spells:16": {
+      "name": "镜像法术",
+      "file": "spells-16.webp"
+    },
+    "spells:17": {
+      "name": "骷髅法术",
+      "file": "spells-17.webp"
+    },
+    "spells:2": {
+      "name": "狂暴法术",
+      "file": "spells-2.webp"
+    },
+    "spells:28": {
+      "name": "蝙蝠法术",
+      "file": "spells-28.webp"
+    },
+    "spells:3": {
+      "name": "弹跳法术",
+      "file": "spells-3.webp"
+    },
+    "spells:35": {
+      "name": "隐形法术",
+      "file": "spells-35.webp"
+    },
+    "spells:5": {
+      "name": "冰冻法术",
+      "file": "spells-5.webp"
+    },
+    "spells:53": {
+      "name": "回溯法术",
+      "file": "spells-53.webp"
+    },
+    "spells:6": {
+      "name": "圣诞奇袭",
+      "file": "spells-6.webp"
+    },
+    "spells:70": {
+      "name": "疯狂蔓生法术",
+      "file": "spells-70.webp"
+    },
+    "spells:73": {
+      "name": "袋装小冰怪",
+      "file": "spells-73.webp"
+    },
+    "spells:9": {
+      "name": "伤害药水法术",
+      "file": "spells-9.webp"
+    },
+    "spells:98": {
+      "name": "复苏法术",
+      "file": "spells-98.webp"
+    },
+    "troops:0": {
+      "name": "野蛮人",
+      "file": "troops-0.webp"
+    },
+    "troops:1": {
+      "name": "弓箭手",
+      "file": "troops-1.webp"
+    },
+    "troops:10": {
+      "name": "亡灵",
+      "file": "troops-10.webp"
+    },
+    "troops:101": {
+      "name": "野蛮箭手",
+      "file": "troops-101.webp"
+    },
+    "troops:102": {
+      "name": "女巫戈仑",
+      "file": "troops-102.webp"
+    },
+    "troops:103": {
+      "name": "野猪法师",
+      "file": "troops-103.webp"
+    },
+    "troops:104": {
+      "name": "熔岩气球",
+      "file": "troops-104.webp"
+    },
+    "troops:109": {
+      "name": "废墟女巫",
+      "file": "troops-109.webp"
+    },
+    "troops:11": {
+      "name": "野猪骑士",
+      "file": "troops-11.webp"
+    },
+    "troops:110": {
+      "name": "根蔓骑士",
+      "file": "troops-110.webp"
+    },
+    "troops:118": {
+      "name": "饼干皮卡",
+      "file": "troops-118.webp"
+    },
+    "troops:119": {
+      "name": "烟花炮手",
+      "file": "troops-119.webp"
+    },
+    "troops:12": {
+      "name": "瓦基丽武神",
+      "file": "troops-12.webp"
+    },
+    "troops:120": {
+      "name": "驭水青龙",
+      "file": "troops-120.webp"
+    },
+    "troops:121": {
+      "name": "任意球野蛮人",
+      "file": "troops-121.webp"
+    },
+    "troops:122": {
+      "name": "边线球巨人",
+      "file": "troops-122.webp"
+    },
+    "troops:123": {
+      "name": "德鲁伊",
+      "file": "troops-123.webp"
+    },
+    "troops:125": {
+      "name": "扫帚女巫",
+      "file": "troops-125.webp"
+    },
+    "troops:13": {
+      "name": "戈仑石人",
+      "file": "troops-13.webp"
+    },
+    "troops:130": {
+      "name": "寒冰亡灵",
+      "file": "troops-130.webp"
+    },
+    "troops:132": {
+      "name": "巨矛投手",
+      "file": "troops-132.webp"
+    },
+    "troops:136": {
+      "name": "收债哥布林",
+      "file": "troops-136.webp"
+    },
+    "troops:142": {
+      "name": "灵蛇飞桶",
+      "file": "troops-142.webp"
+    },
+    "troops:147": {
+      "name": "超级大雪怪",
+      "file": "troops-147.webp"
+    },
+    "troops:15": {
+      "name": "女巫",
+      "file": "troops-15.webp"
+    },
+    "troops:150": {
+      "name": "烈焰熔炉",
+      "file": "troops-150.webp"
+    },
+    "troops:156": {
+      "name": "霸天巨人",
+      "file": "troops-156.webp"
+    },
+    "troops:157": {
+      "name": "皮卡凯恩",
+      "file": "troops-157.webp"
+    },
+    "troops:158": {
+      "name": "铁臂终结者",
+      "file": "troops-158.webp"
+    },
+    "troops:159": {
+      "name": "战吼狂人",
+      "file": "troops-159.webp"
+    },
+    "troops:167": {
+      "name": "陨石戈仑",
+      "file": "troops-167.webp"
+    },
+    "troops:17": {
+      "name": "熔岩猎犬",
+      "file": "troops-17.webp"
+    },
+    "troops:177": {
+      "name": "陨石戈仑",
+      "file": "troops-177.webp"
+    },
+    "troops:185": {
+      "name": "大象骑士",
+      "file": "troops-185.webp"
+    },
+    "troops:190": {
+      "name": "送葬者大雪怪",
+      "file": "troops-190.webp"
+    },
+    "troops:194": {
+      "name": "图腾投手",
+      "file": "troops-194.webp"
+    },
+    "troops:195": {
+      "name": "野蛮人弓箭手小队",
+      "file": "troops-195.webp"
+    },
+    "troops:196": {
+      "name": "巨人法师小队",
+      "file": "troops-196.webp"
+    },
+    "troops:197": {
+      "name": "炸弹人小队",
+      "file": "troops-197.webp"
+    },
+    "troops:198": {
+      "name": "亡灵小队",
+      "file": "troops-198.webp"
+    },
+    "troops:199": {
+      "name": "气球兵小队",
+      "file": "troops-199.webp"
+    },
+    "troops:2": {
+      "name": "哥布林",
+      "file": "troops-2.webp"
+    },
+    "troops:200": {
+      "name": "女巫戈仑小队",
+      "file": "troops-200.webp"
+    },
+    "troops:201": {
+      "name": "野猪骑士小队",
+      "file": "troops-201.webp"
+    },
+    "troops:202": {
+      "name": "掘地矿工小队",
+      "file": "troops-202.webp"
+    },
+    "troops:203": {
+      "name": "天使小队",
+      "file": "troops-203.webp"
+    },
+    "troops:204": {
+      "name": "皮卡泰坦小队",
+      "file": "troops-204.webp"
+    },
+    "troops:205": {
+      "name": "飞龙小队",
+      "file": "troops-205.webp"
+    },
+    "troops:206": {
+      "name": "飞龙宝宝小队",
+      "file": "troops-206.webp"
+    },
+    "troops:22": {
+      "name": "巨石投手",
+      "file": "troops-22.webp"
+    },
+    "troops:23": {
+      "name": "飞龙宝宝",
+      "file": "troops-23.webp"
+    },
+    "troops:24": {
+      "name": "掘地矿工",
+      "file": "troops-24.webp"
+    },
+    "troops:26": {
+      "name": "超级野蛮人",
+      "file": "troops-26.webp"
+    },
+    "troops:27": {
+      "name": "超级弓箭手",
+      "file": "troops-27.webp"
+    },
+    "troops:28": {
+      "name": "超级炸弹人",
+      "file": "troops-28.webp"
+    },
+    "troops:29": {
+      "name": "超级巨人",
+      "file": "troops-29.webp"
+    },
+    "troops:3": {
+      "name": "巨人",
+      "file": "troops-3.webp"
+    },
+    "troops:30": {
+      "name": "寒冰法师",
+      "file": "troops-30.webp"
+    },
+    "troops:4": {
+      "name": "炸弹人",
+      "file": "troops-4.webp"
+    },
+    "troops:45": {
+      "name": "野蛮人攻城槌",
+      "file": "troops-45.webp"
+    },
+    "troops:47": {
+      "name": "皇家幽灵",
+      "file": "troops-47.webp"
+    },
+    "troops:48": {
+      "name": "南瓜野蛮人",
+      "file": "troops-48.webp"
+    },
+    "troops:5": {
+      "name": "气球兵",
+      "file": "troops-5.webp"
+    },
+    "troops:50": {
+      "name": "骷髅巨人",
+      "file": "troops-50.webp"
+    },
+    "troops:53": {
+      "name": "大雪怪",
+      "file": "troops-53.webp"
+    },
+    "troops:55": {
+      "name": "隐秘哥布林",
+      "file": "troops-55.webp"
+    },
+    "troops:56": {
+      "name": "超级矿工",
+      "file": "troops-56.webp"
+    },
+    "troops:57": {
+      "name": "火箭气球兵",
+      "file": "troops-57.webp"
+    },
+    "troops:58": {
+      "name": "戈仑冰人",
+      "file": "troops-58.webp"
+    },
+    "troops:59": {
+      "name": "雷电飞龙",
+      "file": "troops-59.webp"
+    },
+    "troops:6": {
+      "name": "法师",
+      "file": "troops-6.webp"
+    },
+    "troops:61": {
+      "name": "骷髅飞桶",
+      "file": "troops-61.webp"
+    },
+    "troops:63": {
+      "name": "地狱飞龙",
+      "file": "troops-63.webp"
+    },
+    "troops:64": {
+      "name": "超级瓦基丽武神",
+      "file": "troops-64.webp"
+    },
+    "troops:65": {
+      "name": "龙骑士",
+      "file": "troops-65.webp"
+    },
+    "troops:66": {
+      "name": "超级女巫",
+      "file": "troops-66.webp"
+    },
+    "troops:67": {
+      "name": "机甲超人",
+      "file": "troops-67.webp"
+    },
+    "troops:7": {
+      "name": "天使",
+      "file": "troops-7.webp"
+    },
+    "troops:72": {
+      "name": "派对法师",
+      "file": "troops-72.webp"
+    },
+    "troops:76": {
+      "name": "寒冰猎犬",
+      "file": "troops-76.webp"
+    },
+    "troops:8": {
+      "name": "飞龙",
+      "file": "troops-8.webp"
+    },
+    "troops:80": {
+      "name": "超级巨石投手",
+      "file": "troops-80.webp"
+    },
+    "troops:81": {
+      "name": "超级飞龙",
+      "file": "troops-81.webp"
+    },
+    "troops:82": {
+      "name": "英雄猎手",
+      "file": "troops-82.webp"
+    },
+    "troops:83": {
+      "name": "超级法师",
+      "file": "troops-83.webp"
+    },
+    "troops:84": {
+      "name": "超级亡灵",
+      "file": "troops-84.webp"
+    },
+    "troops:9": {
+      "name": "皮卡超人",
+      "file": "troops-9.webp"
+    },
+    "troops:94": {
+      "name": "蛮羊骑士",
+      "file": "troops-94.webp"
+    },
+    "troops:95": {
+      "name": "雷霆泰坦",
+      "file": "troops-95.webp"
+    },
+    "troops:97": {
+      "name": "守护者学徒",
+      "file": "troops-97.webp"
+    },
+    "troops:98": {
+      "name": "超级野猪骑士",
+      "file": "troops-98.webp"
+    }
+  }
+}

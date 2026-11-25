@@ -1,0 +1,93 @@
+.lineup-block {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  contain: inline-size;
+}
+
+.lineup-strip {
+  --lineup-icon-size: 27px;
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  overflow: auto hidden;
+  white-space: nowrap;
+  padding-block: 3px;
+  scrollbar-width: thin;
+  scrollbar-color: #596574 #21242a;
+  overscroll-behavior-inline: contain;
+}
+
+.lineup-strip:focus-visible {
+  outline: 2px solid #8ebff8;
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.lineup-group, .lineup-hero {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 3px;
+}
+
+.lineup-group + .lineup-group {
+  border-inline-start: 1px solid #424951;
+  margin-inline-start: 6px;
+  padding-inline-start: 6px;
+}
+
+.lineup-hero + .lineup-hero {
+  border-inline-start: 1px solid #373e45;
+  padding-inline-start: 3px;
+}
+
+.lineup-unit {
+  position: relative;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  inline-size: var(--lineup-icon-size);
+  block-size: var(--lineup-icon-size);
+  box-sizing: border-box;
+  border: 1px solid #506587;
+  border-radius: 4px;
+  background: #344460;
+  color: #edf2ff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.lineup-unit img {
+  display: block;
+  inline-size: 100%;
+  block-size: 100%;
+  object-fit: contain;
+}
+
+.lineup-unit-count {
+  position: absolute;
+  inset-inline-end: -1px;
+  inset-block-end: -1px;
+  border-radius: 3px 0 3px 0;
+  background: #11151d;
+  color: #fff;
+  padding-inline: 2px;
+  font-size: 9px;
+  line-height: 1.2;
+}
+
+.lineup-unit[data-unit-type="spells"] { background: #423356; border-color: #695086; }
+.lineup-unit[data-unit-type="heroes"] { background: #54412d; border-color: #806746; }
+.lineup-unit[data-unit-type="equipment"] { background: #504238; border-color: #77675a; }
+.lineup-unit[data-unit-type="siegeMachines"] { background: #513835; border-color: #795251; }
+.lineup-unit[data-unit-type="pets"] { background: #2b463d; border-color: #547767; }
+
+.lineup-attribution {
+  margin: 8px 0 0;
+  color: var(--muted, #aaa8a1);
+  font-size: 12px;
+  line-height: 1.5;
+}

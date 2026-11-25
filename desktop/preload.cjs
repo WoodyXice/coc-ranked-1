@@ -1,0 +1,21 @@
+const { contextBridge, ipcRenderer } = require("electron");
+
+function invoke(channel, ...args) {
+  return ipcRenderer.invoke(channel, ...args).then((result) => {
+    if (!result.ok) throw new Error(result.error);
+    return result.value;
+  });
+}
+
+contextBridge.exposeInMainWorld("cocApp", {
+  collect: (input) => invoke("coc:collect", input),
+  listAccounts: () => invoke("coc:accounts"),
+  saveAccount: (input) => invoke("coc:save-account", input),
+  selectAccount: (tag) => invoke("coc:select-account", tag),
+  removeAccount: (tag) => invoke("coc:remove-account", tag),
+  saveDeveloperToken: (token) => invoke("coc:save-developer-token", token),
+  saveDefenseNote: (input) => invoke("coc:save-defense-note", input),
+  sample: () => invoke("coc:sample"),
+  downloadWorkbook: (input) => invoke("coc:workbook", input),
+  saveImage: (bytes, name) => invoke("coc:image", bytes, name),
+});
