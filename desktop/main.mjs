@@ -1,11 +1,12 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, safeStorage, session, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, protocol, safeStorage, session, shell } from "electron";
 import { mkdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
+import { isIP } from "node:net";
 import { basename, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { getReport } from "../analytics.mjs";
 import { workbookBytes } from "../files.mjs";
-import { collectData, sampleReport } from "./service.mjs";
+import { collectData, developerPortal, getPublicIp, sampleReport } from "./service.mjs";
 import { createAccountStore, validateDeveloperToken } from "./accounts.mjs";
 import { createDefenseNoteStore } from "./defense-notes.mjs";
 import { createUpdater, releasePage } from "./updater.mjs";
@@ -109,6 +110,18 @@ function createWindow() {
   bind(window, "coc:select-account", accountStore.selectAccount);
   bind(window, "coc:remove-account", accountStore.removeAccount);
   bind(window, "coc:save-developer-token", accountStore.saveDeveloperToken);
+  bind(window, "coc:public-ip", () => getPublicIp());
+  bind(window, "coc:copy-public-ip", (ip) => {
+    if (typeof ip !== "string" || !isIP(ip)) throw new Error("无效的 IP 地址。");
+    clipboard.writeText(ip);
+  });
+  bind(window, "coc:open-developer-portal", async () => {
+    try {
+      await shell.openExternal(developerPortal);
+    } catch {
+      throw new Error("无法打开浏览器，请手动访问上方显示的官方地址。");
+    }
+  });
   bind(window, "coc:save-defense-note", defenseNotes.save);
   bind(window, "coc:sample", () => withDefenseNotes(sampleReport()));
   bind(window, "coc:collect", async (input) => {

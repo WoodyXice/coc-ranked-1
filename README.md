@@ -5,7 +5,7 @@
 ## 下载和使用
 
 1. 从 [GitHub Releases](https://github.com/fangjog/coc-ranked/releases/latest) 下载 `COC-Ranked-Setup-…-x64.exe` 并安装，或下载 `COC-Ranked-Portable-…-x64.exe` 直接使用。
-2. 在 [Supercell 开发者后台](https://developer.clashofclans.com/#/account) 创建 API 密钥，把运行助手的电脑的公网出口 IP 填入 **Allowed IP Addresses**。在助手的「管理令牌」中保存该密钥。
+2. 在助手中点「设置令牌」或「管理令牌」，复制检测到的公网出口 IP，点击「申请地址」打开 Supercell 开发者后台。创建 API 密钥时把 IP 填入 **Allowed IP Addresses**，再回到助手保存密钥。
 3. 选择「添加村庄」，输入自己的国际服村庄 Tag，点击「查询本周排位」。游戏内短令牌可留空。
 
 村庄资料、凭据和战报缓存保存在本机的 `%APPDATA%\coc-ranked`。转发 Releases 链接即可让对方用自己的密钥查询。 [详细使用说明](使用说明.md)

@@ -1,7 +1,29 @@
+import { isIPv4 } from "node:net";
 import { getReport, sampleData } from "../analytics.mjs";
 import { decodeArmyShareCode, fetchRankedReport } from "../collector.mjs";
 
 const hour = 3_600_000;
+export const developerPortal = "https://developer.clashofclans.com/#/new-key";
+
+export async function getPublicIp(fetchImpl = globalThis.fetch) {
+  try {
+    const response = await fetchImpl("https://api.ipify.org", {
+      cache: "no-store",
+      credentials: "omit",
+      redirect: "error",
+      signal: AbortSignal.timeout(6_000),
+    });
+    if (response.ok) {
+      const ip = (await response.text()).trim();
+      if (isIPv4(ip)) return { ip };
+    } else {
+      await response.body?.cancel();
+    }
+  } catch {
+    // Show a retryable message without exposing network or proxy details.
+  }
+  throw new Error("暂时无法检测公网出口 IP，请稍后刷新。");
+}
 
 export function rankedWeek(now = new Date()) {
   const sinceReset = new Date(now.getTime() - 5 * hour);

@@ -1,7 +1,107 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+
+const developerKeyAddress = "developer.clashofclans.com/#/new-key";
+const loadingIp = { status: "loading", ip: "" };
+
+function DeveloperKeyHelp({ busy, lookupQueue }) {
+  const api = globalThis.window?.cocApp;
+  const canLookUp = typeof api?.getPublicIp === "function";
+  const [lookup, setLookup] = useState(loadingIp);
+  const [attempt, setAttempt] = useState(0);
+  const [notice, setNotice] = useState(null);
+  const request = useRef(null);
+  const mounted = useRef(false);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!canLookUp) return;
+    let active = true;
+    if (!request.current) {
+      const pending = lookupQueue.current.then(() => api.getPublicIp());
+      request.current = pending;
+      lookupQueue.current = pending.catch(() => {});
+    }
+    const pending = request.current;
+    pending.then((result) => {
+      const ip = typeof result?.ip === "string" ? result.ip.trim() : "";
+      if (!ip) throw new Error("No public IP returned");
+      if (active) setLookup({ status: "ready", ip });
+    }).catch(() => {
+      if (active) setLookup({ status: "error", ip: "" });
+    }).finally(() => {
+      if (request.current === pending) request.current = null;
+    });
+    return () => { active = false; };
+  }, [api, attempt, canLookUp, lookupQueue]);
+
+  function refresh() {
+    if (!canLookUp || request.current) return;
+    setLookup(loadingIp);
+    setNotice(null);
+    setAttempt((count) => count + 1);
+  }
+
+  async function openPortal() {
+    setNotice(null);
+    try {
+      if (await api.openDeveloperPortal() === false) throw new Error("Browser did not open");
+    } catch {
+      if (mounted.current) setNotice({ text: "无法打开开发者后台。可复制上方地址到浏览器。", error: true });
+    }
+  }
+
+  async function copyIp() {
+    setNotice(null);
+    try {
+      if (typeof api?.copyPublicIp === "function") {
+        if (await api.copyPublicIp(lookup.ip) === false) throw new Error("Clipboard unavailable");
+      } else {
+        await navigator.clipboard.writeText(lookup.ip);
+      }
+      if (mounted.current) setNotice({ text: "已复制公网出口 IP。" });
+    } catch {
+      if (mounted.current) setNotice({ text: "复制失败，可手动选中地址复制。", error: true });
+    }
+  }
+
+  const status = canLookUp ? lookup.status : "unavailable";
+  const ipStatus = {
+    loading: "正在查询…",
+    error: "查询失败，请重试。",
+    unavailable: "请在桌面版查询。",
+  }[status];
+
+  return (
+    <div className="developer-key-help">
+      <div className="developer-key-row">
+        <span>申请地址</span>
+        {typeof api?.openDeveloperPortal === "function" ? (
+          <button type="button" className="text-button developer-portal" title="在默认浏览器打开开发者后台"
+            disabled={busy} onClick={() => void openPortal()}><code>{developerKeyAddress}</code></button>
+        ) : <code>{developerKeyAddress}</code>}
+      </div>
+      <div className="developer-key-row">
+        <span>本机公网出口 IP（参考）</span>
+        <span className={status === "error" ? "developer-key-error" : undefined} role="status">
+          {lookup.ip ? <code className="developer-ip-address">{lookup.ip}</code> : ipStatus}
+        </span>
+        <button type="button" disabled={busy || !lookup.ip} onClick={() => void copyIp()}>复制 IP</button>
+        <button type="button" disabled={busy || !canLookUp || status === "loading"} onClick={refresh}>刷新 IP</button>
+      </div>
+      <p className="editor-help">创建密钥时，把上方 IP 填入 <strong>Allowed IP Addresses</strong>。如使用 VPN 分流，以官方 API 报错显示的 IP 为准。</p>
+      {notice && <p className={"editor-help" + (notice.error ? " developer-key-error" : "")}
+        role={notice.error ? "alert" : "status"}>{notice.text}</p>}
+    </div>
+  );
+}
 
 export default function AccountPanel({ accounts, busy, onSelect, onSaveAccount, onRemoveAccount, onSaveDeveloperToken, onQuery, onSample }) {
   const [editor, setEditor] = useState(null);
+  const ipLookupQueue = useRef(Promise.resolve());
   const selected = accounts.accounts.find((account) => account.tag === accounts.selectedTag);
 
   function editAccount(account) {
@@ -101,7 +201,7 @@ export default function AccountPanel({ accounts, busy, onSelect, onSaveAccount, 
             {accounts.hasDeveloperToken && <button type="button" className="danger" disabled={busy}
               onClick={() => setEditor({ type: "clear-developer" })}>清除令牌</button>}
           </div>
-          <p className="editor-help">使用在 Supercell 开发者后台生成且允许当前公网 IP 的令牌。所有村庄共用。</p>
+          <DeveloperKeyHelp busy={busy} lookupQueue={ipLookupQueue} />
         </form>
       )}
       {editor?.type === "clear-developer" && (
