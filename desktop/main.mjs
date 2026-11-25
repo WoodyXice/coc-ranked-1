@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, safeStorage, session } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, safeStorage, session, shell } from "electron";
 import { mkdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { basename, isAbsolute, relative, resolve, sep } from "node:path";
@@ -8,6 +8,7 @@ import { workbookBytes } from "../files.mjs";
 import { collectData, sampleReport } from "./service.mjs";
 import { createAccountStore, validateDeveloperToken } from "./accounts.mjs";
 import { createDefenseNoteStore } from "./defense-notes.mjs";
+import { createUpdater, releasePage } from "./updater.mjs";
 
 const rendererUrl = "coc-app://local/";
 const rendererDir = fileURLToPath(new URL("../dist/renderer/", import.meta.url));
@@ -79,6 +80,25 @@ function createWindow() {
   const snapshotDir = resolve(app.getPath("userData"), "ranked-snapshots");
   const accountStore = createAccountStore(resolve(app.getPath("userData"), "accounts.json"), safeStorage);
   const defenseNotes = createDefenseNoteStore(resolve(app.getPath("userData"), "defense-notes.json"));
+  const contents = window.webContents;
+  const updates = createUpdater({ app, publish(state) {
+    if (!contents.isDestroyed() && contents.mainFrame?.url === rendererUrl) {
+      contents.send("coc:update-state-changed", state);
+    }
+  } });
+  bind(window, "coc:update-state", updates.getUpdateState);
+  bind(window, "coc:update-check", updates.checkForUpdates);
+  bind(window, "coc:update-download", updates.downloadUpdate);
+  bind(window, "coc:update-install", updates.installUpdate);
+  bind(window, "coc:open-release-page", async () => {
+    try {
+      await shell.openExternal(releasePage);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  contents.once("did-finish-load", () => { void updates.checkForUpdates(); });
   async function withDefenseNotes(payload) {
     const raw = payload.raw;
     if (!raw.battleViews) return payload;

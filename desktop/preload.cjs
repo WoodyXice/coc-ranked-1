@@ -18,4 +18,14 @@ contextBridge.exposeInMainWorld("cocApp", {
   sample: () => invoke("coc:sample"),
   downloadWorkbook: (input) => invoke("coc:workbook", input),
   saveImage: (bytes, name) => invoke("coc:image", bytes, name),
+  getUpdateState: () => invoke("coc:update-state"),
+  checkForUpdates: () => invoke("coc:update-check"),
+  downloadUpdate: () => invoke("coc:update-download"),
+  installUpdate: () => invoke("coc:update-install"),
+  openReleasePage: () => invoke("coc:open-release-page"),
+  onUpdateState: (callback) => {
+    const listener = (_event, state) => callback(state);
+    ipcRenderer.on("coc:update-state-changed", listener);
+    return () => ipcRenderer.removeListener("coc:update-state-changed", listener);
+  },
 });

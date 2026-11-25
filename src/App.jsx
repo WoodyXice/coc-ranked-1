@@ -3,6 +3,7 @@ import { toBlob } from "html-to-image";
 import AccountPanel from "./AccountPanel.jsx";
 import ArmyLineup, { ArmyAttribution, hasLineup } from "./ArmyLineup.jsx";
 import Standings, { StandingSummary, Trophy } from "./Standings.jsx";
+import UpdatePanel from "./UpdatePanel.jsx";
 import { formatDuration, formatTime } from "./battle-time.mjs";
 
 const TAU = Math.PI * 2;
@@ -460,7 +461,10 @@ export default function App() {
 
   return (
     <main className="page">
-      <header className="app-heading"><h1>部落冲突排位战报</h1></header>
+      <header className="app-heading">
+        <h1>部落冲突排位战报</h1>
+        <UpdatePanel busy={!!busy} />
+      </header>
       <AccountPanel accounts={accounts} busy={accountLoading || !!busy} onSelect={selectAccount}
         onSaveAccount={saveAccount} onRemoveAccount={removeAccount} onSaveDeveloperToken={saveDeveloperToken}
         onQuery={collect} onSample={loadSample} />

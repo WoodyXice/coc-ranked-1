@@ -1,0 +1,91 @@
+name: Windows release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Verify release version
+        id: version
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $version = (Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json).version
+          if ($tag -cnotmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+            throw "Invalid stable release tag: $tag"
+          }
+          if ($tag -cne "v$version") {
+            throw "Tag $tag does not match package.json version $version"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run package:windows
+      - name: Verify Windows release assets
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $version = $env:RELEASE_VERSION
+          $files = @(
+            "release/COC-Ranked-Setup-${version}-x64.exe"
+            "release/COC-Ranked-Setup-${version}-x64.exe.blockmap"
+            "release/COC-Ranked-Portable-${version}-x64.exe"
+            'release/latest.yml'
+          )
+          foreach ($file in $files) {
+            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+              throw "Missing release asset: $file"
+            }
+            if ((Get-Item -LiteralPath $file).Length -eq 0) {
+              throw "Empty release asset: $file"
+            }
+          }
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: windows-release-${{ steps.version.outputs.version }}
+          compression-level: 0
+          if-no-files-found: error
+          path: |
+            release/COC-Ranked-Setup-${{ steps.version.outputs.version }}-x64.exe
+            release/COC-Ranked-Setup-${{ steps.version.outputs.version }}-x64.exe.blockmap
+            release/COC-Ranked-Portable-${{ steps.version.outputs.version }}-x64.exe
+            release/latest.yml
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          name: windows-release-${{ needs.build.outputs.version }}
+          path: release
+      - name: Publish GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes \
+            "release/COC-Ranked-Setup-${RELEASE_VERSION}-x64.exe" \
+            "release/COC-Ranked-Setup-${RELEASE_VERSION}-x64.exe.blockmap" \
+            "release/COC-Ranked-Portable-${RELEASE_VERSION}-x64.exe" \
+            release/latest.yml

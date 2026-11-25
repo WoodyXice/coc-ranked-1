@@ -1,6 +1,6 @@
 {
   "name": "coc-ranked",
-  "version": "1.1.4",
+  "version": "1.2.0",
   "description": "部落冲突排位助手",
   "author": "COC Ranked",
   "private": true,
@@ -9,10 +9,11 @@
   "scripts": {
     "build": "vite build",
     "start": "electron .",
-    "package:windows": "npm run build && electron-builder --win portable --x64",
-    "package:directory": "npm run build && electron-builder --win dir --x64"
+    "package:windows": "npm run build && electron-builder --win nsis portable --x64 --publish never",
+    "package:directory": "npm run build && electron-builder --win dir --x64 --publish never"
   },
   "dependencies": {
+    "electron-updater": "6.8.11",
     "exceljs": "4.4.0"
   },
   "devDependencies": {
@@ -27,7 +28,13 @@
   "build": {
     "appId": "local.coc.ranked",
     "productName": "部落冲突排位助手",
-    "artifactName": "COC-排位助手.${ext}",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "fangjog",
+        "repo": "coc-ranked"
+      }
+    ],
     "directories": {
       "output": "release"
     },
@@ -41,6 +48,15 @@
     "win": {
       "icon": "desktop/ranked.ico",
       "signAndEditExecutable": false
+    },
+    "nsis": {
+      "artifactName": "COC-Ranked-Setup-${version}-${arch}.${ext}",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "portable": {
+      "artifactName": "COC-Ranked-Portable-${version}-${arch}.${ext}",
+      "useZip": true
     }
   }
 }

@@ -20,8 +20,46 @@ body { margin: 0; }
   margin: 32px auto 40px;
 }
 
-.app-heading { margin-bottom: 16px; }
+.app-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
 .app-heading h1 { margin: 0; font-size: 30px; line-height: 1.35; }
+.update-panel { position: relative; flex: 0 0 auto; font-size: 14px; }
+.update-trigger {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border: 1px solid #37393c;
+  border-radius: 7px;
+  background: #202123;
+  list-style: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.update-trigger::-webkit-details-marker { display: none; }
+.update-trigger:hover, .update-panel[open] .update-trigger { background: #2a2b2e; border-color: #505256; }
+.update-trigger:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+.update-trigger span { color: var(--muted); font-variant-numeric: tabular-nums; }
+.update-trigger-available { color: #c3ddff; background: #202c3c; border-color: #354b65; }
+.update-card {
+  position: absolute;
+  z-index: 4;
+  right: 0;
+  top: calc(100% + 8px);
+  width: min(310px, calc(100vw - 34px));
+  padding: 14px;
+  border: 1px solid #3e4148;
+  border-radius: 10px;
+  background: #202123;
+  box-shadow: 0 9px 20px #0006;
+  line-height: 1.5;
+}
+.update-card p { margin: 0; overflow-wrap: anywhere; }
+.update-card .update-version { margin-bottom: 5px; color: #e1ecfd; }
+.update-card .update-status { color: var(--soft); }
+.update-card .update-error { margin-top: 6px; color: #ffb09f; }
+.update-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.update-progress { display: flex; align-items: center; gap: 10px; margin-top: 9px; }
+.update-progress progress { width: 100%; min-width: 0; accent-color: var(--blue); }
 
 .query-card {
   border: 1px solid var(--line);
