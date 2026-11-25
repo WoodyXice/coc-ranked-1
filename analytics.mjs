@@ -171,9 +171,11 @@ function classify(army) {
   const invisibility = army.spells.find(unit => unit.name === 'Invisibility Spell')?.count ?? 0;
   const dragons = troop('Dragon') + troop('Electro Dragon') + troop('Super Dragon') + troop('Dragon Rider') + troop('Inferno Dragon');
 
+  const hasHero = name => army.heroes.some(unit => unit.name === name);
+  const hasGear = name => army.equipment.some(unit => unit.name === name);
   if (troop('Super Bowler') >= 3 || troop('Bowler') >= 8) {
-    if (dragons > 0 && invisibility >= 3) return '隐龙蓝胖';
-    if (troop('Healer') >= 4 && army.heroes.some(unit => unit.name === 'Archer Queen')) return '天女蓝胖';
+    if (hasHero('Dragon Duke') && hasGear('Electro Fangs') && invisibility >= 3) return '隐龙蓝胖';
+    if (hasHero('Archer Queen') && hasGear('Monolith Arrow') && troop('Healer') >= 4) return '天女蓝胖';
     return '其他蓝胖';
   }
   if (troop('Super Yeti') >= 3) return '超级大雪怪';
