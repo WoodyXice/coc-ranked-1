@@ -246,6 +246,76 @@ function findLeagueGroup(player, week, requestedGroup) {
     && (!requestedGroup || choice.groupTag === requestedGroup));
 }
 
+const firstLeagueTierId = 105000000;
+const legendOneTierId = 105000036;
+const legendTierNames = { 34: '传奇 III', 35: '传奇 II', 36: '传奇 I' };
+const rankedTierFamilies = ['骷髅兵', '野蛮人', '弓箭手', '法师', '瓦基丽武神', '女巫', '戈仑石人', '皮卡超人', '泰坦', '飞龙', '雷龙'];
+// https://support.supercell.com/clash-of-clans/zh_cn/articles/ranked-leagues-5.html
+const weeklyAttackLimits = [[6, 6], [12, 8], [18, 10], [27, 12], [30, 14], [33, 18], [34, 24], [35, 30]];
+
+function officialTierId(value) {
+  return Number.isSafeInteger(value) && value > firstLeagueTierId && value < 106000000 ? value : null;
+}
+
+function leagueTierName(id, name) {
+  const tier = id - firstLeagueTierId;
+  if (legendTierNames[tier]) return legendTierNames[tier];
+  const candidates = typeof name === 'string' ? [name] : [name?.['zh-CN'], name?.zh_CN, name?.CN, name?.en, name?.EN];
+  const officialName = candidates.find((value) => typeof value === 'string' && value.trim() && value.length <= 120);
+  const family = rankedTierFamilies[Math.floor((tier - 1) / 3)];
+  return officialName?.trim() || (family ? `${family}联赛${tier}` : '');
+}
+
+function officialLeagueIcon(value) {
+  if (typeof value !== 'string' || !/^https:\/\/api-assets\.clashofclans\.com\/[^\s\\]+$/i.test(value)
+    || /[\s\u0000-\u001f\u007f]/.test(value) || /%(?![0-9a-f]{2})/i.test(value)) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.host === 'api-assets.clashofclans.com'
+      && !url.username && !url.password ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function leagueTierInfo(tier, maxBattles) {
+  const id = officialTierId(tier?.id);
+  if (!id) return null;
+  const { iconUrls } = tier;
+  const iconUrl = [iconUrls?.small, iconUrls?.medium, iconUrls?.tiny].map(officialLeagueIcon).find(Boolean) ?? null;
+  const limit = weeklyAttackLimits.find(([ceiling]) => id - firstLeagueTierId <= ceiling)?.[1] ?? null;
+  const recordedLimit = Number.isSafeInteger(maxBattles) && maxBattles > 0 ? maxBattles : null;
+  return {
+    id,
+    name: leagueTierName(id, tier.name),
+    iconUrl,
+    attackLimit: id === legendOneTierId ? null : recordedLimit ?? limit,
+  };
+}
+
+async function groupLeagueTier(request, player, playerTag, league) {
+  const isCurrent = normalizeTag(player.currentLeagueGroupTag) === league.groupTag
+    && Number(player.currentLeagueSeasonId) === league.seasonId;
+  if (isCurrent) {
+    const profile = leagueTierInfo(player.leagueTier);
+    if (!profile || profile.iconUrl) return profile;
+    const details = await request(`/leaguetiers/${profile.id}`).catch(() => null);
+    if (details?.id !== profile.id) return profile;
+    return leagueTierInfo({ ...details, name: player.leagueTier.name || details.name });
+  }
+
+  const history = await request(`${playerPath(playerTag)}/leaguehistory`).catch(() => null);
+  if (!Array.isArray(history?.items)) return null;
+  const season = history.items.filter((row) => Number(row?.leagueSeasonId) === league.seasonId);
+  const historyGroup = (row) => row.leagueGroupTag ?? row.groupTag;
+  const entry = season.find((row) => normalizeTag(historyGroup(row)) === league.groupTag)
+    ?? season.find((row) => !historyGroup(row));
+  const id = officialTierId(entry?.leagueTierId);
+  if (!id) return null;
+  const details = await request(`/leaguetiers/${id}`).catch(() => null);
+  return leagueTierInfo(details?.id === id ? details : { id }, entry.maxBattles);
+}
+
 function authorizationError(payload) {
   const reason = typeof payload?.reason === 'string' ? payload.reason.toLowerCase() : '';
   const message = typeof payload?.message === 'string' ? payload.message : '';
@@ -789,10 +859,12 @@ async function fetchRecentPlayerReport(request, member, week, player) {
   const currentLegendTrophies = nonnegativeInteger(current?.trophies) ?? nonnegativeInteger(player.trophies);
   const rank = week === weekMonday(Date.now() - rankedWeekStartOffset) ? currentLegendRank : null;
   const standing = buildStanding(member, rank, attackSummary, defenseSummary, attackSummary.trophies + defenseNet);
+  const tier = leagueTierInfo(player.leagueTier);
   return {
     groupTag: '',
     week,
     source: 'api',
+    leagueTier: tier && { ...tier, attackLimit: null },
     attacks: [],
     telemetry: { noWeeklyGroup: true },
     standings: [],
@@ -831,7 +903,7 @@ export async function fetchRankedReport({
   const player = await request(playerPath(playerTag));
   const league = findLeagueGroup(player, week, requestedGroup);
   const noWeeklyGroup = !normalizeTag(player.currentLeagueGroupTag)
-    && (['#0', '0'].includes(player.currentLeagueGroupTag) || player.leagueTier?.id === 105000036);
+    && (['#0', '0'].includes(player.currentLeagueGroupTag) || player.leagueTier?.id === legendOneTierId);
   if (includeBattleViews && !requestedGroup && noWeeklyGroup && (!week || !league)) {
     return fetchRecentPlayerReport(
       request, { playerTag, playerName: player.name ?? playerTag }, week || weekMonday(Date.now() - rankedWeekStartOffset), player,
@@ -841,6 +913,7 @@ export async function fetchRankedReport({
   const scoped = (tag) => request(groupBattlePath(league.groupTag, league.seasonId, tag));
   const group = await scoped(playerTag);
   if (!Array.isArray(group.members)) throw clientError(502, '官方 API 未返回小组成员名单。');
+  const leagueTier = groupLeagueTier(request, player, playerTag, league);
 
   const members = [...new Map(group.members.flatMap((member, index) => {
     const tag = normalizeTag(member?.playerTag);
@@ -947,6 +1020,7 @@ export async function fetchRankedReport({
   return {
     ...league,
     source: 'api',
+    leagueTier: await leagueTier,
     attacks,
     standings,
     telemetry: {

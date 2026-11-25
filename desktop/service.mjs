@@ -77,6 +77,7 @@ export function sampleReport() {
   };
   const raw = {
     ...sampleData,
+    leagueTier: { id: 105000035, name: "传奇 II", iconUrl: null, attackLimit: 30 },
     standings: [
       {
         rank: 1, playerTag: "#DEMO2", playerName: "演示对手 A",

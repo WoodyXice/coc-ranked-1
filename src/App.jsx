@@ -492,7 +492,7 @@ export default function App() {
               report={report} reportRef={reportRef} battleViews={battleViews} />}
             {report && tab === "standings" && <Standings key={report.groupTag + report.week} rows={payload.raw?.standings ?? []} battleViews={battleViews}
               attacks={payload.raw?.attacks ?? report.attacks} classifiedAttacks={report.attacks}
-              groupTag={report.groupTag} week={report.week} isSample={report.source === "sample"} />}
+              groupTag={report.groupTag} week={report.week} leagueTier={payload.raw?.leagueTier} isSample={report.source === "sample"} />}
             {report && (tab === "attacks" || tab === "defenses") && <BattleLog key={battleViews?.playerTag + tab} kind={tab} battleViews={battleViews}
               isSample={report.source === "sample"} accountName={battleAccountName} />}
             {!report && <section className="empty-card empty-results" aria-label="暂无战报">

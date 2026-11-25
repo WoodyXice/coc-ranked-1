@@ -13,6 +13,45 @@ function destructionText(value) {
   return Number.isFinite(value) ? `${value.toFixed(1)}%` : "—";
 }
 
+function AttackProgress({ limit, completed }) {
+  const knownLimit = Number.isSafeInteger(limit) && limit >= 0;
+  const knownCompleted = Number.isSafeInteger(completed) && completed >= 0;
+  const allowed = knownLimit ? scoreText(limit) : "—";
+  const played = knownCompleted ? scoreText(completed) : "—";
+  const meaning = [
+    knownLimit ? `可进攻 ${allowed} 场` : "可进攻场次未知",
+    knownCompleted ? `已完成 ${played} 场` : "已完成场次未知",
+  ].join("，");
+  return <td title={meaning} aria-label={meaning}>{knownLimit || knownCompleted ? `${allowed}/${played}` : "—"}</td>;
+}
+
+function officialLeagueIcon(value) {
+  if (typeof value !== "string" || !value) return "";
+  try {
+    const url = new URL(value);
+    return url.origin === "https://api-assets.clashofclans.com" && !url.username && !url.password ? url.href : "";
+  } catch {
+    return "";
+  }
+}
+
+function LeagueBadge({ tier }) {
+  const [failedIcons, setFailedIcons] = useState([]);
+  const id = tier?.id;
+  const fallback = Number.isInteger(id) && id >= 105000001 && id <= 105000036 ? `./league-icons/${id}.png` : "";
+  const icon = [officialLeagueIcon(tier?.iconUrl), fallback].find((source) => source && !failedIcons.includes(source));
+  const name = typeof tier?.name === "string" ? tier.name.trim() : "";
+  if (!name && !icon) return null;
+  return (
+    <span className="standings-league-badge">
+      {icon && <img src={icon} width="30" height="30" referrerPolicy="no-referrer" alt=""
+        title={icon === fallback ? "徽章来源 ClashKing Assets，素材归 Supercell 所有" : undefined}
+        onError={() => setFailedIcons((failed) => [...failed, icon])} />}
+      <span>{name || "排位联赛"}</span>
+    </span>
+  );
+}
+
 export function Trophy({ value, loss = false, change = true }) {
   if (!Number.isFinite(value)) return "—";
   const amount = loss && value !== 0 ? -Math.abs(value) : value;
@@ -89,7 +128,7 @@ function ArmyHistory({ history, player }) {
 
 const emptyAttacks = [];
 
-export default function Standings({ rows, battleViews, groupTag, week, isSample, attacks = emptyAttacks, classifiedAttacks = emptyAttacks }) {
+export default function Standings({ rows, battleViews, groupTag, week, leagueTier, isSample, attacks = emptyAttacks, classifiedAttacks = emptyAttacks }) {
   const [sort, setSort] = useState({ key: "rank", ascending: true });
   const [expandedPlayer, setExpandedPlayer] = useState(null);
   const panelPrefix = useId();
@@ -110,10 +149,10 @@ export default function Standings({ rows, battleViews, groupTag, week, isSample,
   }, [attacks, classifiedAttacks]);
   const columns = [
     { key: "rank", label: "排名", ascendingFirst: true },
+    { key: "attackCount", label: "进攻进度", title: "可进攻场次 / 已完成进攻场次，按已完成场次排序" },
     { key: "attackTrophies", label: "进攻得杯" },
     { key: "defenseTrophies", label: lost ? "防守扣杯" : "防守得杯" },
     { key: "trophies", label: lost ? "本周净杯" : "最终杯数" },
-    { key: "attackCount", label: "进攻场次" },
     { key: "defenseCount", label: "防守场次" },
     { key: "attackStars", label: "进攻总星" },
     { key: "attackDestruction", label: "进攻摧毁率", title: "该玩家进攻时造成的平均摧毁率" },
@@ -138,7 +177,10 @@ export default function Standings({ rows, battleViews, groupTag, week, isSample,
   return (
     <section className="standings" aria-labelledby="standings-title">
       <header className="report-header">
-        <h2 id="standings-title">本周排位排名</h2>
+        <div className="standings-heading">
+          <h2 id="standings-title">本周排位排名</h2>
+          <LeagueBadge tier={leagueTier} />
+        </div>
         <p>{[groupTag && `小组 ${groupTag}`, week && `${week} 周`, rows.length > 0 && "时间为北京时间"].filter(Boolean).join(" · ")}</p>
       </header>
       {rows.length === 0 ? (
@@ -173,10 +215,11 @@ export default function Standings({ rows, battleViews, groupTag, week, isSample,
                         <span className="lineup-button-label">{scoreText(history.length)} 场阵容</span>
                       </button>}
                     </th>
+                    <AttackProgress limit={leagueTier?.attackLimit} completed={row.attackCount} />
                     <td><Trophy value={row.attackTrophies} /></td>
                     <td><Trophy value={row.defenseTrophies} loss={lost} /></td>
                     <td className="total-trophies"><Trophy value={row.trophies} change={lost} /></td>
-                    <td>{scoreText(row.attackCount)}</td><td>{scoreText(row.defenseCount)}</td>
+                    <td>{scoreText(row.defenseCount)}</td>
                     <td>{scoreText(row.attackStars)}</td>
                     <td>{destructionText(row.attackDestruction)}</td>
                     <td>{destructionText(row.defenseDestruction)}</td>

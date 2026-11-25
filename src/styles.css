@@ -301,6 +301,11 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
   font-size: 14px;
 }
 .army-history-label > span { color: var(--muted); font-size: 12px; }
+.standings-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin-bottom: 6px; }
+.standings-heading h2 { margin: 0; }
+.standings-league-badge { display: inline-flex; align-items: center; gap: 6px; min-width: 0; color: var(--soft); font-size: 14px; line-height: 1.4; }
+.standings-league-badge img { flex: 0 0 auto; object-fit: contain; }
+.standings-league-badge span { overflow-wrap: anywhere; }
 .standings-card { overflow: visible; padding-bottom: 10px; }
 .standings-table { table-layout: fixed; min-width: 1068px; }
 .standings-table .rank-column { width: 58px; }

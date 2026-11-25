@@ -58,12 +58,23 @@ function cachedBattle(timestamp, { defense = false, armyShareCode = "", ...detai
   };
 }
 
-function mockFetch({ attackTimes = times.roundedAttacks, defenseTime = times.roundedDefense } = {}) {
+function mockFetch({
+  attackTimes = times.roundedAttacks, defenseTime = times.roundedDefense,
+  profile, leagueHistory, tierDetails, calls,
+} = {}) {
   return async (address) => {
     const url = new URL(address);
     const path = decodeURIComponent(url.pathname);
+    calls?.push(path);
     if (path === `/v1/players/${playerTag}`) {
-      return Response.json({ currentLeagueGroupTag: groupTag, currentLeagueSeasonId: seasonId });
+      return Response.json({ currentLeagueGroupTag: groupTag, currentLeagueSeasonId: seasonId, ...profile });
+    }
+    if (path === `/v1/players/${playerTag}/leaguehistory`) {
+      return leagueHistory ? Response.json({ items: leagueHistory }) : new Response(null, { status: 404 });
+    }
+    if (path.startsWith("/v1/leaguetiers/")) {
+      const details = tierDetails?.[path.split("/").at(-1)];
+      return details ? Response.json(details) : new Response(null, { status: 404 });
     }
     if (path === `/v1/leaguegroup/${groupTag}/${seasonId}`) {
       const selected = url.searchParams.get("playerTag") === playerTag;
@@ -78,6 +89,13 @@ function mockFetch({ attackTimes = times.roundedAttacks, defenseTime = times.rou
     }
     assert.fail(`Unexpected API request: ${path}`);
   };
+}
+
+function collectWithTierFixtures(options) {
+  return fetchRankedReport({
+    token: "fixture-developer-token", playerTag, week,
+    includeBattleViews: true, requestIntervalMs: 0, fetchImpl: mockFetch(options),
+  });
 }
 
 async function snapshotFixture(context, attacks, defenses) {
@@ -181,4 +199,103 @@ test("a partial official ledger can still recover a distinct archived match", as
   const result = await fixture.fetch({ attackTimes: [times.roundedAttacks[0]] });
   assertDistinctAttackHistory(result);
   assert.equal((await fixture.saved()).attacks.length, 2);
+});
+
+const officialIconSmall = "https://api-assets.clashofclans.com/leagues/72/fixture.png";
+const officialIconMedium = "https://api-assets.clashofclans.com/leagues/144/fixture.png";
+
+test("the current league badge and weekly limit come from the existing player fetch", async () => {
+  const calls = [];
+  const result = await collectWithTierFixtures({
+    profile: { leagueTier: {
+      id: 105000035,
+      name: "Legend League II",
+      iconUrls: { small: officialIconSmall, medium: officialIconMedium },
+    } },
+    calls,
+  });
+  assert.deepEqual(result.leagueTier, {
+    id: 105000035, name: "传奇 II", iconUrl: officialIconSmall, attackLimit: 30,
+  });
+  assert.equal(result.standings[0].attackCount, 2);
+  assert.equal(calls.some((path) => path.includes("/leaguetiers/") || path.includes("/leaguehistory")), false);
+});
+
+test("league icons reject untrusted host, credentials, explicit default port, and malformed URL", async () => {
+  const result = await collectWithTierFixtures({
+    profile: { leagueTier: {
+      id: 105000033,
+      name: "Electro League 33",
+      iconUrls: {
+        small: "https://api-assets.clashofclans.com.invalid/leagues/72/fixture.png",
+        medium: "https://token@api-assets.clashofclans.com/leagues/144/fixture.png",
+        tiny: "https://api-assets.clashofclans.com:443/leagues/36/fixture.png",
+      },
+    } },
+    tierDetails: { 105000033: {
+      id: 105000033,
+      iconUrls: {
+        small: "https://api-assets.clashofclans.com/leagues/72/%invalid.png",
+        medium: "http://api-assets.clashofclans.com/leagues/144/fixture.png",
+        tiny: "https://api-assets.clashofclans.com/leagues/36/fixture.png",
+      },
+    } },
+  });
+  assert.deepEqual(result.leagueTier, {
+    id: 105000033, name: "Electro League 33", attackLimit: 18,
+    iconUrl: "https://api-assets.clashofclans.com/leagues/36/fixture.png",
+  });
+});
+
+const previousGroupProfile = {
+  currentLeagueGroupTag: "#NEWGROUP",
+  currentLeagueSeasonId: seasonId + 7 * 86_400,
+  previousLeagueGroupTag: groupTag,
+  previousLeagueSeasonId: seasonId,
+  leagueTier: { id: 105000035, name: "Legend League II", iconUrls: { small: officialIconSmall } },
+};
+
+test("a previous group uses matching season/group history and its recorded battle limit", async () => {
+  const calls = [];
+  const result = await collectWithTierFixtures({
+    profile: previousGroupProfile,
+    leagueHistory: [
+      { leagueSeasonId: seasonId, leagueGroupTag: "#WRONG", leagueTierId: 105000033, maxBattles: 18 },
+      { leagueSeasonId: seasonId, leagueTierId: 105000035, maxBattles: 30 },
+      { leagueSeasonId: seasonId, leagueGroupTag: groupTag, leagueTierId: 105000034, maxBattles: 22 },
+    ],
+    tierDetails: { 105000034: { id: 105000034, name: "Legend League III", iconUrls: { medium: officialIconMedium } } },
+    calls,
+  });
+  assert.deepEqual(result.leagueTier, {
+    id: 105000034, name: "传奇 III", iconUrl: officialIconMedium, attackLimit: 22,
+  });
+  assert.equal(calls.includes("/v1/leaguetiers/105000034"), true);
+  assert.equal(calls.includes("/v1/leaguetiers/105000035"), false);
+});
+
+test("unavailable optional league endpoints preserve the battle report", async () => {
+  const noHistory = await collectWithTierFixtures({ profile: previousGroupProfile });
+  assert.equal(noHistory.leagueTier, null);
+  assertCompleteStanding(noHistory);
+
+  const noBadge = await collectWithTierFixtures({
+    profile: previousGroupProfile,
+    leagueHistory: [{ leagueSeasonId: seasonId, leagueTierId: 105000034 }],
+  });
+  assert.deepEqual(noBadge.leagueTier, { id: 105000034, name: "传奇 III", iconUrl: null, attackLimit: 24 });
+  assertCompleteStanding(noBadge);
+});
+
+test("Legend I can show a badge without assigning a weekly attack limit", async () => {
+  const result = await collectWithTierFixtures({
+    profile: { currentLeagueGroupTag: "#0", leagueTier: {
+      id: 105000036, name: "Legend League I", iconUrls: { small: officialIconSmall },
+    } },
+  });
+  assert.deepEqual(result.leagueTier, {
+    id: 105000036, name: "传奇 I", iconUrl: officialIconSmall, attackLimit: null,
+  });
+  assert.equal(result.battleViews.personalOnly, true);
+  assert.deepEqual(result.standings, []);
 });

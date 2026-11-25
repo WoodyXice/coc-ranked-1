@@ -40,6 +40,6 @@ GitHub Actions 会构建两种 EXE 和更新清单，完成后发布正式版。
 
 ## 素材来源
 
-游戏素材归 Supercell 所有，图标来自 [ClashKing Assets](https://github.com/ClashKingInc/ClashKingAssets/tree/996a639ec887560bead815f76bc3942d1c931930/assets)。图标目录附有上游的 [GNU GPL v3 文本](public/army-icons/LICENSE)。阵容码解析参考了 [clashy.go v0.1.21](https://github.com/ClashKingInc/clashy.go/tree/v0.1.21)，附有 [MIT 许可文本](public/third-party/clashy-go-MIT.txt)。
+游戏素材归 Supercell 所有。内置阵容图标和排位徽章来自 [ClashKing Assets](https://github.com/ClashKingInc/ClashKingAssets/tree/996a639ec887560bead815f76bc3942d1c931930/assets)，附有上游的 [GNU GPL v3 文本](public/army-icons/LICENSE)。阵容码解析参考了 [clashy.go v0.1.21](https://github.com/ClashKingInc/clashy.go/tree/v0.1.21)，附有 [MIT 许可文本](public/third-party/clashy-go-MIT.txt)。
 
 本作品为非官方粉丝作品，未获 Supercell 认可。 [Supercell 粉丝内容政策](https://supercell.com/en/fan-content-policy/)
