@@ -4,6 +4,7 @@ import AccountPanel from "./AccountPanel.jsx";
 import ArmyLineup, { ArmyAttribution, hasLineup } from "./ArmyLineup.jsx";
 import Standings, { StandingSummary, Trophy } from "./Standings.jsx";
 import UpdatePanel from "./UpdatePanel.jsx";
+import { DEFENSE_TOP_N, defenseRanks } from "../insights.mjs";
 import { formatDuration, formatTime } from "./battle-time.mjs";
 
 const TAU = Math.PI * 2;
@@ -198,7 +199,7 @@ const tags = ["meta", "standings", "attacks", "defenses"];
 const sourceLabels = { sample: "截图示例", api: "官方 API" };
 const initialAccounts = { accounts: [], selectedTag: "", hasDeveloperToken: false };
 
-function BattleLog({ kind, battleViews, isSample, accountName }) {
+function BattleLog({ kind, battleViews, isSample, accountName, standings = [] }) {
   const offense = kind === "attacks";
   const mode = battleViews?.defenseTrophyMode;
   const lost = !offense && mode === "lost";
@@ -213,6 +214,7 @@ function BattleLog({ kind, battleViews, isSample, accountName }) {
     : "—";
   const partialDurations = rows.some((row) => !Number.isFinite(row.durationSeconds));
   const hasDuration = rows.some((row) => Number.isFinite(row.durationSeconds));
+  const ranks = offense && battleViews?.defenseTrophyMode !== "lost" ? defenseRanks(standings) : new Map();
 
   return (
     <section className="battle-log" aria-labelledby="battle-title">
@@ -250,11 +252,13 @@ function BattleLog({ kind, battleViews, isSample, accountName }) {
                   const timestamp = row.battleTimestamp || row.timestamp;
                   const strategy = row.strategy || "已获取阵容";
                   const opponent = row.opponentName || row.opponentTag || "未知玩家";
+                  const defenseRank = ranks.get(row.opponentTag);
                   return (
-                    <tr key={row.id || index}>
+                    <tr key={row.id || index} className={defenseRank <= DEFENSE_TOP_N ? "defense-top-hit" : undefined}>
                       <th scope="row">
                         <span className="battle-opponent-name" title={opponent}>{opponent}</span>
                         {row.opponentTag && row.opponentName && <small>{row.opponentTag}</small>}
+                        {defenseRank && <span className="defense-rank-badge">防守第 {defenseRank} 名</span>}
                       </th>
                       <td><time dateTime={timestamp || undefined}>{formatTime(timestamp)}</time></td>
                       <td>{formatDuration(row.durationSeconds)}</td>
@@ -278,6 +282,7 @@ function BattleLog({ kind, battleViews, isSample, accountName }) {
             </table>
           </div>
           {rows.some((row) => hasLineup(row.army)) && <ArmyAttribution />}
+          {ranks.size > 0 && <p className="battle-note">「防守第 N 名」按组内防守得杯排名；打过防守前 {DEFENSE_TOP_N} 的整行标黄。</p>}
           {rows.some((row) => row.strategy) && <p className="battle-note">流派根据公开阵容推断，实际打法可能不同。</p>}
           {partialDurations && <p className="battle-note">{hasDuration ? "部分对战的用时未由官方 API 提供。" : "本次战绩没有附单场用时。"}</p>}
         </>
@@ -494,7 +499,7 @@ export default function App() {
               attacks={payload.raw?.attacks ?? report.attacks} classifiedAttacks={report.attacks}
               groupTag={report.groupTag} week={report.week} isSample={report.source === "sample"} />}
             {report && (tab === "attacks" || tab === "defenses") && <BattleLog key={battleViews?.playerTag + tab} kind={tab} battleViews={battleViews}
-              isSample={report.source === "sample"} accountName={battleAccountName} />}
+              isSample={report.source === "sample"} accountName={battleAccountName} standings={payload.raw?.standings ?? []} />}
             {!report && <section className="empty-card empty-results" aria-label="暂无战报">
               <p>{busy ? "查询结果会显示在这里。" : accounts.selectedTag && accounts.hasDeveloperToken
                 ? "点击「查询本周排位」获取当前村庄的战报。" : "添加村庄并设置开发者 API 令牌，即可查询本周排位。"}</p>
