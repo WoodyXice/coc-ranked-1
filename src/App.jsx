@@ -4,6 +4,7 @@ import AccountPanel from "./AccountPanel.jsx";
 import ArmyLineup, { ArmyAttribution, hasLineup } from "./ArmyLineup.jsx";
 import Standings, { StandingSummary, Trophy } from "./Standings.jsx";
 import UpdatePanel from "./UpdatePanel.jsx";
+import EquipmentFilter from "./EquipmentFilter.jsx";
 import { DEFENSE_TOP_N, defenseRanks } from "../insights.mjs";
 import { formatDuration, formatTime } from "./battle-time.mjs";
 
@@ -195,7 +196,7 @@ function Report({ report, reportRef, battleViews }) {
   );
 }
 
-const tags = ["meta", "standings", "attacks", "defenses"];
+const tags = ["meta", "standings", "equipment", "attacks", "defenses"];
 const sourceLabels = { sample: "截图示例", api: "官方 API" };
 const initialAccounts = { accounts: [], selectedTag: "", hasDeveloperToken: false };
 
@@ -311,6 +312,7 @@ export default function App() {
   const [tab, setTab] = useState("meta");
   const [busy, setBusy] = useState("");
   const [feedback, setFeedback] = useState(null);
+  const [standingFocus, setStandingFocus] = useState(null);
   const reportRef = useRef(null);
   const working = useRef(false);
   const resultsByTag = useRef(new Map());
@@ -321,6 +323,7 @@ export default function App() {
   const tabLabels = {
     meta: "小组流派",
     standings: "排位排名",
+    equipment: "装备筛选",
     attacks: "进攻" + (battleViews?.attacks ? ` ${battleViews.attacks.length}` : ""),
     defenses: "防守" + (battleViews?.defenses ? ` ${battleViews.defenses.length}` : ""),
   };
@@ -451,6 +454,11 @@ export default function App() {
     });
   }
 
+  function openPlayer(playerTag, equipment) {
+    setStandingFocus({ playerTag, equipment, nonce: Date.now() });
+    setTab("standings");
+  }
+
   function moveTab(event) {
     const index = tags.indexOf(tab);
     const next = {
@@ -483,7 +491,7 @@ export default function App() {
               {tags.map((name) => (
                 <button type="button" id={"tab-" + name} key={name} role="tab" aria-controls="report-panel"
                   aria-selected={tab === name} tabIndex={tab === name ? 0 : -1}
-                  disabled={busy === "正在生成图片…"} onClick={() => setTab(name)} onKeyDown={moveTab}>{tabLabels[name]}</button>
+                  disabled={busy === "正在生成图片…"} onClick={() => { setStandingFocus(null); setTab(name); }} onKeyDown={moveTab}>{tabLabels[name]}</button>
               ))}
             </div>
             {report && <div className="export-actions">
@@ -497,7 +505,11 @@ export default function App() {
               report={report} reportRef={reportRef} battleViews={battleViews} />}
             {report && tab === "standings" && <Standings key={report.groupTag + report.week} rows={payload.raw?.standings ?? []} battleViews={battleViews}
               attacks={payload.raw?.attacks ?? report.attacks} classifiedAttacks={report.attacks}
-              groupTag={report.groupTag} week={report.week} isSample={report.source === "sample"} />}
+              groupTag={report.groupTag} week={report.week} isSample={report.source === "sample"} focus={standingFocus} />}
+            {report && tab === "equipment" && <EquipmentFilter key={report.groupTag + report.week}
+              attacks={payload.raw?.attacks ?? []} standings={payload.raw?.standings ?? []}
+              groupTag={report.groupTag} week={report.week} isSample={report.source === "sample"}
+              personalOnly={!!battleViews?.personalOnly} onOpenPlayer={openPlayer} />}
             {report && (tab === "attacks" || tab === "defenses") && <BattleLog key={battleViews?.playerTag + tab} kind={tab} battleViews={battleViews}
               isSample={report.source === "sample"} accountName={battleAccountName} standings={payload.raw?.standings ?? []} />}
             {!report && <section className="empty-card empty-results" aria-label="暂无战报">

@@ -1,7 +1,7 @@
-import { Fragment, useId, useMemo, useState } from "react";
+import { Fragment, useEffect, useId, useMemo, useState } from "react";
 import ArmyLineup, { ArmyAttribution, hasLineup } from "./ArmyLineup.jsx";
 import { formatDuration, formatShortTime, formatTime } from "./battle-time.mjs";
-import { DEFENSE_TOP_N, defenseRanks, myAttacksByOpponent } from "../insights.mjs";
+import { DEFENSE_TOP_N, attackEquipmentIds, defenseRanks, myAttacksByOpponent } from "../insights.mjs";
 
 const number = new Intl.NumberFormat("zh-CN");
 const signed = new Intl.NumberFormat("zh-CN", { signDisplay: "exceptZero" });
@@ -58,22 +58,25 @@ function DirectionTiming({ timestamp, average, count }) {
   </>;
 }
 
-function ArmyHistory({ history, player }) {
+function ArmyHistory({ history, player, focusEquipment }) {
   return (
     <div className="group-army-history">
       <h3>{player.playerName || player.playerTag} 已获取的进攻阵容</h3>
       {history.map((battle, index) => {
         const timestamp = battle.battleTimestamp || battle.timestamp;
         const strategy = battle.strategy || "已获取阵容";
+        const gear = focusEquipment ? attackEquipmentIds(battle.army) : null;
+        const carried = !!focusEquipment?.ids?.length && focusEquipment.ids.every((id) => gear.has(id));
         const facts = [
           Number.isFinite(battle.durationSeconds) && `用时 ${formatDuration(battle.durationSeconds)}`,
           Number.isInteger(battle.stars) && `${battle.stars} 星`,
           Number.isFinite(battle.destruction) && `${battle.destruction}%`,
         ].filter(Boolean);
         return (
-          <div className="army-history-row" key={battle.id || index}>
+          <div className={"army-history-row" + (carried ? " army-history-focus" : "")} key={battle.id || index}>
             <div className="army-history-label">
               <strong title={strategy}>{strategy}</strong>
+              {carried && <span className="gear-badge">带{focusEquipment.name}</span>}
               <span>
                 {timestamp && <> · <time dateTime={timestamp} title={formatTime(timestamp)}>{formatShortTime(timestamp)}</time></>}
                 {facts.length > 0 && " · " + facts.join(" · ")}
@@ -98,7 +101,7 @@ function MyResult({ results }) {
   ));
 }
 
-export default function Standings({ rows, battleViews, groupTag, week, isSample, attacks = emptyAttacks, classifiedAttacks = emptyAttacks }) {
+export default function Standings({ rows, battleViews, groupTag, week, isSample, attacks = emptyAttacks, classifiedAttacks = emptyAttacks, focus = null }) {
   const [sort, setSort] = useState({ key: "rank", ascending: true });
   const [expandedPlayer, setExpandedPlayer] = useState(null);
   const panelPrefix = useId();
@@ -108,6 +111,16 @@ export default function Standings({ rows, battleViews, groupTag, week, isSample,
   const mine = useMemo(() => myAttacksByOpponent(battleViews), [battleViews]);
   const showDefenseRank = !lost && ranks.size > 0;
   const rankedRows = rows.map((row) => ({ ...row, defenseRank: ranks.get(row.playerTag) ?? null }));
+
+  useEffect(() => {
+    if (!focus?.playerTag) return;
+    setExpandedPlayer(focus.playerTag);
+    const frame = requestAnimationFrame(() => {
+      document.getElementById(`${panelPrefix}-row-${focus.playerTag.replace(/^#/, "")}`)
+        ?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focus, panelPrefix]);
   const attackHistory = useMemo(() => {
     const grouped = new Map();
     const labels = new Map(classifiedAttacks.map(({ id, strategy }) => [id, strategy]));
@@ -187,7 +200,7 @@ export default function Standings({ rows, battleViews, groupTag, week, isSample,
               const rowClass = [selected === row.playerTag && "standing-selected", topHit && "defense-top-hit"].filter(Boolean).join(" ");
               return (
                 <Fragment key={row.playerTag}>
-                  <tr className={rowClass || undefined}>
+                  <tr className={rowClass || undefined} id={`${panelPrefix}-row-${row.playerTag.replace(/^#/, "")}`}>
                     <td>{scoreText(row.rank)}</td>
                     <th scope="row">
                       <span className="standings-player-name" title={name}>{name}</span>
@@ -211,7 +224,8 @@ export default function Standings({ rows, battleViews, groupTag, week, isSample,
                     <td><DirectionTiming timestamp={row.lastDefenseAt} average={row.defenseDurationAverage} count={row.defenseDurationCount} /></td>
                   </tr>
                   {expanded && <tr className="army-expanded-row"><td colSpan={columns.length + 1 + Number(showDefenseRank)} id={panelId}>
-                    <ArmyHistory history={history} player={row} />
+                    <ArmyHistory history={history} player={row}
+                      focusEquipment={focus?.playerTag === row.playerTag ? focus.equipment : null} />
                   </td></tr>}
                 </Fragment>
               );

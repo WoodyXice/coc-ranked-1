@@ -4,11 +4,12 @@ import ExcelJS from "exceljs";
 import { getReport } from "../analytics.mjs";
 import { decodeArmyShareCode } from "../collector.mjs";
 import { workbookBytes } from "../files.mjs";
-import { defenseRanks, myAttacksByOpponent } from "../insights.mjs";
+import { armySets, attacksWithEquipment, defenseRanks, equipmentUsage, myAttacksByOpponent } from "../insights.mjs";
 
 function strategyOf(code) {
   return getReport({ source: "api", attacks: [{ id: "x", armyShareCode: code }] }).attacks[0].strategy;
 }
+
 test("defense ranks sort by defense trophies, then fewer stars taken, then official rank", () => {
   const ranks = defenseRanks([
     { playerTag: "#A", rank: 1, defenseTrophies: 50, defenseStars: 6, defenseCount: 3 },
@@ -26,6 +27,27 @@ test("my attacks are grouped by opponent", () => {
     { opponentTag: "#A", stars: 2, destruction: 80, trophies: 20, timestamp: "2026-11-24T01:00:00Z" },
   ] });
   assert.deepEqual(mine.get("#A").map((r) => [r.stars, r.trophies]), [[2, 20], [3, 40]]);
+});
+
+test("equipment usage groups gear under its hero and computes rates", () => {
+  const attack = (id, playerTag, code, stars, destruction) => ({
+    id, playerTag, playerName: playerTag, stars, destruction, army: decodeArmyShareCode(code),
+  });
+  const usage = equipmentUsage([
+    attack("1", "#A", "h1e16_17-7e59_60u4x80", 3, 100),
+    attack("2", "#A", "h1e16_15u4x80", 2, 90),
+    attack("3", "#B", "h1e16_17u4x80", 3, 100),
+    attack("4", "#B", "h0e0_1u4x80", 1, 50),
+  ], [
+    { playerTag: "#A", attackWins: 3, attackLosses: 1 },
+    { playerTag: "#B", attackWins: null, attackLosses: null },
+  ]);
+  assert.deepEqual(usage.map((item) => [item.heroId, item.id]),
+    [[0, 1], [0, 0], [1, 16], [1, 17], [1, 15], [7, 60], [7, 59]]);
+  const monolith = usage.find((item) => item.id === 16);
+  assert.equal(monolith.name, "擎天箭矢");
+  assert.deepEqual(monolith.players.map((p) => [p.playerTag, p.carried, p.threeStarRate, p.weekWinRate]),
+    [["#A", 2, 0.5, 0.75], ["#B", 1, 1, null]]);
 });
 
 test("queen charge bowler needs Monolith Arrow and at least four healers", () => {
@@ -65,4 +87,32 @@ test("workbook adds the defense top list and opponent defense ranks", async () =
   const personal = workbook.getWorksheet("个人进攻");
   assert.equal(personal.getRow(1).getCell(9).value, "对手防守排名");
   assert.equal(personal.getRow(2).getCell(9).value, 1);
+});
+
+test("multi-gear filter keeps attacks carrying every selected item and splits army sets", () => {
+  const attack = (id, code, stars) => ({ id, playerTag: "#A", stars, army: decodeArmyShareCode(code) });
+  const attacks = [
+    attack("1", "h1e16_17-7e59_60u4x80s3x35", 3),
+    attack("2", "h1e16_17-7e59_53u4x80s3x35", 2),
+    attack("3", "h1e16_17-7e59_60u9x132s2x10", 1),
+  ];
+  const matched = attacksWithEquipment(attacks, [16, 59, 60]);
+  assert.deepEqual(matched.map((a) => a.id), ["1", "3"]);
+  assert.deepEqual(attacksWithEquipment(attacks, []), []);
+  const sets = armySets(attacksWithEquipment(attacks, [16]));
+  assert.deepEqual(sets.map((set) => [set.count, set.averageStars]), [[2, 2.5], [1, 1]]);
+});
+
+test("army sets ignore deployment order and split stacks", () => {
+  const attack = (id, code, stars, destruction) => ({ id, playerTag: "#A", stars, destruction, army: decodeArmyShareCode(code) });
+  const sets = armySets([
+    attack("1", "u4x80-5x7s3x35-1x2", 3, 100),
+    attack("2", "u5x7-4x80s1x2-3x35", 2, 80),
+    attack("3", "u2x80-5x7-2x80s3x35-1x2", 1, 60),
+  ]);
+  assert.equal(sets.length, 1);
+  assert.equal(sets[0].count, 3);
+  assert.equal(sets[0].averageStars, 2);
+  assert.equal(sets[0].averageDestruction, 80);
+  assert.deepEqual(sets[0].army.troops.map((t) => [t.id, t.count]), [[7, 5], [80, 4]]);
 });

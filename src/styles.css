@@ -331,6 +331,27 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .my-result { display: block; white-space: nowrap; font-size: 13px; }
 .defense-rank-badge { display: block; font-size: 12px; color: var(--muted); }
 .defense-top-hit .defense-rank-badge { color: #f0cf6a; }
+.gear-badge { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 4px; background: #4a3d12; color: #f0cf6a; font-size: 12px; font-weight: 600; }
+.army-history-focus { box-shadow: inset 3px 0 0 #e0b93e; }
+.gear-picker { display: grid; gap: 10px; padding: 14px 16px; margin-bottom: 14px; }
+.gear-picker-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 13px; }
+.gear-picker-status button { min-height: 28px; padding: 2px 12px; }
+.gear-hero-row { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; align-items: start; }
+.gear-hero-name { padding-top: 8px; color: var(--muted); font-size: 14px; }
+.gear-hero-active { color: #f0cf6a; font-weight: 700; }
+.gear-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.gear-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 3px 10px 3px 4px; color: inherit; background: #202124; border: 1px solid var(--line); border-radius: 18px; font-size: 13px; }
+.gear-chip img { width: 28px; height: 28px; border-radius: 50%; }
+.gear-chip small { color: var(--muted); font-size: 12px; }
+.gear-chip[aria-pressed="true"] { background: #4a3d12; border-color: #e0b93e; }
+.gear-chip[aria-pressed="true"] small { color: #f0cf6a; }
+.gear-chip:disabled { opacity: 0.4; cursor: not-allowed; }
+.equipment-table .army-expanded-row td { text-align: left; }
+.gear-result-summary { margin: 0 0 10px; font-weight: 600; }
+@media (max-width: 650px) { .gear-hero-row { grid-template-columns: 1fr; gap: 4px; } .gear-hero-name { padding-top: 0; } }
+.player-link { display: block; max-width: 100%; padding: 0; min-height: 0; color: inherit; background: none; border: 0; font: inherit; text-align: left; cursor: pointer; }
+.player-link:hover, .player-link:focus-visible { color: var(--blue); text-decoration: underline; }
+.equipment-table tr > :first-child { text-align: left; }
 .sort-button { min-height: 30px; color: inherit; background: transparent; border-color: transparent; padding: 3px 4px; }
 .sort-indicator { margin-left: 4px; color: var(--blue); }
 
