@@ -9,6 +9,10 @@ export function scoreText(value) {
   return Number.isFinite(value) ? number.format(value) : "—";
 }
 
+function destructionText(value) {
+  return Number.isFinite(value) ? `${value.toFixed(1)}%` : "—";
+}
+
 export function Trophy({ value, loss = false, change = true }) {
   if (!Number.isFinite(value)) return "—";
   const amount = loss && value !== 0 ? -Math.abs(value) : value;
@@ -105,24 +109,26 @@ export default function Standings({ rows, battleViews, groupTag, week, isSample,
     return grouped;
   }, [attacks, classifiedAttacks]);
   const columns = [
-    { key: "rank", label: "排名" },
+    { key: "rank", label: "排名", ascendingFirst: true },
     { key: "attackTrophies", label: "进攻得杯" },
     { key: "defenseTrophies", label: lost ? "防守扣杯" : "防守得杯" },
     { key: "trophies", label: lost ? "本周净杯" : "最终杯数" },
     { key: "attackCount", label: "进攻场次" },
     { key: "defenseCount", label: "防守场次" },
     { key: "attackStars", label: "进攻总星" },
-    { key: "attackDestruction", label: "平均摧毁率" },
+    { key: "attackDestruction", label: "进攻摧毁率", title: "该玩家进攻时造成的平均摧毁率" },
+    { key: "defenseDestruction", label: "平均被摧毁率", title: "该玩家防守时对手造成的平均摧毁率，越低防守表现越好", ascendingFirst: true },
     { key: "attackDurationAverage", label: "平均进攻用时" },
     { key: "defenseDurationAverage", label: "平均防守用时" },
   ];
   const sorted = [...rows].sort((a, b) => compareRows(a, b, sort.key, sort.ascending) || compareRows(a, b, "rank", true));
 
-  function sortHeader({ key, label }) {
+  function sortHeader({ key, label, title, ascendingFirst = false }) {
     const active = sort.key === key;
     return (
       <th key={key} scope="col" aria-sort={active ? sort.ascending ? "ascending" : "descending" : undefined}>
-        <button type="button" className="sort-button" onClick={() => setSort({ key, ascending: active ? !sort.ascending : key === "rank" })}>
+        <button type="button" className="sort-button" title={title}
+          onClick={() => setSort({ key, ascending: active ? !sort.ascending : ascendingFirst })}>
           {label}{active && <span className="sort-indicator" aria-hidden="true">{sort.ascending ? "↑" : "↓"}</span>}
         </button>
       </th>
@@ -145,7 +151,7 @@ export default function Standings({ rows, battleViews, groupTag, week, isSample,
               <col className="rank-column" />
               <col className="player-column" />
               <col className="stat-column" span={6} />
-              <col className="destruction-column" />
+              <col className="destruction-column" span={2} />
               <col className="timing-column" />
               <col className="timing-column" />
             </colgroup>
@@ -172,7 +178,8 @@ export default function Standings({ rows, battleViews, groupTag, week, isSample,
                     <td className="total-trophies"><Trophy value={row.trophies} change={lost} /></td>
                     <td>{scoreText(row.attackCount)}</td><td>{scoreText(row.defenseCount)}</td>
                     <td>{scoreText(row.attackStars)}</td>
-                    <td>{Number.isFinite(row.attackDestruction) ? row.attackDestruction.toFixed(1) + "%" : "—"}</td>
+                    <td>{destructionText(row.attackDestruction)}</td>
+                    <td>{destructionText(row.defenseDestruction)}</td>
                     <td><DirectionTiming timestamp={row.lastAttackAt} average={row.attackDurationAverage} count={row.attackDurationCount} /></td>
                     <td><DirectionTiming timestamp={row.lastDefenseAt} average={row.defenseDurationAverage} count={row.defenseDurationCount} /></td>
                   </tr>

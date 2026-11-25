@@ -302,10 +302,10 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 }
 .army-history-label > span { color: var(--muted); font-size: 12px; }
 .standings-card { overflow: visible; padding-bottom: 10px; }
-.standings-table { table-layout: fixed; min-width: 950px; }
+.standings-table { table-layout: fixed; min-width: 1068px; }
 .standings-table .rank-column { width: 58px; }
 .standings-table .stat-column { width: 74px; }
-.standings-table .destruction-column { width: 90px; }
+.standings-table .destruction-column { width: 104px; }
 .standings-table .timing-column { width: 124px; }
 .standings-table thead {
   position: sticky;
@@ -326,9 +326,9 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .sort-button { min-height: 30px; color: inherit; background: transparent; border-color: transparent; padding: 3px 4px; }
 .sort-indicator { margin-left: 4px; color: var(--blue); }
 
-@media (max-width: 1070px) {
+@media (max-width: 1185px) {
   .standings-card { max-height: 64vh; overflow: auto; }
-  .group-army-history { position: sticky; left: 16px; width: calc(100% - max(0px, 1060px - 100vw)); }
+  .group-army-history { position: sticky; left: 16px; width: min(100%, calc(100vw - 115px)); }
   .army-history-row { grid-template-columns: clamp(154px, 48vw, 240px) minmax(0, 1fr); }
   .army-history-label { overflow: hidden; }
 }
