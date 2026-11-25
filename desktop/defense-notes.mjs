@@ -1,7 +1,3 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
-
 const maxNoteLength = 300;
 
 function normalizeTag(value) {
@@ -23,77 +19,54 @@ function normalizeNote(value) {
   return note;
 }
 
-export function createDefenseNoteStore(file) {
-  let queue = Promise.resolve();
-
-  async function read() {
-    try {
-      const data = JSON.parse(await readFile(file, "utf8"));
-      if (data?.version !== 1 || !Array.isArray(data.notes) || !data.notes.every((entry) =>
-        entry && entry.playerTag === normalizeTag(entry.playerTag) && entry.playerTag
-        && validBattleId(entry.battleId) && typeof entry.note === "string"
-      )) throw new Error();
-      return data;
-    } catch (error) {
-      if (error.code === "ENOENT") return { version: 1, notes: [] };
-      throw new Error("无法读取当前 Windows 用户的防守备注文件。");
-    }
-  }
-
-  async function write(data) {
-    const staged = file + "." + randomUUID() + ".tmp";
-    try {
-      await mkdir(dirname(file), { recursive: true });
-      await writeFile(staged, JSON.stringify(data, null, 2), { encoding: "utf8", mode: 0o600, flag: "wx" });
-      await rename(staged, file);
-    } catch {
-      throw new Error("无法将防守备注保存到当前 Windows 用户。");
-    } finally {
-      await rm(staged, { force: true }).catch(() => {});
-    }
-  }
+export function createDefenseNoteStore(db) {
+  const upsert = db.prepare(`
+    INSERT INTO defense_notes (player_tag, battle_id, note, updated_at) VALUES (?, ?, ?, ?)
+    ON CONFLICT (player_tag, battle_id) DO UPDATE SET note = excluded.note, updated_at = excluded.updated_at
+  `);
+  const remove = db.prepare("DELETE FROM defense_notes WHERE player_tag = ? AND battle_id = ?");
+  const forPlayer = db.prepare("SELECT battle_id, note FROM defense_notes WHERE player_tag = ?");
 
   return {
     save({ playerTag: tag, battleId, note: value } = {}) {
       const playerTag = normalizeTag(tag);
       if (!playerTag || !validBattleId(battleId)) throw new Error("这场防守缺少有效的村庄标签或战斗编号。");
       const note = normalizeNote(value);
-      const operation = queue.then(async () => {
-        const data = await read();
-        const index = data.notes.findIndex((entry) => entry.playerTag === playerTag && entry.battleId === battleId);
-        if (index < 0 && !note) return "";
-        if (index < 0) data.notes.push({ playerTag, battleId, note });
-        else if (note) data.notes[index].note = note;
-        else data.notes.splice(index, 1);
-        await write(data);
-        return note;
-      });
-      queue = operation.catch(() => {});
-      return operation;
+      try {
+        if (note) upsert.run(playerTag, battleId, note, new Date().toISOString());
+        else remove.run(playerTag, battleId);
+      } catch {
+        throw new Error("无法将防守备注保存到当前 Windows 用户。");
+      }
+      return note;
     },
 
     async withNotes(battleViews) {
       const playerTag = normalizeTag(battleViews?.playerTag);
       if (!playerTag || !Array.isArray(battleViews.defenses) || !battleViews.defenses.length) return battleViews;
+      let notes;
       try {
-        await queue;
-        const data = await read();
-        const notes = new Map(data.notes.filter((entry) => entry.playerTag === playerTag)
-          .map((entry) => [entry.battleId, entry.note]));
-        return {
-          ...battleViews,
-          defenses: battleViews.defenses.map((battle) => {
-            let note = notes.get(battle.id);
-            if (note === undefined && Array.isArray(battle.previousIds)) {
-              const previousId = battle.previousIds.find((id) => validBattleId(id) && notes.has(id));
-              note = notes.get(previousId);
-            }
-            return { ...battle, note: note ?? "" };
-          }),
-        };
-      } catch (error) {
-        return { ...battleViews, noteLoadError: error.message };
+        notes = new Map(forPlayer.all(playerTag).map((row) => [row.battle_id, row.note]));
+      } catch {
+        return { ...battleViews, noteLoadError: "无法读取当前 Windows 用户的防守备注。" };
       }
+      return {
+        ...battleViews,
+        defenses: battleViews.defenses.map((battle) => {
+          let note = notes.get(battle.id);
+          if (note === undefined && Array.isArray(battle.previousIds)) {
+            const previousId = battle.previousIds.find((id) => validBattleId(id) && notes.has(id));
+            note = notes.get(previousId);
+          }
+          return { ...battle, note: note ?? "" };
+        }),
+      };
     },
   };
+}
+
+// Used by the one-time import of the old defense-notes.json file.
+export function validDefenseNote(entry) {
+  return Boolean(entry && typeof entry.playerTag === "string" && entry.playerTag === normalizeTag(entry.playerTag)
+    && validBattleId(entry.battleId) && typeof entry.note === "string" && entry.note.length);
 }

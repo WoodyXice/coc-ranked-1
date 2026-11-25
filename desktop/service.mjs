@@ -64,6 +64,13 @@ export async function collectData({ playerTag, token } = {}, options = {}) {
   return { raw, report: getReport(raw) };
 }
 
+// A saved report is reused only within the ranked week it was collected in.
+export function cachedReport(saved, now = new Date()) {
+  if (!saved?.raw || !saved.fetchedAt) return null;
+  if (rankedWeek(new Date(saved.fetchedAt)) !== rankedWeek(now)) return null;
+  return { raw: saved.raw, report: getReport(saved.raw), fetchedAt: saved.fetchedAt };
+}
+
 export function sampleReport() {
   const playerTag = "#DEMO1";
   const standing = {

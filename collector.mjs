@@ -1,7 +1,4 @@
-import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { isIP } from 'node:net';
-import { resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const apiRoot = 'https://api.clashofclans.com/v1';
@@ -658,46 +655,36 @@ function mergeBattles(current, cached) {
   return { rows, restored };
 }
 
-async function mergeSnapshot(snapshotDir, league, current, currentDefenses) {
-  if (!snapshotDir) return {
+async function mergeSnapshot(snapshots, league, current, currentDefenses) {
+  if (!snapshots) return {
     attacks: mergeBattles(current, []).rows,
     defenses: mergeBattles(currentDefenses, []).rows,
     restoredAttacks: 0,
   };
-  const path = resolve(snapshotDir, `${league.groupTag.slice(1)}-${league.seasonId}.json`);
-  const previous = snapshotWrites.get(path) ?? Promise.resolve();
+  const key = `${league.groupTag}|${league.seasonId}`;
+  const previous = snapshotWrites.get(key) ?? Promise.resolve();
   const pending = previous.catch(() => {}).then(async () => {
-    let cached = [];
-    let cachedDefenses = [];
+    let cached;
     try {
-      const snapshot = JSON.parse(await readFile(path, 'utf8'));
-      if (!Array.isArray(snapshot.attacks) || snapshot.groupTag !== league.groupTag
-          || snapshot.seasonId !== league.seasonId) throw new Error('Invalid snapshot');
-      cached = snapshot.attacks;
-      if (Array.isArray(snapshot.defenses)) cachedDefenses = snapshot.defenses;
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw clientError(500, '无法读取此小组的本地抓取记录。');
+      cached = await snapshots.read(league);
+    } catch {
+      throw clientError(500, '无法读取此小组的本地抓取记录。');
     }
 
-    const { rows: attacks, restored: restoredAttacks } = mergeBattles(current, cached);
-    const { rows: defenses } = mergeBattles(currentDefenses, cachedDefenses);
-    const staging = `${path}.${randomUUID()}.tmp`;
+    const { rows: attacks, restored: restoredAttacks } = mergeBattles(current, cached.attacks);
+    const { rows: defenses } = mergeBattles(currentDefenses, cached.defenses);
     try {
-      await mkdir(snapshotDir, { recursive: true });
-      await writeFile(staging, JSON.stringify({ ...league, attacks, defenses }), { encoding: 'utf8', mode: 0o600 });
-      await rename(staging, path);
+      await snapshots.write(league, attacks, defenses);
     } catch {
       throw clientError(500, '无法保存此小组的本地抓取记录。');
-    } finally {
-      await rm(staging, { force: true }).catch(() => {});
     }
     return { attacks, defenses, restoredAttacks };
   });
-  snapshotWrites.set(path, pending);
+  snapshotWrites.set(key, pending);
   try {
     return await pending;
   } finally {
-    if (snapshotWrites.get(path) === pending) snapshotWrites.delete(path);
+    if (snapshotWrites.get(key) === pending) snapshotWrites.delete(key);
   }
 }
 
@@ -816,7 +803,7 @@ async function fetchRecentPlayerReport(request, member, week, player) {
 
 export async function fetchRankedReport({
   playerTag: rawTag, token: rawToken, week = '', groupTag: rawGroup = '',
-  snapshotDir, fetchImpl = globalThis.fetch, requestIntervalMs = 100, includeBattleViews = false,
+  snapshots, fetchImpl = globalThis.fetch, requestIntervalMs = 100, includeBattleViews = false,
 } = {}) {
   const playerTag = normalizeTag(rawTag);
   const requestedGroup = normalizeTag(rawGroup);
@@ -906,7 +893,7 @@ export async function fetchRankedReport({
   joinBattleDetails(current, views);
   reuseGroupBattleDetails(currentDefenses, current);
   joinBattleDetails(currentDefenses, views);
-  const { attacks: merged, defenses, restoredAttacks } = await mergeSnapshot(snapshotDir, league, current, currentDefenses);
+  const { attacks: merged, defenses, restoredAttacks } = await mergeSnapshot(snapshots, league, current, currentDefenses);
   const attacksByMember = groupByOwner(merged, 'playerTag');
   const defensesByMember = groupByOwner(defenses, 'opponentTag');
   const standings = members.map((member) => {

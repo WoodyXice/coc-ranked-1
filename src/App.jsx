@@ -333,7 +333,12 @@ export default function App() {
     async function loadAccounts() {
       try {
         const result = await window.cocApp.listAccounts();
-        if (active) setAccounts(result);
+        if (!active) return;
+        setAccounts(result);
+        if (result.selectedTag) {
+          const saved = await loadSavedReport(result.selectedTag);
+          if (active && saved) showSavedReport(saved);
+        }
       } catch (failure) {
         if (active) setFeedback({ message: getErrorMessage(failure), error: true });
       } finally {
@@ -366,6 +371,22 @@ export default function App() {
     if (result.selectedTag !== accounts.selectedTag) setPayload(resultsByTag.current.get(result.selectedTag) ?? null);
   }
 
+  // Latest result saved in this ranked week, so a restart doesn't need a new query.
+  async function loadSavedReport(tag) {
+    try {
+      const saved = await window.cocApp.cachedReport(tag);
+      if (saved) resultsByTag.current.set(tag, saved);
+      return saved;
+    } catch {
+      return null;
+    }
+  }
+
+  function showSavedReport(saved) {
+    setPayload(saved);
+    setFeedback({ message: `已显示 ${formatTime(saved.fetchedAt)} 保存的本周战报，点「更新本周排位」可获取最新数据。` });
+  }
+
   async function collectFor(tag) {
     const result = await window.cocApp.collect({ playerTag: tag, token: "" });
     resultsByTag.current.set(tag, result);
@@ -384,7 +405,10 @@ export default function App() {
     void run(accounts.hasDeveloperToken ? "正在查询所选村庄的本周排位…" : "正在切换村庄…", async () => {
       const result = await window.cocApp.selectAccount(tag);
       applyAccountState(result);
-      if (result.hasDeveloperToken && !resultsByTag.current.has(tag)) await collectFor(tag);
+      if (resultsByTag.current.has(tag)) return;
+      const saved = await loadSavedReport(tag);
+      if (saved) showSavedReport(saved);
+      else if (result.hasDeveloperToken) await collectFor(tag);
     });
   }
 
@@ -478,7 +502,7 @@ export default function App() {
         <h1>部落冲突排位战报</h1>
         <UpdatePanel busy={!!busy} />
       </header>
-      <AccountPanel accounts={accounts} busy={accountLoading || !!busy} onSelect={selectAccount}
+      <AccountPanel accounts={accounts} busy={accountLoading || !!busy} hasReport={!!payload?.fetchedAt} onSelect={selectAccount}
         onSaveAccount={saveAccount} onRemoveAccount={removeAccount} onSaveDeveloperToken={saveDeveloperToken}
         onQuery={collect} onSample={loadSample} />
       <div className="app-feedback">

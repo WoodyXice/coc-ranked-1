@@ -8,7 +8,7 @@
 2. 在助手中点「设置令牌」或「管理令牌」，复制检测到的公网出口 IP，点击「申请地址」打开 Supercell 开发者后台。创建 API 密钥时把 IP 填入 **Allowed IP Addresses**，再回到助手保存密钥。
 3. 选择「添加村庄」，输入自己的国际服村庄 Tag，点击「查询本周排位」。游戏内短令牌可留空。
 
-村庄资料、凭据和战报缓存保存在本机的 `%APPDATA%\coc-ranked`。转发 Releases 链接即可让对方用自己的密钥查询。 [详细使用说明](使用说明.md)
+村庄资料、加密后的凭据和战报都保存在本机数据库 `%APPDATA%\coc-ranked\coc-ranked.db`。转发 Releases 链接即可让对方用自己的密钥查询。 [详细使用说明](使用说明.md)
 
 ## 软件更新
 
@@ -23,7 +23,18 @@ npm ci
 npm run package:windows
 ```
 
-安装版和便携版位于 `release/`。开发时可运行 `npm run build`，然后运行 `npm start`。
+安装版和便携版位于 `release/`。开发时可运行 `npm run build`，然后运行 `npm start`。运行测试：`node --test test/*.test.mjs`。
+
+### 本地数据库和结构迁移
+
+本地数据保存在 `%APPDATA%\coc-ranked\coc-ranked.db`(Node 内置 `node:sqlite`)，各文件说明见[使用说明](使用说明.md#数据保存位置)。
+
+数据库结构由 [`desktop/migrations.mjs`](desktop/migrations.mjs) 管理，已执行到的版本记录在 SQLite 的 `PRAGMA user_version`。修改结构时：
+
+1. 在 `migrations` 末尾追加一项，`version` 取下一个整数。**不要修改或删除已发布过的迁移**，用户的数据库已经执行过它们。
+2. `up(db)` 与版本号更新在同一个事务里执行，失败会整体回滚。升级已有数据库前，会自动用 `VACUUM INTO` 保存 `coc-ranked.db.backup-v<旧版本>-<时间>.db`。
+3. 战斗和查询结果以完整 JSON 存在 `data` 列，新增字段通常不需要迁移。只有需要查询或建索引时才加列，可用 `json_extract(data, '$.字段')` 回填。
+4. 在 `test/migrations.test.mjs` 中补测试，再运行全部测试。
 
 ## 协作与发版
 

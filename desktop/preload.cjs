@@ -9,6 +9,7 @@ function invoke(channel, ...args) {
 
 contextBridge.exposeInMainWorld("cocApp", {
   collect: (input) => invoke("coc:collect", input),
+  cachedReport: (tag) => invoke("coc:cached-report", tag),
   listAccounts: () => invoke("coc:accounts"),
   saveAccount: (input) => invoke("coc:save-account", input),
   selectAccount: (tag) => invoke("coc:select-account", tag),
