@@ -1,4 +1,13 @@
 import ExcelJS from "exceljs";
+import {
+  DEFENSE_TOP_N, defenseAverageStars, defenseRanks, myAttacksByOpponent,
+} from "./insights.mjs";
+
+const highlight = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFE699" } };
+
+function fillRow(row) {
+  row.eachCell({ includeEmpty: true }, (cell) => { cell.fill = highlight; });
+}
 
 function styleHeader(row) {
   row.height = 24;
@@ -70,21 +79,37 @@ export async function workbookBytes(report, input) {
   }
   if (input.standings?.length) {
     const sheet = workbook.addWorksheet("小组排名");
-    table(sheet, ["名次", "成员", "村庄标签", "进攻场次", "防守场次", "进攻杯", "防守杯",
+    table(sheet, ["名次", "成员", "村庄标签", "进攻场次", "进攻胜", "进攻负", "防守场次", "进攻杯", "防守杯",
       "最终杯数", "进攻总星", "进攻平均摧毁率 (%)", "防守被拿总星", "防守平均摧毁率 (%)",
       "最近进攻 (UTC)", "最近防守 (UTC)", "平均进攻用时 (秒)", "进攻用时样本", "平均防守用时 (秒)", "防守用时样本"],
-    [10, 26, 18, 14, 14, 13, 13, 14, 13, 23, 16, 23, 27, 27, 21, 16, 21, 16],
+    [10, 26, 18, 14, 10, 10, 14, 13, 13, 14, 13, 23, 16, 23, 27, 27, 21, 16, 21, 16],
     input.standings.map((row) => [
-      row.rank, row.playerName, row.playerTag, row.attackCount, row.defenseCount,
+      row.rank, row.playerName, row.playerTag, row.attackCount, row.attackWins, row.attackLosses, row.defenseCount,
       row.attackTrophies, row.defenseTrophies, row.trophies, row.attackStars,
       row.attackDestruction, row.defenseStars, row.defenseDestruction,
       row.lastAttackAt, row.lastDefenseAt, row.attackDurationAverage, row.attackDurationCount,
       row.defenseDurationAverage, row.defenseDurationCount,
     ]));
-    sheet.getColumn(10).numFmt = "0.0";
-    sheet.getColumn(12).numFmt = "0.0";
-    sheet.getColumn(15).numFmt = "0.0";
-    sheet.getColumn(17).numFmt = "0.0";
+    for (const column of [12, 14, 17, 19]) sheet.getColumn(column).numFmt = "0.0";
+  }
+  const ranks = input.battleViews?.defenseTrophyMode === "lost" ? new Map() : defenseRanks(input.standings ?? []);
+  if (ranks.size) {
+    const mine = myAttacksByOpponent(input.battleViews);
+    const selected = input.battleViews?.playerTag;
+    const byTag = new Map(input.standings.map((row) => [row.playerTag, row]));
+    const top = [...ranks].filter(([, rank]) => rank <= DEFENSE_TOP_N).sort((a, b) => a[1] - b[1]);
+    const sheet = workbook.addWorksheet(`防守前${DEFENSE_TOP_N}`);
+    table(sheet, ["防守排名", "玩家", "村庄标签", "防守得杯", "被打次数", "平均被打星", "被三星次数", "我打过",
+      "我的进攻 (星/摧毁/杯/时间 UTC)"], [10, 26, 18, 12, 12, 13, 13, 10, 70],
+    top.map(([tag, rank]) => {
+      const row = byTag.get(tag);
+      const results = mine.get(tag) ?? [];
+      return [rank, row.playerName, tag, row.defenseTrophies, row.defenseCount, defenseAverageStars(row),
+        row.defenseThreeStars, tag === selected ? "本人" : results.length ? "是" : "否",
+        results.map((r) => `${r.stars}星 ${r.destruction}%${Number.isFinite(r.trophies) ? ` +${r.trophies}杯` : ""} @ ${r.timestamp}`).join("; ")];
+    }));
+    sheet.getColumn(6).numFmt = "0.00";
+    sheet.eachRow((row, index) => { if (index > 1 && row.getCell(8).value === "是") fillRow(row); });
   }
   if (input.battleViews) {
     summary.getCell("C1").value = "查询村庄";
@@ -102,6 +127,11 @@ export async function workbookBytes(report, input) {
       const headings = [isDefense ? "防守时间 (UTC)" : "进攻时间 (UTC)", "对手", "对手标签", "进攻方星数", "摧毁率",
         "进攻流派（推断）", "进攻阵容码", "奖杯变化"];
       const widths = [28, 24, 18, 14, 14, 23, 52, 14];
+      const showRank = !isDefense && ranks.size > 0;
+      if (showRank) {
+        headings.push("对手防守排名");
+        widths.push(15);
+      }
       const noteColumn = headings.length + 1;
       if (isDefense) {
         headings.push("防守备注");
@@ -112,9 +142,16 @@ export async function workbookBytes(report, input) {
       table(sheet, headings, widths, input.battleViews[direction].map((entry) => [
         entry.timestamp, entry.opponentName, entry.opponentTag, entry.stars,
         entry.destruction, entry.strategy, entry.armyShareCode, entry.trophyDelta ?? entry.trophies,
+        ...(showRank ? [ranks.get(entry.opponentTag) ?? null] : []),
         ...(isDefense ? [typeof entry.note === "string" ? entry.note : ""] : []),
         entry.durationSeconds,
       ]));
+      if (showRank) {
+        sheet.eachRow((row, index) => {
+          const rank = row.getCell(9).value;
+          if (index > 1 && Number.isInteger(rank) && rank <= DEFENSE_TOP_N) fillRow(row);
+        });
+      }
       if (isDefense) sheet.getColumn(noteColumn).alignment = { vertical: "top", wrapText: true };
     }
   }

@@ -1,6 +1,7 @@
 import { Fragment, useId, useMemo, useState } from "react";
 import ArmyLineup, { ArmyAttribution, hasLineup } from "./ArmyLineup.jsx";
 import { formatDuration, formatShortTime, formatTime } from "./battle-time.mjs";
+import { DEFENSE_TOP_N, defenseRanks, myAttacksByOpponent } from "../insights.mjs";
 
 const number = new Intl.NumberFormat("zh-CN");
 const signed = new Intl.NumberFormat("zh-CN", { signDisplay: "exceptZero" });
@@ -89,12 +90,24 @@ function ArmyHistory({ history, player }) {
 
 const emptyAttacks = [];
 
+function MyResult({ results }) {
+  return results.map((result, index) => (
+    <span className="my-result" key={index} title={result.timestamp ? formatTime(result.timestamp) : undefined}>
+      {Number.isInteger(result.stars) ? `${result.stars}★` : "—"}{Number.isFinite(result.destruction) ? ` ${result.destruction}%` : ""}
+    </span>
+  ));
+}
+
 export default function Standings({ rows, battleViews, groupTag, week, isSample, attacks = emptyAttacks, classifiedAttacks = emptyAttacks }) {
   const [sort, setSort] = useState({ key: "rank", ascending: true });
   const [expandedPlayer, setExpandedPlayer] = useState(null);
   const panelPrefix = useId();
   const lost = battleViews?.defenseTrophyMode === "lost";
   const selected = battleViews?.playerTag;
+  const ranks = useMemo(() => defenseRanks(rows), [rows]);
+  const mine = useMemo(() => myAttacksByOpponent(battleViews), [battleViews]);
+  const showDefenseRank = !lost && ranks.size > 0;
+  const rankedRows = rows.map((row) => ({ ...row, defenseRank: ranks.get(row.playerTag) ?? null }));
   const attackHistory = useMemo(() => {
     const grouped = new Map();
     const labels = new Map(classifiedAttacks.map(({ id, strategy }) => [id, strategy]));
@@ -113,6 +126,8 @@ export default function Standings({ rows, battleViews, groupTag, week, isSample,
     { key: "attackTrophies", label: "进攻得杯" },
     { key: "defenseTrophies", label: lost ? "防守扣杯" : "防守得杯" },
     { key: "trophies", label: lost ? "本周净杯" : "最终杯数" },
+    ...(showDefenseRank ? [{ key: "defenseRank", label: "防守排名", ascendingFirst: true,
+      title: "按防守得杯排名，并列时平均被打星少的靠前" }] : []),
     { key: "attackCount", label: "进攻场次" },
     { key: "defenseCount", label: "防守场次" },
     { key: "attackStars", label: "进攻总星" },
@@ -121,7 +136,7 @@ export default function Standings({ rows, battleViews, groupTag, week, isSample,
     { key: "attackDurationAverage", label: "平均进攻用时" },
     { key: "defenseDurationAverage", label: "平均防守用时" },
   ];
-  const sorted = [...rows].sort((a, b) => compareRows(a, b, sort.key, sort.ascending) || compareRows(a, b, "rank", true));
+  const sorted = [...rankedRows].sort((a, b) => compareRows(a, b, sort.key, sort.ascending) || compareRows(a, b, "rank", true));
 
   function sortHeader({ key, label, title, ascendingFirst = false }) {
     const active = sort.key === key;
@@ -150,20 +165,29 @@ export default function Standings({ rows, battleViews, groupTag, week, isSample,
             <colgroup>
               <col className="rank-column" />
               <col className="player-column" />
-              <col className="stat-column" span={6} />
+              {showDefenseRank ? <>
+                <col className="stat-column" span={4} />
+                <col className="my-result-column" />
+                <col className="stat-column" span={3} />
+              </> : <col className="stat-column" span={6} />}
               <col className="destruction-column" span={2} />
               <col className="timing-column" />
               <col className="timing-column" />
             </colgroup>
-            <thead><tr>{sortHeader(columns[0])}<th scope="col">村庄</th>{columns.slice(1).map(sortHeader)}</tr></thead>
+            <thead><tr>{sortHeader(columns[0])}<th scope="col">村庄</th>{columns.slice(1, showDefenseRank ? 5 : 4).map(sortHeader)}
+              {showDefenseRank && <th scope="col" title="本人本周对该玩家的进攻">我打过</th>}
+              {columns.slice(showDefenseRank ? 5 : 4).map(sortHeader)}</tr></thead>
             <tbody>{sorted.map((row) => {
               const history = attackHistory.get(row.playerTag) ?? [];
               const expanded = expandedPlayer === row.playerTag && history.length > 0;
               const panelId = `${panelPrefix}-${row.playerTag.replace(/^#/, "")}`;
               const name = row.playerName || row.playerTag;
+              const results = mine.get(row.playerTag) ?? [];
+              const topHit = results.length > 0 && row.defenseRank !== null && row.defenseRank <= DEFENSE_TOP_N;
+              const rowClass = [selected === row.playerTag && "standing-selected", topHit && "defense-top-hit"].filter(Boolean).join(" ");
               return (
                 <Fragment key={row.playerTag}>
-                  <tr className={selected === row.playerTag ? "standing-selected" : undefined}>
+                  <tr className={rowClass || undefined}>
                     <td>{scoreText(row.rank)}</td>
                     <th scope="row">
                       <span className="standings-player-name" title={name}>{name}</span>
@@ -176,6 +200,9 @@ export default function Standings({ rows, battleViews, groupTag, week, isSample,
                     <td><Trophy value={row.attackTrophies} /></td>
                     <td><Trophy value={row.defenseTrophies} loss={lost} /></td>
                     <td className="total-trophies"><Trophy value={row.trophies} change={lost} /></td>
+                    {showDefenseRank && <td>{row.defenseRank ? `第 ${row.defenseRank} 名` : "—"}</td>}
+                    {showDefenseRank && <td className="my-result-cell">{selected === row.playerTag ? "本人"
+                      : results.length ? <MyResult results={results} /> : "—"}</td>}
                     <td>{scoreText(row.attackCount)}</td><td>{scoreText(row.defenseCount)}</td>
                     <td>{scoreText(row.attackStars)}</td>
                     <td>{destructionText(row.attackDestruction)}</td>
@@ -183,14 +210,15 @@ export default function Standings({ rows, battleViews, groupTag, week, isSample,
                     <td><DirectionTiming timestamp={row.lastAttackAt} average={row.attackDurationAverage} count={row.attackDurationCount} /></td>
                     <td><DirectionTiming timestamp={row.lastDefenseAt} average={row.defenseDurationAverage} count={row.defenseDurationCount} /></td>
                   </tr>
-                  {expanded && <tr className="army-expanded-row"><td colSpan={columns.length + 1} id={panelId}>
+                  {expanded && <tr className="army-expanded-row"><td colSpan={columns.length + 1 + Number(showDefenseRank)} id={panelId}>
                     <ArmyHistory history={history} player={row} />
                   </td></tr>}
                 </Fragment>
               );
             })}</tbody>
           </table>
-          <p className="battle-note">平均用时只计入已知用时的对战。「最近」是最近一场的对战时间。</p>
+          <p className="battle-note">平均用时只计入已知用时的对战。「最近」是最近一场的对战时间。
+            {showDefenseRank && ` 防守排名按防守得杯，并列时平均被打星少的靠前；打过防守前 ${DEFENSE_TOP_N} 的行标黄。`}</p>
         </div>
       )}
     </section>

@@ -303,6 +303,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .army-history-label > span { color: var(--muted); font-size: 12px; }
 .standings-card { overflow: visible; padding-bottom: 10px; }
 .standings-table { table-layout: fixed; min-width: 1068px; }
+.standings-table:has(.my-result-column) { min-width: 1250px; }
+.standings-table .my-result-column { width: 110px; }
 .standings-table .rank-column { width: 58px; }
 .standings-table .stat-column { width: 74px; }
 .standings-table .destruction-column { width: 104px; }
@@ -325,6 +327,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .standing-selected > :first-child { box-shadow: inset 3px 0 0 #75a9f4; }
 .defense-top-hit { background: #3b3416; }
 .defense-top-hit > :first-child { box-shadow: inset 3px 0 0 #e0b93e; }
+.defense-top-hit.standing-selected { background: #3b3416; }
+.my-result { display: block; white-space: nowrap; font-size: 13px; }
 .defense-rank-badge { display: block; font-size: 12px; color: var(--muted); }
 .defense-top-hit .defense-rank-badge { color: #f0cf6a; }
 .sort-button { min-height: 30px; color: inherit; background: transparent; border-color: transparent; padding: 3px 4px; }

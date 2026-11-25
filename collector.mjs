@@ -463,17 +463,18 @@ function summarizeStandingSide(ledger, expected) {
   const count = expected ?? (present && !malformed ? rows.length : null);
   const timing = timingSummary(rows);
   const complete = count !== null && count === rows.length && !malformed && (present || count === 0);
-  if (!complete) return { count, stars: null, destruction: null, trophies: null, ...timing };
+  if (!complete) return { count, stars: null, destruction: null, trophies: null, threeStars: null, ...timing };
 
   const stars = rows.reduce((total, row) => total + row.stars, 0);
   const destruction = count ? rows.reduce((total, row) => total + row.destruction, 0) / count : null;
   const trophies = rows.every((row) => Number.isFinite(row.trophies))
     ? rows.reduce((total, row) => total + row.trophies, 0)
     : null;
-  return { count, stars, destruction, trophies, ...timing };
+  const threeStars = rows.filter((row) => row.stars === 3).length;
+  return { count, stars, destruction, trophies, threeStars, ...timing };
 }
 
-function buildStanding(member, rank, attacks, defenses, trophies) {
+function buildStanding(member, rank, attacks, defenses, trophies, wins = null) {
   return {
     rank,
     playerTag: member.playerTag,
@@ -486,6 +487,9 @@ function buildStanding(member, rank, attacks, defenses, trophies) {
     defenseDestruction: defenses.destruction,
     attackTrophies: attacks.trophies,
     defenseTrophies: defenses.trophies,
+    defenseThreeStars: defenses.threeStars ?? null,
+    attackWins: wins?.attackWins ?? null,
+    attackLosses: wins?.attackLosses ?? null,
     trophies,
     attackDurationAverage: attacks.durationAverage,
     defenseDurationAverage: defenses.durationAverage,
@@ -501,7 +505,10 @@ function groupStanding(member, attackLedger, defenseLedger) {
   const defenses = summarizeStandingSide(defenseLedger, memberDefenseCount(member));
   const trophies = nonnegativeInteger(member.leagueTrophies)
     ?? (attacks.trophies !== null && defenses.trophies !== null ? attacks.trophies + defenses.trophies : null);
-  return buildStanding(member, member.rank ?? null, attacks, defenses, trophies);
+  return buildStanding(member, member.rank ?? null, attacks, defenses, trophies, {
+    attackWins: nonnegativeInteger(member.attackWinCount),
+    attackLosses: nonnegativeInteger(member.attackLoseCount),
+  });
 }
 
 function pairKey(attack) {

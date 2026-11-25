@@ -43,7 +43,8 @@
       "dist/renderer/**",
       "analytics.mjs",
       "collector.mjs",
-      "files.mjs"
+      "files.mjs",
+      "insights.mjs"
     ],
     "win": {
       "icon": "desktop/ranked.ico",
