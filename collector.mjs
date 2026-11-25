@@ -605,22 +605,58 @@ function reuseGroupBattleDetails(battles, groupAttacks) {
   }
 }
 
+function mergeSameBattle(primary, other) {
+  const previousIds = [...new Set([
+    ...(primary.previousIds ?? []), other.id, ...(other.previousIds ?? []),
+  ])].filter((id) => id !== primary.id);
+  return {
+    ...mergeBattleDetails(primary, other),
+    playerName: primary.playerName || other.playerName,
+    opponentName: primary.opponentName || other.opponentName,
+    trophies: primary.trophies ?? other.trophies ?? null,
+    ...(previousIds.length ? { previousIds } : {}),
+  };
+}
+
 function mergeBattles(current, cached) {
-  const complete = new Map(current.map((battle) => [battle.id, battle]));
-  let restored = 0;
+  const live = new Map(current.map((battle) => [battle.id, battle]));
+  const complete = new Map(live);
   for (const battle of cached) {
     const update = complete.get(battle.id);
-    if (!update || (battle.armyShareCode && !update.armyShareCode)) restored += 1;
-    complete.set(battle.id, update ? {
-      ...mergeBattleDetails(update, battle),
-      trophies: update.trophies ?? battle.trophies ?? null,
-    } : battle);
+    complete.set(battle.id, update ? mergeSameBattle(update, battle) : battle);
   }
-  return { rows: [...complete.values()], restored };
+
+  // The group API has returned the same creation time in both millisecond
+  // precision and rounded to a whole second. Preserve the exact time and ID.
+  const timed = [...complete.values()].map((battle) => ({ battle, epoch: Date.parse(battle.timestamp) }))
+    .filter(({ epoch }) => Number.isFinite(epoch));
+  const bySecond = Map.groupBy(timed, ({ battle, epoch }) => `${pairKey(battle)}|${Math.round(epoch / 1000)}`);
+  for (const entries of bySecond.values()) {
+    if (entries.length !== 2) continue;
+    const whole = entries.find(({ epoch }) => epoch % 1000 === 0);
+    const precise = entries.find(({ epoch }) => epoch % 1000 !== 0);
+    if (!whole || !precise) continue;
+    const firstCups = whole.battle.trophies;
+    const secondCups = precise.battle.trophies;
+    if (Number.isFinite(firstCups) && Number.isFinite(secondCups) && firstCups !== secondCups) continue;
+    complete.set(precise.battle.id, mergeSameBattle(precise.battle, whole.battle));
+    complete.delete(whole.battle.id);
+  }
+
+  const rows = [...complete.values()];
+  const restored = rows.filter((battle) => {
+    const liveCopies = [battle.id, ...(battle.previousIds ?? [])].map((id) => live.get(id)).filter(Boolean);
+    return liveCopies.length === 0 || (battle.armyShareCode && !liveCopies.some((copy) => copy.armyShareCode));
+  }).length;
+  return { rows, restored };
 }
 
 async function mergeSnapshot(snapshotDir, league, current, currentDefenses) {
-  if (!snapshotDir) return { attacks: current, defenses: currentDefenses, restoredAttacks: 0 };
+  if (!snapshotDir) return {
+    attacks: mergeBattles(current, []).rows,
+    defenses: mergeBattles(currentDefenses, []).rows,
+    restoredAttacks: 0,
+  };
   const path = resolve(snapshotDir, `${league.groupTag.slice(1)}-${league.seasonId}.json`);
   const previous = snapshotWrites.get(path) ?? Promise.resolve();
   const pending = previous.catch(() => {}).then(async () => {
@@ -672,6 +708,7 @@ function buildBattleViews(member, playerAttacks, playerDefenses, attackTelemetry
   function rows(battles, isDefense) {
     return battles.sort(newestFirst).map((battle) => ({
       id: battle.id,
+      ...(battle.previousIds?.length ? { previousIds: battle.previousIds } : {}),
       timestamp: battle.timestamp,
       battleTimestamp: battle.battleTimestamp ?? null,
       durationSeconds: battle.durationSeconds ?? null,

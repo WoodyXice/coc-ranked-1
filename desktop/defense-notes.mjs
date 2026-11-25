@@ -82,7 +82,14 @@ export function createDefenseNoteStore(file) {
           .map((entry) => [entry.battleId, entry.note]));
         return {
           ...battleViews,
-          defenses: battleViews.defenses.map((battle) => ({ ...battle, note: notes.get(battle.id) ?? "" })),
+          defenses: battleViews.defenses.map((battle) => {
+            let note = notes.get(battle.id);
+            if (note === undefined && Array.isArray(battle.previousIds)) {
+              const previousId = battle.previousIds.find((id) => validBattleId(id) && notes.has(id));
+              note = notes.get(previousId);
+            }
+            return { ...battle, note: note ?? "" };
+          }),
         };
       } catch (error) {
         return { ...battleViews, noteLoadError: error.message };

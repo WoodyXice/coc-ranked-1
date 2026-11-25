@@ -55,6 +55,7 @@ jobs:
           node-version: '24'
           cache: npm
       - run: npm ci
+      - run: node --test
       - run: npm run package:windows
       - name: Verify Windows release assets
         shell: pwsh
