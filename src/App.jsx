@@ -3,7 +3,7 @@ import { toBlob } from "html-to-image";
 import AccountPanel from "./AccountPanel.jsx";
 import BattleLog from "./BattleLog.jsx";
 import LegendLeaderboard from "./LegendLeaderboard.jsx";
-import LegendPlayer, { LegendPlayerSearch, useLegendPlayerLookup } from "./LegendPlayer.jsx";
+import TemporaryPlayer, { TemporaryPlayerSearch, useTemporaryPlayerLookup } from "./TemporaryPlayer.jsx";
 import Standings, { StandingSummary } from "./Standings.jsx";
 import UpdatePanel from "./UpdatePanel.jsx";
 
@@ -195,8 +195,9 @@ function Report({ report, reportRef, battleViews }) {
   );
 }
 
-const legendTabs = ["legend-global", "legend-regional", "legend-player"];
-const tags = ["meta", "standings", "attacks", "defenses", ...legendTabs];
+const legendTabs = ["legend-global", "legend-regional"];
+const baseTabs = ["meta", "standings", "attacks", "defenses", ...legendTabs];
+const temporaryTab = "temporary-player";
 const sourceLabels = { sample: "截图示例", api: "官方 API" };
 const initialAccounts = { accounts: [], selectedTag: "", hasDeveloperToken: false };
 
@@ -224,12 +225,16 @@ export default function App() {
   const reportRef = useRef(null);
   const working = useRef(false);
   const resultsByTag = useRef(new Map());
-  const legendLookup = useLegendPlayerLookup({ enabled: accounts.hasDeveloperToken && !accountLoading, tokenRevision });
+  const showLookupWhenReady = useRef(false);
+  const temporaryLookup = useTemporaryPlayerLookup({ enabled: accounts.hasDeveloperToken && !accountLoading, tokenRevision });
+  const temporaryResult = temporaryLookup.result;
+  const isTemporaryTab = tab === temporaryTab;
+  const tabs = temporaryResult || isTemporaryTab ? [...baseTabs, temporaryTab] : baseTabs;
 
   const report = payload?.report;
   const battleViews = payload?.raw?.battleViews;
   const battleAccountName = accounts.accounts.find(({ tag }) => tag === battleViews?.playerTag)?.name;
-  const isLegendTab = legendTabs.includes(tab);
+  const isStandaloneTab = isTemporaryTab || legendTabs.includes(tab);
   const selectedStanding = battleViews?.personalOnly && battleViews.playerTag === accounts.selectedTag
     ? { rank: battleViews.currentLegendRank, trophies: battleViews.currentLegendTrophies }
     : null;
@@ -240,7 +245,7 @@ export default function App() {
     defenses: "防守" + (battleViews?.defenses ? ` ${battleViews.defenses.length}` : ""),
     "legend-global": "传奇 I 全球榜",
     "legend-regional": "传奇 I 地区榜",
-    "legend-player": "传奇 I 查村庄",
+    [temporaryTab]: "临时战报",
   };
 
   useEffect(() => {
@@ -258,6 +263,13 @@ export default function App() {
     void loadAccounts();
     return () => { active = false; };
   }, []);
+
+  useEffect(() => {
+    if (!temporaryResult || !showLookupWhenReady.current) return;
+    showLookupWhenReady.current = false;
+    setTab(temporaryTab);
+    document.getElementById("tab-" + temporaryTab)?.focus();
+  }, [temporaryResult]);
 
   async function run(message, action, secrets) {
     if (working.current) return false;
@@ -340,7 +352,7 @@ export default function App() {
   function loadSample() {
     void run("正在加载示例…", async () => {
       setPayload(await window.cocApp.sample());
-      setTab("meta");
+      chooseTab("meta");
     });
   }
 
@@ -370,27 +382,30 @@ export default function App() {
     });
   }
 
-  function openLegendPlayer(playerTag) {
-    if (!legendLookup.query(playerTag)) return;
-    setTab("legend-player");
-    document.getElementById("tab-legend-player")?.focus();
+  function chooseTab(next) {
+    showLookupWhenReady.current = false;
+    setTab(next);
+  }
+
+  function openTemporaryPlayer(playerTag) {
+    if (temporaryLookup.query(playerTag)) showLookupWhenReady.current = true;
   }
 
   function openLegendLeaderboard() {
-    setTab("legend-global");
+    chooseTab("legend-global");
     document.getElementById("tab-legend-global")?.focus();
   }
 
   function moveTab(event) {
-    const index = tags.indexOf(tab);
+    const index = tabs.indexOf(tab);
     const next = {
-      ArrowLeft: tags[(index - 1 + tags.length) % tags.length],
-      ArrowRight: tags[(index + 1) % tags.length],
-      Home: tags[0], End: tags[tags.length - 1],
+      ArrowLeft: tabs[(index - 1 + tabs.length) % tabs.length],
+      ArrowRight: tabs[(index + 1) % tabs.length],
+      Home: tabs[0], End: tabs[tabs.length - 1],
     }[event.key];
     if (!next) return;
     event.preventDefault();
-    setTab(next);
+    chooseTab(next);
     document.getElementById("tab-" + next).focus();
   }
 
@@ -403,8 +418,8 @@ export default function App() {
       <AccountPanel accounts={accounts} busy={accountLoading || !!busy} onSelect={selectAccount}
         onSaveAccount={saveAccount} onRemoveAccount={removeAccount} onSaveDeveloperToken={saveDeveloperToken}
         onQuery={collect} onSample={loadSample}>
-        <LegendPlayerSearch lookup={legendLookup} disabled={accountLoading || !!busy || !accounts.hasDeveloperToken}
-          onLookupPlayer={openLegendPlayer} />
+        <TemporaryPlayerSearch lookup={temporaryLookup} disabled={accountLoading || !!busy || !accounts.hasDeveloperToken}
+          onLookupPlayer={openTemporaryPlayer} />
       </AccountPanel>
       <div className="app-feedback">
         <div className="feedback" role="status">{(accountLoading && "正在读取本机村庄…") || busy || (!feedback?.error && feedback?.message)}</div>
@@ -413,13 +428,13 @@ export default function App() {
       <section className="results" aria-label="排位战报">
           <div className="results-bar">
             <div className="tabs" role="tablist" aria-label="查看排位战报">
-              {tags.map((name) => (
+              {tabs.map((name) => (
                 <button type="button" id={"tab-" + name} key={name} role="tab" aria-controls="report-panel"
                   aria-selected={tab === name} tabIndex={tab === name ? 0 : -1}
-                  disabled={busy === "正在生成图片…"} onClick={() => setTab(name)} onKeyDown={moveTab}>{tabLabels[name]}</button>
+                  disabled={busy === "正在生成图片…"} onClick={() => chooseTab(name)} onKeyDown={moveTab}>{tabLabels[name]}</button>
               ))}
             </div>
-            {report && !isLegendTab && <div className="export-actions">
+            {report && !isStandaloneTab && <div className="export-actions">
               {sourceLabels[report.source] && <span className="source-label">{sourceLabels[report.source]}</span>}
               <button type="button" onClick={exportExcel} disabled={!!busy}>导出 Excel</button>
               {tab === "meta" && <button type="button" onClick={exportPng} disabled={!!busy}>保存图片</button>}
@@ -437,9 +452,9 @@ export default function App() {
             {(tab === "legend-global" || tab === "legend-regional") && <LegendLeaderboard key={tab + tokenRevision}
               scope={tab === "legend-global" ? "global" : "regional"} hasDeveloperToken={accounts.hasDeveloperToken}
               accountLoading={accountLoading} selectedTag={accounts.selectedTag} selectedStanding={selectedStanding}
-              onLookupPlayer={openLegendPlayer} />}
-            {tab === "legend-player" && <LegendPlayer lookup={legendLookup} onLookupPlayer={openLegendPlayer} />}
-            {!report && !isLegendTab && <section className="empty-card empty-results" aria-label="暂无战报">
+              onLookupPlayer={openTemporaryPlayer} />}
+            {isTemporaryTab && <TemporaryPlayer lookup={temporaryLookup} onLookupPlayer={openTemporaryPlayer} />}
+            {!report && !isStandaloneTab && <section className="empty-card empty-results" aria-label="暂无战报">
               <p>{busy ? "查询结果会显示在这里。" : accounts.selectedTag && accounts.hasDeveloperToken
                 ? "点击「查询本周排位」获取当前村庄的战报。" : "添加村庄并设置开发者 API 令牌，即可查询本周排位。"}</p>
             </section>}

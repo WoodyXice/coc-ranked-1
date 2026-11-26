@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { getReport } from "../analytics.mjs";
 import { fetchLegendLeaderboard, fetchLegendLocations } from "../collector.mjs";
 import { workbookBytes } from "../files.mjs";
-import { collectData, collectLegendPlayer, developerPortal, getPublicIp, sampleReport } from "./service.mjs";
+import { collectData, collectTemporaryPlayer, developerPortal, getPublicIp, sampleReport } from "./service.mjs";
 import { createAccountStore, validateDeveloperToken } from "./accounts.mjs";
 import { createDefenseNoteStore } from "./defense-notes.mjs";
 import { createUpdater, releasePage } from "./updater.mjs";
@@ -137,8 +137,8 @@ function createWindow() {
   bind(window, "coc:legend-leaderboard", async (input) =>
     fetchLegendLeaderboard({ token: await savedDeveloperToken(), location: input?.location }));
   bind(window, "coc:legend-locations", async () => fetchLegendLocations({ token: await savedDeveloperToken() }));
-  bind(window, "coc:legend-player", async (input) =>
-    collectLegendPlayer({ token: await savedDeveloperToken(), playerTag: input?.playerTag }));
+  bind(window, "coc:temporary-player", async (input) =>
+    collectTemporaryPlayer({ token: await savedDeveloperToken(), playerTag: input?.playerTag }));
   bind(window, "coc:workbook", async (raw) => {
     const report = getReport(raw);
     const noted = raw.battleViews ? { ...raw, battleViews: await defenseNotes.withNotes(raw.battleViews) } : raw;

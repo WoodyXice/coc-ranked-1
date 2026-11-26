@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fetchLegendLeaderboard, fetchLegendLocations, fetchLegendPlayer } from "../collector.mjs";
+import { fetchLegendLeaderboard, fetchLegendLocations, fetchTemporaryPlayer } from "../collector.mjs";
 
 const mockToken = "fixture-developer-token";
 const country = 32000056;
@@ -10,6 +10,7 @@ const playerTag = "#LEGENDA";
 const playerPath = "/v1/players/%23LEGENDA";
 const battleLogPath = playerPath + "/battlelog";
 const tierId = 105000036;
+const currentDate = new Date("2026-11-25T18:00:00Z");
 const legendTier = {
   id: tierId, name: "Legend League I",
   iconUrls: { small: "https://api-assets.clashofclans.com/leagues/72/fixture.png" },
@@ -135,8 +136,10 @@ test("an arbitrary Legend I player gets strictly Legend logs across week reset w
       battleLogRow("missing", { attack: false }),
     ] },
   });
-  const data = await fetchLegendPlayer({ token: mockToken, playerTag: "legenda" }, options);
+  const data = await fetchTemporaryPlayer({ token: mockToken, playerTag: "legenda" }, { ...options, now: currentDate });
   const { battleViews } = data;
+  assert.equal(data.period, "retained");
+  assert.equal(data.weekStart, "2026-11-23");
   assert.equal(data.leagueTier.id, tierId);
   assert.equal(data.leagueTier.attackLimit, null);
   assert.equal(Number.isFinite(Date.parse(data.fetchedAt)), true);
@@ -145,6 +148,7 @@ test("an arbitrary Legend I player gets strictly Legend logs across week reset w
   assert.equal(battleViews.currentLegendRank, 31);
   assert.equal(battleViews.currentLegendTrophies, 5900);
   assert.equal(battleViews.defenseTrophyMode, "lost");
+  assert.equal(battleViews.logAvailable, true);
   assert.equal(battleViews.attacks.length, 2);
   assert.equal(battleViews.attacks[0].timestamp, "2026-11-23T05:15:59.801Z");
   assert.equal(battleViews.attacks[0].durationSeconds, 168);
@@ -159,10 +163,91 @@ test("an arbitrary Legend I player gets strictly Legend logs across week reset w
   assert.deepEqual(calls.map(({ path }) => path), [playerPath, battleLogPath]);
 });
 
-test("the arbitrary-player lookup rejects non-Legend I without requesting its battles or group", async () => {
+test("temporary lookup for a weekly tier reads only this week's Ranked results and public profile", async () => {
   const { calls, options } = apiFixture({
-    [playerPath]: { currentLeagueGroupTag: "#0", leagueTier: { id: 105000035 } },
+    [playerPath]: { name: " Fixture weekly player ", townHallLevel: 18, trophies: 940, currentLeagueGroupTag: "#GROUP1",
+      clan: { tag: "#CLAN1", name: " Fixture Clan " }, leagueTier: { id: 105000035 },
+      legendStatistics: { currentSeason: { rank: 31, trophies: 5900 } } },
+    [battleLogPath]: { items: [
+      battleLogRow("20261123T045959.999Z", { battleType: "ranked", armyShareCode: "u10x132" }),
+      battleLogRow("20261123T050000.000Z", { battleType: "ranked", battleTime: 135, armyShareCode: "u9x80" }),
+      battleLogRow("20261124T070000.000Z", { attack: false, battleType: "ranked", battleTime: 154, armyShareCode: "u6x147" }),
+      battleLogRow("20261125T070000.000Z", { battleType: "legend", armyShareCode: "u10x132" }),
+      battleLogRow("20261125T070200.000Z", { battleType: "homeVillage" }),
+      battleLogRow("20261126T010000.000Z", { battleType: "ranked" }),
+    ] },
   });
-  await assert.rejects(fetchLegendPlayer({ token: mockToken, playerTag }, options), { status: 400, message: /不是传奇 I/ });
-  assert.deepEqual(calls.map(({ path }) => path), [playerPath]);
+  const result = await fetchTemporaryPlayer({ token: mockToken, playerTag }, { ...options, now: currentDate });
+  assert.equal(result.period, "week");
+  assert.equal(result.weekStart, "2026-11-23");
+  assert.equal(result.leagueTier.attackLimit, 30);
+  assert.deepEqual(result.profile, {
+    playerTag, playerName: "Fixture weekly player", townHallLevel: 18, trophies: 940,
+    clanName: "Fixture Clan", clanTag: "#CLAN1", currentGroupTag: "#GROUP1",
+  });
+  const { battleViews } = result;
+  assert.equal(battleViews.currentLegendRank, undefined);
+  assert.equal(battleViews.defenseTrophyMode, "earned");
+  assert.deepEqual(battleViews.attacks.map((row) => [row.timestamp, row.trophyDelta]), [["2026-11-23T05:00:00.000Z", 26]]);
+  assert.deepEqual(battleViews.defenses.map((row) => [row.battleType, row.trophyDelta]), [["RANKED", 14]]);
+  assert.equal(battleViews.standing.rank, null);
+  assert.equal(battleViews.standing.attackCount, 1);
+  assert.equal(battleViews.standing.defenseTrophies, 14);
+  assert.equal(battleViews.standing.trophies, 40);
+  assert.deepEqual(calls.map(({ path }) => path), [playerPath, battleLogPath]);
+});
+
+test("an unknown tier requires recent current-week Legend evidence to use the retained-day view", async () => {
+  const pastLegend = battleLogRow("20261123T045900.000Z", { armyShareCode: "u6x147" });
+  const currentLegend = battleLogRow("20261124T070000.000Z", { attack: false, armyShareCode: "u10x132" });
+  const olderRanked = battleLogRow("20261123T180000.000Z", { battleType: "ranked" });
+  const latestRanked = battleLogRow("20261125T070000.000Z", { battleType: "ranked" });
+  const lookup = (profile, items) => {
+    const { options } = apiFixture({ [playerPath]: profile, [battleLogPath]: { items } });
+    return fetchTemporaryPlayer({ token: mockToken, playerTag }, { ...options, now: currentDate });
+  };
+
+  const observed = await lookup({ trophies: 5123, currentLeagueGroupTag: "#0" }, [pastLegend, olderRanked, currentLegend]);
+  assert.equal(observed.leagueTier, null);
+  assert.equal(observed.period, "retained");
+  assert.equal(observed.battleViews.currentLegendTrophies, null);
+  assert.equal(observed.battleViews.attacks.length, 1);
+  assert.equal(observed.battleViews.defenses[0].trophyDelta, -26);
+
+  const oldOnly = await lookup({}, [pastLegend]);
+  assert.equal(oldOnly.period, "week");
+  assert.equal(oldOnly.battleViews.attacks.length, 0);
+  assert.equal(oldOnly.battleViews.logAvailable, true);
+
+  const activeWeekly = await lookup({}, [currentLegend, latestRanked]);
+  assert.equal(activeWeekly.period, "week");
+  assert.equal(activeWeekly.battleViews.attacks[0].battleType, "RANKED");
+  assert.equal(activeWeekly.battleViews.defenses.length, 0);
+
+  const assignedWeekly = await lookup({ currentLeagueGroupTag: "#GROUP1" }, [olderRanked, currentLegend]);
+  assert.equal(assignedWeekly.period, "week");
+  assert.equal(assignedWeekly.profile.currentGroupTag, "#GROUP1");
+  assert.equal(assignedWeekly.battleViews.attacks.length, 1);
+});
+
+test("an unranked profile is still available when official logs are empty or unavailable", async () => {
+  const profile = { name: "Unranked fixture", townHallLevel: 7, leagueTier: { id: 105000000 } };
+  const missing = apiFixture({ [playerPath]: profile });
+  const publicOnly = await fetchTemporaryPlayer({ token: mockToken, playerTag }, { ...missing.options, now: currentDate });
+  assert.equal(publicOnly.profile.playerName, "Unranked fixture");
+  assert.equal(publicOnly.profile.townHallLevel, 7);
+  assert.equal(publicOnly.leagueTier.name, "未进入联赛");
+  assert.equal(publicOnly.battleViews.logAvailable, false);
+  assert.equal(publicOnly.battleViews.standing, null);
+  assert.deepEqual(publicOnly.battleViews.attacks, []);
+  assert.deepEqual(missing.calls.map(({ path }) => path), [playerPath, battleLogPath]);
+
+  const empty = apiFixture({ [playerPath]: profile, [battleLogPath]: { items: [] } });
+  const nothingPlayed = await fetchTemporaryPlayer({ token: mockToken, playerTag }, { ...empty.options, now: currentDate });
+  assert.equal(nothingPlayed.battleViews.logAvailable, true);
+  assert.equal(nothingPlayed.battleViews.standing.attackCount, 0);
+  assert.equal(nothingPlayed.battleViews.standing.defenseCount, 0);
+
+  const unauthorized = apiFixture({ [playerPath]: profile, [battleLogPath]: new Response(null, { status: 403 }) });
+  await assert.rejects(fetchTemporaryPlayer({ token: mockToken, playerTag }, unauthorized.options), { status: 403 });
 });

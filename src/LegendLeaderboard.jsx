@@ -162,7 +162,7 @@ export default function LegendLeaderboard({ scope, hasDeveloperToken, accountLoa
         </div>
       ) : (
         <div className="empty-card" role={activeQuery.status === "error" ? "alert" : "status"}>
-          <p>{rows.length ? "榜内没有匹配的玩家。也可用「传奇 I 查村庄」按 Tag 直接查询。"
+          <p>{rows.length ? "榜内没有匹配的玩家。可以在顶部「临时查村庄」按 Tag 查询。"
             : accountLoading ? "正在读取本机设置…" : !enabled ? "在「管理令牌」保存开发者 API 令牌，即可查询榜单。"
             : activeQuery.status === "error" ? activeQuery.error
             : waiting ? regional && !region ? "正在查询可用地区…" : "正在查询榜单…"

@@ -1,6 +1,6 @@
 import { isIPv4 } from "node:net";
 import { getReport, sampleData } from "../analytics.mjs";
-import { decodeArmyShareCode, fetchLegendPlayer, fetchRankedReport } from "../collector.mjs";
+import { decodeArmyShareCode, fetchRankedReport, fetchTemporaryPlayer } from "../collector.mjs";
 
 const hour = 3_600_000;
 export const developerPortal = "https://developer.clashofclans.com/#/new-key";
@@ -51,8 +51,8 @@ function classifyBattleViews(battleViews) {
   };
 }
 
-export async function collectLegendPlayer(input, options) {
-  const result = await fetchLegendPlayer(input, options);
+export async function collectTemporaryPlayer(input, options) {
+  const result = await fetchTemporaryPlayer(input, options);
   return { ...result, battleViews: classifyBattleViews(result.battleViews) };
 }
 

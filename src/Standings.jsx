@@ -35,7 +35,7 @@ function officialLeagueIcon(value) {
   }
 }
 
-function LeagueBadge({ tier }) {
+export function LeagueBadge({ tier }) {
   const [failedIcons, setFailedIcons] = useState([]);
   const id = tier?.id;
   const fallback = Number.isInteger(id) && id >= 105000001 && id <= 105000036 ? `./league-icons/${id}.png` : "";

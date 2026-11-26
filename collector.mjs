@@ -817,13 +817,13 @@ function buildBattleViews(member, playerAttacks, playerDefenses, attackTelemetry
   };
 }
 
-function recentPlayerBattles(logs, member, { start = -Infinity, end = Infinity, legendOnly = false } = {}) {
+function recentPlayerBattles(logs, member, { start = -Infinity, end = Infinity, battleType } = {}) {
   const ledger = { attacks: new Map(), defenses: new Map() };
   const malformed = { attacks: 0, defenses: 0 };
 
   for (const row of logs) {
     const mode = battleMode(row?.battleType);
-    if (!row || (mode !== 'LEGEND' && (legendOnly || mode !== 'RANKED'))
+    if (!row || (mode !== 'LEGEND' && mode !== 'RANKED') || (battleType && mode !== battleType)
         || (row.attack !== true && row.attack !== false)) continue;
     const key = row.attack ? 'attacks' : 'defenses';
     const epoch = timestamp(row.battleTimestamp);
@@ -846,11 +846,11 @@ function recentPlayerBattles(logs, member, { start = -Infinity, end = Infinity, 
   return { attackRows: [...ledger.attacks.values()], defenseRows: [...ledger.defenses.values()], malformed };
 }
 
-function legendProfileStats(player) {
+function legendProfileStats(player, fallbackTrophies = player.trophies) {
   const current = player.legendStatistics?.currentSeason;
   return {
     currentLegendRank: nonnegativeInteger(current?.rank) || null,
-    currentLegendTrophies: nonnegativeInteger(current?.trophies) ?? nonnegativeInteger(player.trophies),
+    currentLegendTrophies: nonnegativeInteger(current?.trophies) ?? nonnegativeInteger(fallbackTrophies),
   };
 }
 
@@ -1125,31 +1125,94 @@ export async function fetchLegendLocations(
   return [...countries.values()];
 }
 
-export async function fetchLegendPlayer(
+function currentCompetitiveMode(logs, start, now) {
+  let latestTime = start - 1;
+  let latestMode = '';
+  for (const row of logs) {
+    const mode = battleMode(row?.battleType);
+    if (!row || (mode !== 'LEGEND' && mode !== 'RANKED') || (row.attack !== true && row.attack !== false)) continue;
+    const time = timestamp(row.battleTimestamp);
+    if (!Number.isFinite(time) || time < start || time > now
+      || !normalizeTag(row.opponentPlayerTag) || !battleScore(row)) continue;
+    if (time > latestTime) {
+      latestTime = time;
+      latestMode = mode;
+    } else if (time === latestTime && latestMode !== mode) {
+      latestMode = '';
+    }
+  }
+  return latestMode;
+}
+
+export async function fetchTemporaryPlayer(
   { token, playerTag: rawTag } = {},
-  { fetchImpl = globalThis.fetch, requestIntervalMs = 100 } = {},
+  { fetchImpl = globalThis.fetch, requestIntervalMs = 100, now } = {},
 ) {
   const playerTag = normalizeTag(rawTag);
-  if (!playerTag) throw clientError(400, '请输入有效的传奇 I 村庄标签。');
+  if (!playerTag) throw clientError(400, '请输入有效的村庄标签。');
   const request = apiRequest(requiredApiToken(token), fetchImpl, requestIntervalMs);
   const player = await request(playerPath(playerTag));
-  if (player.leagueTier?.id !== legendOneTierId) {
-    throw clientError(400, '该村庄当前不是传奇 I，请输入传奇 I 村庄的标签。');
+  const playerName = typeof player.name === 'string' ? player.name.trim() : '';
+  const clanName = typeof player.clan?.name === 'string' ? player.clan.name.trim() : '';
+  const profile = {
+    playerTag,
+    playerName: playerName || playerTag,
+    townHallLevel: nonnegativeInteger(player.townHallLevel) || null,
+    trophies: nonnegativeInteger(player.trophies),
+    clanName,
+    clanTag: normalizeTag(player.clan?.tag),
+    currentGroupTag: normalizeTag(player.currentLeagueGroupTag),
+  };
+  const leagueTier = player.leagueTier?.id === firstLeagueTierId
+    ? { id: firstLeagueTierId, name: '未进入联赛', iconUrl: null, attackLimit: null }
+    : leagueTierInfo(player.leagueTier);
+  let logAvailable = true;
+  const logs = await requestBattleLog(request, playerTag).catch((error) => {
+    if (error.status !== 404) throw error;
+    logAvailable = false;
+    return [];
+  });
+  const epoch = (now ?? new Date()).getTime();
+  const weekStart = weekMonday(epoch - rankedWeekStartOffset);
+  const start = Date.parse(`${weekStart}T05:00:00Z`);
+  const confirmedLegend = leagueTier?.id === legendOneTierId;
+  const legendMode = confirmedLegend || (!leagueTier && !profile.currentGroupTag
+    && currentCompetitiveMode(logs, start, epoch) === 'LEGEND');
+  const window = legendMode
+    ? { battleType: 'LEGEND' }
+    : { battleType: 'RANKED', start, end: Math.min(start + 7 * day, epoch + 1) };
+  const { attackRows, defenseRows, malformed } = recentPlayerBattles(logs, profile, window);
+  const attacks = mergeBattles(attackRows, []).rows;
+  const defenses = mergeBattles(defenseRows, []).rows;
+  const logFailures = Number(!logAvailable);
+  const battleViews = {
+    ...buildBattleViews(
+      profile, attacks, defenses,
+      { malformed: malformed.attacks, logFailures },
+      { malformed: malformed.defenses, logFailures },
+    ),
+    personalOnly: true,
+    logAvailable,
+    defenseTrophyMode: legendMode ? 'lost' : 'earned',
+  };
+  if (legendMode) {
+    Object.assign(battleViews, legendProfileStats(player, confirmedLegend ? profile.trophies : null));
+  } else if (logAvailable) {
+    const attackSummary = summarizeStandingSide({ rows: attacks, present: true, malformed: 0 }, null);
+    const defenseSummary = summarizeStandingSide({ rows: defenses, present: true, malformed: 0 }, null);
+    const trophies = Number.isFinite(attackSummary.trophies) && Number.isFinite(defenseSummary.trophies)
+      ? attackSummary.trophies + defenseSummary.trophies
+      : null;
+    battleViews.standing = buildStanding(profile, null, attackSummary, defenseSummary, trophies);
+  } else {
+    battleViews.standing = null;
   }
-
-  const member = { playerTag, playerName: player.name ?? playerTag };
-  const logs = await requestBattleLog(request, playerTag);
-  const { attackRows, defenseRows, malformed } = recentPlayerBattles(logs, member, { legendOnly: true });
-  const battleViews = buildBattleViews(
-    member,
-    mergeBattles(attackRows, []).rows,
-    mergeBattles(defenseRows, []).rows,
-    { malformed: malformed.attacks, logFailures: 0 },
-    { malformed: malformed.defenses, logFailures: 0 },
-  );
   return {
-    battleViews: { ...battleViews, personalOnly: true, defenseTrophyMode: 'lost', ...legendProfileStats(player) },
-    leagueTier: leagueTierInfo(player.leagueTier),
+    battleViews,
+    profile,
+    leagueTier,
+    weekStart,
+    period: legendMode ? 'retained' : 'week',
     fetchedAt: new Date().toISOString(),
   };
 }
