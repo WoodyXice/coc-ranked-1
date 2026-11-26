@@ -3,7 +3,7 @@ import { toBlob } from "html-to-image";
 import AccountPanel from "./AccountPanel.jsx";
 import BattleLog from "./BattleLog.jsx";
 import LegendLeaderboard from "./LegendLeaderboard.jsx";
-import LegendPlayer from "./LegendPlayer.jsx";
+import LegendPlayer, { LegendPlayerSearch, useLegendPlayerLookup } from "./LegendPlayer.jsx";
 import Standings, { StandingSummary } from "./Standings.jsx";
 import UpdatePanel from "./UpdatePanel.jsx";
 
@@ -218,13 +218,13 @@ export default function App() {
   const [accounts, setAccounts] = useState(initialAccounts);
   const [accountLoading, setAccountLoading] = useState(true);
   const [tab, setTab] = useState("meta");
-  const [legendLookup, setLegendLookup] = useState({ tag: "", sequence: 0 });
   const [tokenRevision, setTokenRevision] = useState(0);
   const [busy, setBusy] = useState("");
   const [feedback, setFeedback] = useState(null);
   const reportRef = useRef(null);
   const working = useRef(false);
   const resultsByTag = useRef(new Map());
+  const legendLookup = useLegendPlayerLookup({ enabled: accounts.hasDeveloperToken && !accountLoading, tokenRevision });
 
   const report = payload?.report;
   const battleViews = payload?.raw?.battleViews;
@@ -371,7 +371,7 @@ export default function App() {
   }
 
   function openLegendPlayer(playerTag) {
-    setLegendLookup(({ sequence }) => ({ tag: playerTag, sequence: sequence + 1 }));
+    if (!legendLookup.query(playerTag)) return;
     setTab("legend-player");
     document.getElementById("tab-legend-player")?.focus();
   }
@@ -402,7 +402,10 @@ export default function App() {
       </header>
       <AccountPanel accounts={accounts} busy={accountLoading || !!busy} onSelect={selectAccount}
         onSaveAccount={saveAccount} onRemoveAccount={removeAccount} onSaveDeveloperToken={saveDeveloperToken}
-        onQuery={collect} onSample={loadSample} />
+        onQuery={collect} onSample={loadSample}>
+        <LegendPlayerSearch lookup={legendLookup} disabled={accountLoading || !!busy || !accounts.hasDeveloperToken}
+          onLookupPlayer={openLegendPlayer} />
+      </AccountPanel>
       <div className="app-feedback">
         <div className="feedback" role="status">{(accountLoading && "正在读取本机村庄…") || busy || (!feedback?.error && feedback?.message)}</div>
         {feedback?.error && <div className="feedback error" role="alert">{feedback.message}</div>}
@@ -435,8 +438,7 @@ export default function App() {
               scope={tab === "legend-global" ? "global" : "regional"} hasDeveloperToken={accounts.hasDeveloperToken}
               accountLoading={accountLoading} selectedTag={accounts.selectedTag} selectedStanding={selectedStanding}
               onLookupPlayer={openLegendPlayer} />}
-            {tab === "legend-player" && <LegendPlayer key={`${tokenRevision}:${legendLookup.sequence}`}
-              hasDeveloperToken={accounts.hasDeveloperToken} accountLoading={accountLoading} initialTag={legendLookup.tag} />}
+            {tab === "legend-player" && <LegendPlayer lookup={legendLookup} onLookupPlayer={openLegendPlayer} />}
             {!report && !isLegendTab && <section className="empty-card empty-results" aria-label="暂无战报">
               <p>{busy ? "查询结果会显示在这里。" : accounts.selectedTag && accounts.hasDeveloperToken
                 ? "点击「查询本周排位」获取当前村庄的战报。" : "添加村庄并设置开发者 API 令牌，即可查询本周排位。"}</p>

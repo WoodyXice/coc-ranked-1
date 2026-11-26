@@ -5,7 +5,8 @@ import { formatDuration, formatTime } from "./battle-time.mjs";
 
 const formatNumber = new Intl.NumberFormat("zh-CN");
 
-export default function BattleLog({ kind, battleViews, isSample, accountName, periodLabel = "本周", showStanding = true }) {
+export default function BattleLog({ kind, battleViews, isSample, accountName, periodLabel = "本周", showStanding = true,
+  onLookupPlayer, dailyTrophies }) {
   const headingId = useId();
   const offense = kind === "attacks";
   const mode = battleViews?.defenseTrophyMode;
@@ -29,6 +30,11 @@ export default function BattleLog({ kind, battleViews, isSample, accountName, pe
         {battleViews?.playerTag && <p>{[accountName || battleViews.playerName, battleViews.playerTag, "时间为北京时间"].filter(Boolean).join(" · ")}</p>}
       </header>
       {showStanding && <StandingSummary battleViews={battleViews} standing={battleViews?.standing} showPlayer={false} />}
+      {dailyTrophies && <dl className="battle-summary" aria-label="当日杯数">
+        <div><dt>当日进攻得杯</dt><dd><Trophy value={dailyTrophies.attack} /></dd></div>
+        <div><dt>当日防守扣杯</dt><dd><Trophy value={dailyTrophies.defense} /></dd></div>
+        <div><dt>当日净杯</dt><dd><Trophy value={dailyTrophies.net} /></dd></div>
+      </dl>}
       {rows.length === 0 ? (
         <div className="empty-card">
           <p>{isSample ? "示例没有这类战绩。查询村庄后可查看个人战绩。" : `官方 API 本次未返回该村庄${periodLabel}的${label}记录。`}</p>
@@ -58,10 +64,15 @@ export default function BattleLog({ kind, battleViews, isSample, accountName, pe
                   const timestamp = row.battleTimestamp || row.timestamp;
                   const strategy = row.strategy || "已获取阵容";
                   const opponent = row.opponentName || row.opponentTag || "未知玩家";
+                  const canLookup = row.opponentTag && typeof onLookupPlayer === "function";
                   return (
                     <tr key={row.id || index}>
                       <th scope="row">
-                        <span className="battle-opponent-name" title={opponent}>{opponent}</span>
+                        {canLookup ? (
+                          <button className="battle-opponent-name battle-opponent-lookup" type="button" title={opponent}
+                            aria-label={`查询村庄 ${[row.opponentName, row.opponentTag].filter(Boolean).join(" ")}`}
+                            onClick={() => onLookupPlayer(row.opponentTag)}>{opponent}</button>
+                        ) : <span className="battle-opponent-name" title={opponent}>{opponent}</span>}
                         {row.opponentTag && row.opponentName && <small>{row.opponentTag}</small>}
                       </th>
                       <td><time dateTime={timestamp || undefined}>{formatTime(timestamp)}</time></td>

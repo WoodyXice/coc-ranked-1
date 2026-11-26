@@ -5,11 +5,18 @@
 
 .legend-player-search, .legend-player-day-bar {
   display: grid;
-  grid-template-columns: minmax(150px, 260px) auto;
   justify-content: start;
   align-items: end;
   gap: 8px 12px;
 }
+
+.legend-player-search {
+  grid-template-columns: minmax(0, 260px) auto;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.legend-player-search .legend-lookup-error { color: #ffb09f; }
 
 .legend-player-search .editor-help, .legend-player-day-bar p {
   grid-column: 1 / -1;

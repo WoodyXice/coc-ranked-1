@@ -99,7 +99,7 @@ function DeveloperKeyHelp({ busy, lookupQueue }) {
   );
 }
 
-export default function AccountPanel({ accounts, busy, onSelect, onSaveAccount, onRemoveAccount, onSaveDeveloperToken, onQuery, onSample }) {
+export default function AccountPanel({ accounts, busy, onSelect, onSaveAccount, onRemoveAccount, onSaveDeveloperToken, onQuery, onSample, children }) {
   const [editor, setEditor] = useState(null);
   const ipLookupQueue = useRef(Promise.resolve());
   const selected = accounts.accounts.find((account) => account.tag === accounts.selectedTag);
@@ -151,6 +151,7 @@ export default function AccountPanel({ accounts, busy, onSelect, onSaveAccount, 
         </button>
         <button type="button" className="text-button example-button" disabled={busy} onClick={onSample}>查看示例</button>
       </div>
+      {children}
       {editor?.type === "account" && (
         <form className="account-editor" onSubmit={saveAccount} autoComplete="off">
           <label htmlFor="edit-village-tag">村庄标签
