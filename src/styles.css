@@ -213,7 +213,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .report-notes { margin: 15px 6px 0; color: var(--muted); font-size: 14px; line-height: 1.65; }
 .report-notes p { margin: 3px 0; }
 
-.battle-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 0 0 14px; }
+.battle-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 0 0 14px; }
 .battle-summary div { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 13px 16px; }
 .battle-summary dt { color: var(--muted); font-size: 14px; line-height: 1.4; }
 .battle-summary dd { font-variant-numeric: tabular-nums; font-size: 26px; line-height: 1.2; margin: 5px 0 0; font-weight: 700; }
@@ -229,12 +229,16 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .battle-table thead tr:last-child th { border-bottom: 1px solid var(--line); }
 .battle-table td { white-space: nowrap; }
 .battle-table th[scope="row"] { min-width: 84px; max-width: 270px; overflow-wrap: anywhere; }
-.personal-battle-table { min-width: 790px; table-layout: fixed; }
+.personal-battle-table { min-width: 820px; table-layout: fixed; }
+.personal-battle-table thead th { padding-inline: 3px; }
+.personal-battle-table thead th:first-child { padding-inline: 9px; }
+.personal-battle-table .sort-button { padding-inline: 2px; font-size: 13px; }
+.battle-log-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .battle-player-column { width: 134px; }
 .battle-time-column { width: 167px; }
-.battle-duration-column { width: 48px; }
-.battle-result-column { width: 56px; }
-.battle-trophy-column { width: 94px; }
+.battle-duration-column { width: 52px; }
+.battle-result-column { width: 64px; }
+.battle-trophy-column { width: 108px; }
 .battle-opponent-name, .standings-player-name {
   display: block;
   overflow: hidden;
@@ -320,7 +324,11 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .standings-league-badge span { overflow-wrap: anywhere; }
 .standings-legend-entry { display: grid; justify-items: center; gap: 12px; }
 .standings-card { overflow: visible; padding-bottom: 10px; }
+.standings-card:has(.my-result-column) { max-height: 64vh; overflow: auto; }
 .standings-table { table-layout: fixed; min-width: 1068px; }
+.standings-table:has(.my-result-column) { min-width: 1280px; }
+.standings-table .my-result-column { width: 110px; }
+.standings-table .defense-rank-column { width: 80px; }
 .standings-table .rank-column { width: 58px; }
 .standings-table .stat-column { width: 74px; }
 .standings-table .destruction-column { width: 104px; }
@@ -341,6 +349,32 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .standings-table .total-trophies { font-weight: 700; }
 .standing-selected { background: #263244; }
 .standing-selected > :first-child { box-shadow: inset 3px 0 0 #75a9f4; }
+.defense-top-hit { background: #3b3416; }
+.defense-top-hit > :first-child { box-shadow: inset 3px 0 0 #e0b93e; }
+.defense-top-hit.standing-selected { background: #3b3416; }
+.my-result { display: block; white-space: nowrap; font-size: 13px; }
+.defense-rank-badge { display: block; font-size: 12px; color: var(--muted); }
+.defense-top-hit .defense-rank-badge { color: #f0cf6a; }
+.gear-badge { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 4px; background: #4a3d12; color: #f0cf6a; font-size: 12px; font-weight: 600; }
+.army-history-focus { box-shadow: inset 3px 0 0 #e0b93e; }
+.gear-picker { display: grid; gap: 10px; padding: 14px 16px; margin-bottom: 14px; }
+.gear-picker-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 13px; }
+.gear-picker-status button { min-height: 28px; padding: 2px 12px; }
+.gear-hero-row { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; align-items: start; }
+.gear-hero-name { padding-top: 8px; color: var(--muted); font-size: 14px; }
+.gear-hero-active { color: #f0cf6a; font-weight: 700; }
+.gear-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.gear-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 3px 10px 3px 4px; color: inherit; background: #202124; border: 1px solid var(--line); border-radius: 18px; font-size: 13px; }
+.gear-chip img { width: 28px; height: 28px; border-radius: 50%; }
+.gear-chip small { color: var(--muted); font-size: 12px; }
+.gear-chip[aria-pressed="true"] { background: #4a3d12; border-color: #e0b93e; }
+.gear-chip[aria-pressed="true"] small { color: #f0cf6a; }
+.gear-chip:disabled { opacity: 0.4; cursor: not-allowed; }
+.equipment-table .army-expanded-row td { text-align: left; }
+.gear-result-summary { margin: 0 0 10px; font-weight: 600; }
+@media (max-width: 650px) { .gear-hero-row { grid-template-columns: 1fr; gap: 4px; } .gear-hero-name { padding-top: 0; } }
+.equipment-table { min-width: 640px; }
+.equipment-table tr > :first-child { text-align: left; }
 .sort-button { min-height: 30px; color: inherit; background: transparent; border-color: transparent; padding: 3px 4px; }
 .sort-indicator { margin-left: 4px; color: var(--blue); }
 
@@ -372,6 +406,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
   .battle-summary { gap: 6px; }
   .battle-summary div { padding-inline: 9px; }
   .battle-summary dd { font-size: 22px; }
+  .battle-log-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .score-summary { grid-template-columns: 1fr 1fr; }
 }
 

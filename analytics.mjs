@@ -55,8 +55,11 @@ const UNITS = makeAliases([
   ['Electro Titan', '雷电泰坦', '雷霆泰坦', '电泰坦', '泰坦'],
   ['Ruin Witch', '废墟女巫', 'ruin witches'],
   ['Invisibility Spell', '隐形法术', '隐身法术', '隐形', '隐身', 'invisibility'],
-  ['Fireball', '火球', '火球装备'],
+  ['Fireball', '火球', '火球装备', '巨大火球'],
   ['Archer Queen', '弓箭女皇', '女皇', 'queen'],
+  ['Dragon Duke', '飞龙公爵', '飛龍公爵'],
+  ['Monolith Arrow', '擎天箭矢'],
+  ['Electro Fangs', '雷电獠牙', '雷電獠牙'],
   ['Balloon Squad', '气球兵小队', '氣球兵小隊'],
   ['Healer Squad', '天使小队', '天使小隊'],
   ['P.E.K.K.A Titan Squad', 'PEKKA Titan Squad', '皮卡泰坦小队', '皮卡泰坦小隊'],
@@ -146,18 +149,37 @@ function normalizeArmy(attack, code) {
   const supplied = attack.army ?? attack.lineup;
   const army = supplied && typeof supplied === 'object' ? supplied : parseShareCode(code);
   const payloadTroops = Array.isArray(army) ? army : army?.troops ?? army?.units;
-  const heroes = army?.heroes ?? attack.heroes;
+  const rawHeroes = army?.heroes ?? attack.heroes;
   const equipment = normalizeUnits(army?.equipment ?? army?.heroEquipment ?? attack.equipment ?? attack.heroEquipment);
-  const equipped = Array.isArray(heroes)
-    ? heroes.flatMap(hero => normalizeUnits(hero?.equipment))
-    : [];
+  const equipmentByHero = new Map();
+  if (Array.isArray(rawHeroes)) {
+    for (const hero of rawHeroes) {
+      const name = normalizeUnits([hero])[0]?.name;
+      const gear = normalizeUnits(hero?.equipment ?? hero?.heroEquipment);
+      if (name && gear.length) equipmentByHero.set(name, [...(equipmentByHero.get(name) ?? []), ...gear]);
+    }
+  }
+  const heroes = normalizeUnits(rawHeroes).map(hero => ({
+    ...hero,
+    equipment: normalizeUnits(equipmentByHero.get(hero.name)),
+  }));
   return {
     troops: normalizeUnits(payloadTroops ?? attack.troops ?? attack.units),
     spells: normalizeUnits(army?.spells ?? attack.spells),
-    heroes: normalizeUnits(heroes),
-    equipment: normalizeUnits([...equipment, ...equipped]),
+    heroes,
+    equipment: normalizeUnits([...equipment, ...heroes.flatMap(hero => hero.equipment)]),
     siegeMachines: normalizeUnits(army?.siegeMachines ?? attack.siegeMachines),
   };
+}
+
+// Older imports list the equipment separately or omit it altogether.
+function loadoutFor(army, name) {
+  const hero = army.heroes.find(unit => unit.name === name);
+  if (!hero) return army.equipment.length ? [] : null;
+  if (hero.equipment.length) return hero.equipment;
+  const assigned = new Set(army.heroes.flatMap(unit => unit.equipment.map(gear => gear.name)));
+  const unassigned = army.equipment.filter(gear => !assigned.has(gear.name));
+  return unassigned.length ? unassigned : null;
 }
 
 function classify(army) {
@@ -172,8 +194,14 @@ function classify(army) {
   const dragons = troop('Dragon') + troop('Electro Dragon') + troop('Super Dragon') + troop('Dragon Rider') + troop('Inferno Dragon');
 
   if (troop('Super Bowler') >= 3 || troop('Bowler') >= 8) {
-    if (dragons > 0 && invisibility >= 3) return '隐龙蓝胖';
-    if (troop('Healer') >= 4 && army.heroes.some(unit => unit.name === 'Archer Queen')) return '天女蓝胖';
+    const queen = loadoutFor(army, 'Archer Queen');
+    const duke = loadoutFor(army, 'Dragon Duke');
+    if (queen?.some(gear => gear.name === 'Monolith Arrow')) return '天女蓝胖';
+    if (duke?.some(gear => gear.name === 'Electro Fangs') && invisibility >= 3) return '隐龙蓝胖';
+    if (duke === null && dragons > 0 && invisibility >= 3) return '隐龙蓝胖';
+    if (queen === null && troop('Healer') >= 4 && army.heroes.some(unit => unit.name === 'Archer Queen')) {
+      return '天女蓝胖';
+    }
     return '其他蓝胖';
   }
   if (troop('Super Yeti') >= 3) return '超级大雪怪';

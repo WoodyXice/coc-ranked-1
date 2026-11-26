@@ -7,9 +7,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { getReport } from "../analytics.mjs";
 import { fetchLegendLeaderboard, fetchLegendLocations } from "../collector.mjs";
 import { workbookBytes } from "../files.mjs";
-import { collectData, collectTemporaryPlayer, developerPortal, getPublicIp, sampleReport } from "./service.mjs";
-import { createAccountStore, validateDeveloperToken } from "./accounts.mjs";
+import { cachedReport, collectData, collectTemporaryPlayer, developerPortal, getPublicIp, sampleReport } from "./service.mjs";
+import { createAccountStore, importAccountsJson, validateDeveloperToken } from "./accounts.mjs";
+import { openDatabase } from "./database.mjs";
 import { createDefenseNoteStore } from "./defense-notes.mjs";
+import { importLegacyJson } from "./legacy-import.mjs";
 import { createUpdater, releasePage } from "./updater.mjs";
 
 const rendererUrl = "coc-app://local/";
@@ -53,6 +55,11 @@ async function saveFile(window, bytes, name, extension, type) {
   return true;
 }
 
+function savedReportTag(value) {
+  const tag = typeof value === "string" ? value.trim().toUpperCase().replace(/^#/, "") : "";
+  return /^[A-Z0-9]{2,20}$/.test(tag) ? "#" + tag : "";
+}
+
 function bind(window, channel, handler) {
   ipcMain.handle(channel, async (event, ...args) => {
     if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame
@@ -67,7 +74,7 @@ function bind(window, channel, handler) {
   window.once("closed", () => ipcMain.removeHandler(channel));
 }
 
-function createWindow() {
+function createWindow(database, storageWarnings) {
   const window = new BrowserWindow({
     title: "部落冲突排位助手",
     icon,
@@ -79,14 +86,13 @@ function createWindow() {
     backgroundColor: "#121315",
     webPreferences: { preload, sandbox: true, contextIsolation: true, nodeIntegration: false },
   });
-  const snapshotDir = resolve(app.getPath("userData"), "ranked-snapshots");
-  const accountStore = createAccountStore(resolve(app.getPath("userData"), "accounts.json"), safeStorage);
+  const accountStore = createAccountStore(database, safeStorage);
+  const defenseNotes = createDefenseNoteStore(database.db);
   async function savedDeveloperToken() {
     const token = await accountStore.getDeveloperToken();
     if (!token) throw new Error("请先保存 Supercell 开发者 API 令牌。");
     return token;
   }
-  const defenseNotes = createDefenseNoteStore(resolve(app.getPath("userData"), "defense-notes.json"));
   const contents = window.webContents;
   const updates = createUpdater({ app, publish(state) {
     if (!contents.isDestroyed() && contents.mainFrame?.url === rendererUrl) {
@@ -111,7 +117,10 @@ function createWindow() {
     if (!raw.battleViews) return payload;
     return { ...payload, raw: { ...raw, battleViews: await defenseNotes.withNotes(raw.battleViews) } };
   }
-  bind(window, "coc:accounts", accountStore.list);
+  bind(window, "coc:accounts", async () => {
+    const accounts = await accountStore.list();
+    return storageWarnings.length ? { ...accounts, storageWarnings } : accounts;
+  });
   bind(window, "coc:save-account", accountStore.saveAccount);
   bind(window, "coc:select-account", accountStore.selectAccount);
   bind(window, "coc:remove-account", accountStore.removeAccount);
@@ -132,7 +141,20 @@ function createWindow() {
   bind(window, "coc:sample", () => withDefenseNotes(sampleReport()));
   bind(window, "coc:collect", async (input) => {
     const token = validateDeveloperToken(input?.token) || await savedDeveloperToken();
-    return withDefenseNotes(await collectData({ playerTag: input?.playerTag, token }, { snapshotDir }));
+    const result = await collectData({ playerTag: input?.playerTag, token }, { snapshots: database.snapshots });
+    let fetchedAt = new Date().toISOString();
+    const playerTag = savedReportTag(input?.playerTag);
+    try {
+      if (playerTag) fetchedAt = database.reports.save(playerTag, result.raw, fetchedAt);
+    } catch (error) {
+      console.warn(`Could not save the latest report: ${error?.message}`);
+    }
+    return { ...(await withDefenseNotes(result)), fetchedAt };
+  });
+  bind(window, "coc:cached-report", async (tag) => {
+    const playerTag = savedReportTag(tag);
+    const saved = playerTag ? cachedReport(database.reports.load(playerTag)) : null;
+    return saved && withDefenseNotes(saved);
   });
   bind(window, "coc:legend-leaderboard", async (input) =>
     fetchLegendLeaderboard({ token: await savedDeveloperToken(), location: input?.location }));
@@ -179,7 +201,28 @@ if (!app.requestSingleInstanceLock()) {
     session.defaultSession.setPermissionRequestHandler((_contents, _permission, respond) => respond(false));
     session.defaultSession.setPermissionCheckHandler(() => false);
     Menu.setApplicationMenu(null);
-    createWindow();
+    const userData = app.getPath("userData");
+    const databaseFile = resolve(userData, "coc-ranked.db");
+    let database;
+    const storageWarnings = [];
+    try {
+      database = openDatabase(databaseFile);
+      const { from, to, backup } = database.migration;
+      if (from !== to) console.info(`Database migrated v${from} -> v${to}${backup ? `, backup: ${backup}` : ""}`);
+      storageWarnings.push(...(importLegacyJson(database, userData)?.warnings ?? []));
+    } catch (error) {
+      database?.close();
+      dialog.showErrorBox("部落冲突排位助手", `无法打开本地数据库：${databaseFile}\n\n${error?.message ?? ""}`);
+      app.quit();
+      return;
+    }
+    try {
+      storageWarnings.push(...(importAccountsJson(database, safeStorage, resolve(userData, "accounts.json"))?.warnings ?? []));
+    } catch {
+      storageWarnings.push("暂时无法导入旧版村庄和令牌。旧配置已保留，下次启动会重试。");
+    }
+    app.on("will-quit", () => database.close());
+    createWindow(database, storageWarnings);
   });
   app.on("window-all-closed", () => app.quit());
 }

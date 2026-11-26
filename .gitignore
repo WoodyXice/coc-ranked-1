@@ -9,3 +9,6 @@ defense-notes.json
 ranked-snapshots/
 *.log
 .env*
+*.db
+*.db-wal
+*.db-shm

@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld("cocApp", {
   fetchLegendLeaderboard: (input) => invoke("coc:legend-leaderboard", input),
   fetchLegendLocations: () => invoke("coc:legend-locations"),
   fetchTemporaryPlayer: (input) => invoke("coc:temporary-player", input),
+  cachedReport: (tag) => invoke("coc:cached-report", tag),
   listAccounts: () => invoke("coc:accounts"),
   saveAccount: (input) => invoke("coc:save-account", input),
   selectAccount: (tag) => invoke("coc:select-account", tag),

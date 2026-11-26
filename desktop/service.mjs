@@ -40,15 +40,21 @@ function withStrategies(records) {
   const attacks = withArmy.map(({ id, timestamp, armyShareCode, army }) => ({ id, timestamp, armyShareCode, army }));
   const classified = getReport({ source: "api", attacks }).attacks;
   const strategies = new Map(classified.map(({ id, strategy }) => [id, strategy]));
-  return withArmy.map((battle) => ({ ...battle, strategy: battle.strategy || strategies.get(battle.id) || "" }));
+  // Always reclassify with the current rules; a saved label is only a fallback for armies we cannot decode.
+  return withArmy.map((battle) => ({ ...battle, strategy: strategies.get(battle.id) || battle.strategy || "" }));
 }
 
 function classifyBattleViews(battleViews) {
   return {
     ...battleViews,
-    attacks: withStrategies(battleViews.attacks),
-    defenses: withStrategies(battleViews.defenses),
+    attacks: withStrategies(battleViews.attacks ?? []),
+    defenses: withStrategies(battleViews.defenses ?? []),
   };
+}
+
+function buildReport(raw) {
+  const classified = raw.battleViews ? { ...raw, battleViews: classifyBattleViews(raw.battleViews) } : raw;
+  return { raw: classified, report: getReport(classified) };
 }
 
 export async function collectTemporaryPlayer(input, options) {
@@ -67,10 +73,13 @@ export async function collectData({ playerTag, token } = {}, options = {}) {
     week: rankedWeek(now),
     includeBattleViews: true,
   });
-  if (raw.battleViews) {
-    raw.battleViews = classifyBattleViews(raw.battleViews);
-  }
-  return { raw, report: getReport(raw) };
+  return buildReport(raw);
+}
+
+// A saved report is reused only within the ranked week it was collected in.
+export function cachedReport(saved, now = new Date()) {
+  if (saved?.raw?.week !== rankedWeek(now) || !Number.isFinite(Date.parse(saved.fetchedAt))) return null;
+  return { ...buildReport(saved.raw), fetchedAt: saved.fetchedAt };
 }
 
 export function sampleReport() {

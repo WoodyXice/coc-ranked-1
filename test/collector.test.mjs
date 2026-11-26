@@ -1,9 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, rmdir, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import test from "node:test";
 import { fetchRankedReport } from "../collector.mjs";
+import { openDatabase } from "../desktop/database.mjs";
 
 const groupTag = "#MOCKG";
 const playerTag = "#MOCK1";
@@ -99,22 +97,19 @@ function collectWithTierFixtures(options) {
 }
 
 async function snapshotFixture(context, attacks, defenses) {
-  const directory = await mkdtemp(join(tmpdir(), "coc-ranked-collector-test-"));
-  const file = join(directory, `${groupTag.slice(1)}-${seasonId}.json`);
-  context.after(async () => {
-    await rm(file, { force: true });
-    await rmdir(directory);
-  });
-  await writeFile(file, JSON.stringify({ groupTag, seasonId, week, attacks, defenses }), "utf8");
+  const database = openDatabase(":memory:");
+  context.after(() => database.close());
+  const league = { groupTag, seasonId, week };
+  database.snapshots.write(league, attacks, defenses);
   return {
     async fetch(options) {
       return fetchRankedReport({
-        token: "fixture-developer-token", playerTag, week, snapshotDir: directory,
+        token: "fixture-developer-token", playerTag, week, snapshots: database.snapshots,
         includeBattleViews: true, requestIntervalMs: 0, fetchImpl: mockFetch(options),
       });
     },
     async saved() {
-      return JSON.parse(await readFile(file, "utf8"));
+      return database.snapshots.read(league);
     },
   };
 }

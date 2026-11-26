@@ -2,10 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { toBlob } from "html-to-image";
 import AccountPanel from "./AccountPanel.jsx";
 import BattleLog from "./BattleLog.jsx";
+import EquipmentFilter from "./EquipmentFilter.jsx";
 import LegendLeaderboard from "./LegendLeaderboard.jsx";
 import TemporaryPlayer, { TemporaryPlayerSearch, useTemporaryPlayerLookup } from "./TemporaryPlayer.jsx";
 import Standings, { StandingSummary } from "./Standings.jsx";
 import UpdatePanel from "./UpdatePanel.jsx";
+import { formatTime } from "./battle-time.mjs";
 
 const TAU = Math.PI * 2;
 const CHART_SIZE = 400;
@@ -196,7 +198,7 @@ function Report({ report, reportRef, battleViews }) {
 }
 
 const legendTabs = ["legend-global", "legend-regional"];
-const baseTabs = ["meta", "standings", "attacks", "defenses", ...legendTabs];
+const baseTabs = ["meta", "standings", "equipment", "attacks", "defenses", ...legendTabs];
 const temporaryTab = "temporary-player";
 const sourceLabels = { sample: "截图示例", api: "官方 API" };
 const initialAccounts = { accounts: [], selectedTag: "", hasDeveloperToken: false };
@@ -222,9 +224,9 @@ export default function App() {
   const [tokenRevision, setTokenRevision] = useState(0);
   const [busy, setBusy] = useState("");
   const [feedback, setFeedback] = useState(null);
+  const [standingFocus, setStandingFocus] = useState(null);
   const reportRef = useRef(null);
   const working = useRef(false);
-  const resultsByTag = useRef(new Map());
   const showLookupWhenReady = useRef(false);
   const temporaryLookup = useTemporaryPlayerLookup({ enabled: accounts.hasDeveloperToken && !accountLoading, tokenRevision });
   const temporaryResult = temporaryLookup.result;
@@ -241,6 +243,7 @@ export default function App() {
   const tabLabels = {
     meta: "小组流派",
     standings: "排位排名",
+    equipment: "装备筛选",
     attacks: "进攻" + (battleViews?.attacks ? ` ${battleViews.attacks.length}` : ""),
     defenses: "防守" + (battleViews?.defenses ? ` ${battleViews.defenses.length}` : ""),
     "legend-global": "传奇 I 全球榜",
@@ -253,7 +256,12 @@ export default function App() {
     async function loadAccounts() {
       try {
         const result = await window.cocApp.listAccounts();
-        if (active) setAccounts(result);
+        if (!active) return;
+        setAccounts(result);
+        if (result.selectedTag) {
+          const saved = await loadSavedReport(result.selectedTag);
+          if (active && saved) showSavedReport(saved);
+        }
       } catch (failure) {
         if (active) setFeedback({ message: getErrorMessage(failure), error: true });
       } finally {
@@ -288,14 +296,32 @@ export default function App() {
     }
   }
 
-  function applyAccountState(result) {
-    setAccounts(result);
-    if (result.selectedTag !== accounts.selectedTag) setPayload(resultsByTag.current.get(result.selectedTag) ?? null);
+  async function applyAccountState(result) {
+    setAccounts({ ...result, storageWarnings: accounts.storageWarnings });
+    if (result.selectedTag === accounts.selectedTag) return null;
+    setPayload(null);
+    setStandingFocus(null);
+    if (!result.selectedTag) return null;
+    const saved = await loadSavedReport(result.selectedTag);
+    if (saved) showSavedReport(saved);
+    return saved;
+  }
+
+  async function loadSavedReport(tag) {
+    try {
+      return await window.cocApp.cachedReport(tag);
+    } catch {
+      return null;
+    }
+  }
+
+  function showSavedReport(saved) {
+    setPayload(saved);
+    setFeedback({ message: `已显示 ${formatTime(saved.fetchedAt)} 保存的本周战报，点「更新本周排位」可获取最新数据。` });
   }
 
   async function collectFor(tag) {
     const result = await window.cocApp.collect({ playerTag: tag, token: "" });
-    resultsByTag.current.set(tag, result);
     setPayload(result);
     setFeedback({ message: "已更新本周排位战报。" });
   }
@@ -308,10 +334,13 @@ export default function App() {
 
   function selectAccount(tag) {
     if (!tag || tag === accounts.selectedTag) return;
-    void run(accounts.hasDeveloperToken ? "正在查询所选村庄的本周排位…" : "正在切换村庄…", async () => {
+    void run("正在切换村庄…", async () => {
       const result = await window.cocApp.selectAccount(tag);
-      applyAccountState(result);
-      if (result.hasDeveloperToken && !resultsByTag.current.has(tag)) await collectFor(tag);
+      const cached = await applyAccountState(result);
+      if (result.hasDeveloperToken && !cached) {
+        setBusy("正在查询所选村庄的本周排位…");
+        await collectFor(tag);
+      }
     });
   }
 
@@ -325,7 +354,7 @@ export default function App() {
         ...(shortToken && { gameToken: shortToken }),
         ...(clearGameToken && { clearGameToken: true }),
       });
-      applyAccountState(result);
+      await applyAccountState(result);
       setFeedback({ message: "村庄已保存在本机。" });
     }, [shortToken]);
   }
@@ -333,8 +362,7 @@ export default function App() {
   function removeAccount(tag) {
     return run("正在移除村庄…", async () => {
       const result = await window.cocApp.removeAccount(tag);
-      resultsByTag.current.delete(tag);
-      applyAccountState(result);
+      await applyAccountState(result);
       setFeedback({ message: "已移除该村庄。" });
     });
   }
@@ -343,7 +371,7 @@ export default function App() {
     const token = input.trim();
     return run(token ? "正在保存开发者令牌…" : "正在清除开发者令牌…", async () => {
       if (token && !/^[\w-]+\.[\w-]+\.[\w-]+$/.test(token)) throw new Error("请输入从 Supercell 开发者后台获取的完整 JWT 令牌。");
-      applyAccountState(await window.cocApp.saveDeveloperToken(token));
+      await applyAccountState(await window.cocApp.saveDeveloperToken(token));
       setTokenRevision((revision) => revision + 1);
       setFeedback({ message: token ? "开发者 API 令牌已保存在本机。" : "已清除开发者 API 令牌。" });
     }, [token]);
@@ -384,6 +412,7 @@ export default function App() {
 
   function chooseTab(next) {
     showLookupWhenReady.current = false;
+    setStandingFocus(null);
     setTab(next);
   }
 
@@ -394,6 +423,11 @@ export default function App() {
   function openLegendLeaderboard() {
     chooseTab("legend-global");
     document.getElementById("tab-legend-global")?.focus();
+  }
+
+  function openEquipmentPlayer(playerTag, equipment) {
+    chooseTab("standings");
+    setStandingFocus({ playerTag, equipment });
   }
 
   function moveTab(event) {
@@ -415,13 +449,14 @@ export default function App() {
         <h1>部落冲突排位战报</h1>
         <UpdatePanel busy={!!busy} />
       </header>
-      <AccountPanel accounts={accounts} busy={accountLoading || !!busy} onSelect={selectAccount}
+      <AccountPanel accounts={accounts} busy={accountLoading || !!busy} hasReport={!!payload?.fetchedAt} onSelect={selectAccount}
         onSaveAccount={saveAccount} onRemoveAccount={removeAccount} onSaveDeveloperToken={saveDeveloperToken}
         onQuery={collect} onSample={loadSample}>
         <TemporaryPlayerSearch lookup={temporaryLookup} disabled={accountLoading || !!busy || !accounts.hasDeveloperToken}
           onLookupPlayer={openTemporaryPlayer} />
       </AccountPanel>
       <div className="app-feedback">
+        {accounts.storageWarnings?.length > 0 && <div className="feedback error" role="alert">{accounts.storageWarnings.join(" ")}</div>}
         <div className="feedback" role="status">{(accountLoading && "正在读取本机村庄…") || busy || (!feedback?.error && feedback?.message)}</div>
         {feedback?.error && <div className="feedback error" role="alert">{feedback.message}</div>}
       </div>
@@ -446,9 +481,13 @@ export default function App() {
             {report && tab === "standings" && <Standings key={report.groupTag + report.week} rows={payload.raw?.standings ?? []} battleViews={battleViews}
               attacks={payload.raw?.attacks ?? report.attacks} classifiedAttacks={report.attacks}
               groupTag={report.groupTag} week={report.week} leagueTier={payload.raw?.leagueTier} isSample={report.source === "sample"}
-              onOpenLegend={openLegendLeaderboard} />}
+              onOpenLegend={openLegendLeaderboard} focus={standingFocus} />}
+            {report && tab === "equipment" && <EquipmentFilter key={report.groupTag + report.week}
+              attacks={payload.raw?.attacks ?? []} classifiedAttacks={report.attacks} standings={payload.raw?.standings ?? []}
+              groupTag={report.groupTag} week={report.week} isSample={report.source === "sample"}
+              personalOnly={!!battleViews?.personalOnly} onOpenPlayer={openEquipmentPlayer} />}
             {report && (tab === "attacks" || tab === "defenses") && <BattleLog key={battleViews?.playerTag + tab} kind={tab} battleViews={battleViews}
-              isSample={report.source === "sample"} accountName={battleAccountName} />}
+              isSample={report.source === "sample"} accountName={battleAccountName} standings={payload.raw?.standings ?? []} />}
             {(tab === "legend-global" || tab === "legend-regional") && <LegendLeaderboard key={tab + tokenRevision}
               scope={tab === "legend-global" ? "global" : "regional"} hasDeveloperToken={accounts.hasDeveloperToken}
               accountLoading={accountLoading} selectedTag={accounts.selectedTag} selectedStanding={selectedStanding}

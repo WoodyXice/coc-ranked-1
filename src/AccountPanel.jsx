@@ -99,7 +99,8 @@ function DeveloperKeyHelp({ busy, lookupQueue }) {
   );
 }
 
-export default function AccountPanel({ accounts, busy, onSelect, onSaveAccount, onRemoveAccount, onSaveDeveloperToken, onQuery, onSample, children }) {
+export default function AccountPanel({ accounts, busy, hasReport, onSelect, onSaveAccount, onRemoveAccount, onSaveDeveloperToken,
+  onQuery, onSample, children }) {
   const [editor, setEditor] = useState(null);
   const ipLookupQueue = useRef(Promise.resolve());
   const selected = accounts.accounts.find((account) => account.tag === accounts.selectedTag);
@@ -138,7 +139,7 @@ export default function AccountPanel({ accounts, busy, onSelect, onSaveAccount, 
           </select>
         </label>
         <div className="account-actions">
-          <button type="button" className="primary" disabled={busy || !selected || !accounts.hasDeveloperToken} onClick={onQuery}>查询本周排位</button>
+          <button type="button" className="primary" disabled={busy || !selected || !accounts.hasDeveloperToken} onClick={onQuery}>{hasReport ? "更新本周排位" : "查询本周排位"}</button>
           <button type="button" disabled={busy} onClick={() => editAccount()}>添加村庄</button>
           {selected && <button type="button" disabled={busy} onClick={() => editAccount(selected)}>编辑村庄</button>}
         </div>
