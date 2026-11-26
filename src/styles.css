@@ -213,7 +213,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .report-notes { margin: 15px 6px 0; color: var(--muted); font-size: 14px; line-height: 1.65; }
 .report-notes p { margin: 3px 0; }
 
-.battle-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 0 0 14px; }
+.battle-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 0 0 14px; }
 .battle-summary div { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 13px 16px; }
 .battle-summary dt { color: var(--muted); font-size: 14px; line-height: 1.4; }
 .battle-summary dd { font-variant-numeric: tabular-nums; font-size: 26px; line-height: 1.2; margin: 5px 0 0; font-weight: 700; }

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { toBlob } from "html-to-image";
 import AccountPanel from "./AccountPanel.jsx";
 import ArmyLineup, { ArmyAttribution, hasLineup } from "./ArmyLineup.jsx";
-import Standings, { StandingSummary, Trophy } from "./Standings.jsx";
+import Standings, { SortHeader, StandingSummary, Trophy, compareRows } from "./Standings.jsx";
 import UpdatePanel from "./UpdatePanel.jsx";
 import EquipmentFilter from "./EquipmentFilter.jsx";
 import { DEFENSE_TOP_N, defenseRanks } from "../insights.mjs";
@@ -207,11 +207,39 @@ function BattleLog({ kind, battleViews, isSample, accountName, standings = [] })
   const trophyLabel = offense ? "进攻得杯" : lost ? "防守扣杯" : mode === "mixed" ? "防守杯数变动" : "防守得杯";
   const label = offense ? "进攻" : "防守";
   const lineupLabel = offense ? "己方阵容" : "对手阵容";
-  const rows = [...(battleViews?.[kind] ?? [])].sort((a, b) => (b.battleTimestamp || b.timestamp || "").localeCompare(a.battleTimestamp || a.timestamp || ""));
+  const [sort, setSort] = useState({ key: "time", ascending: false });
+  const rows = battleViews?.[kind] ?? [];
+  const sortValues = rows.map((row) => {
+    const time = Date.parse(row.battleTimestamp || row.timestamp || "");
+    const trophy = Number.isFinite(row.trophyDelta) ? row.trophyDelta
+      : Number.isFinite(row.trophies) ? (lost && row.trophies !== 0 ? -Math.abs(row.trophies) : row.trophies) : null;
+    return {
+      row, time, trophy,
+      duration: row.durationSeconds,
+      stars: Number.isInteger(row.stars) ? row.stars : null,
+      destruction: row.destruction,
+      lineup: hasLineup(row.army) ? row.strategy || "已获取阵容" : row.strategy || "",
+    };
+  });
+  const sortedRows = sortValues
+    .sort((a, b) => compareRows(a, b, sort.key, sort.ascending) || compareRows(a, b, "time", false))
+    .map(({ row }) => row);
+  const columns = [
+    { key: "time", label: "对战时间" },
+    { key: "duration", label: "用时", ascendingFirst: true },
+    { key: "stars", label: "星数" },
+    { key: "destruction", label: "摧毁率" },
+    { key: "trophy", label: trophyLabel },
+    { key: "lineup", label: lineupLabel, ascendingFirst: true, className: "battle-army-cell" },
+  ];
   const knownDestruction = rows.filter((row) => Number.isFinite(row.destruction));
   const threeStars = rows.reduce((count, row) => count + Number(row.stars === 3), 0);
   const average = knownDestruction.length
     ? (knownDestruction.reduce((sum, row) => sum + row.destruction, 0) / knownDestruction.length).toFixed(1) + "%"
+    : "—";
+  const knownStars = rows.filter((row) => Number.isInteger(row.stars) && row.stars >= 0 && row.stars <= 3);
+  const averageStars = knownStars.length
+    ? (knownStars.reduce((sum, row) => sum + row.stars, 0) / knownStars.length).toFixed(2)
     : "—";
   const partialDurations = rows.some((row) => !Number.isFinite(row.durationSeconds));
   const hasDuration = rows.some((row) => Number.isFinite(row.durationSeconds));
@@ -233,6 +261,7 @@ function BattleLog({ kind, battleViews, isSample, accountName, standings = [] })
           <dl className="battle-summary">
             <div><dt>{label}场次</dt><dd>{formatNumber.format(rows.length)}</dd></div>
             <div><dt>{offense ? "三星场次" : "被三星场次"}</dt><dd>{formatNumber.format(threeStars)}</dd></div>
+            <div><dt>{offense ? "平均进攻星数" : "平均防守星数"}</dt><dd>{averageStars}</dd></div>
             <div><dt>{offense ? "平均摧毁率" : "对手平均摧毁率"}</dt><dd>{average}</dd></div>
           </dl>
           <div className="battle-card">
@@ -244,11 +273,10 @@ function BattleLog({ kind, battleViews, isSample, accountName, standings = [] })
               </colgroup>
               <thead><tr>
                 <th scope="col">{offense ? "防守方" : "进攻方"}</th>
-                <th scope="col">对战时间</th><th scope="col">用时</th><th scope="col">星数</th><th scope="col">摧毁率</th>
-                <th scope="col">{trophyLabel}</th><th scope="col" className="battle-army-cell">{lineupLabel}</th>
+                {columns.map((column) => <SortHeader key={column.key} column={column} sort={sort} onSort={setSort} />)}
               </tr></thead>
               <tbody>
-                {rows.map((row, index) => {
+                {sortedRows.map((row, index) => {
                   const showArmy = hasLineup(row.army);
                   const timestamp = row.battleTimestamp || row.timestamp;
                   const strategy = row.strategy || "已获取阵容";

@@ -43,12 +43,29 @@ export function StandingSummary({ battleViews, standing, showPlayer = true }) {
   );
 }
 
-function compareRows(a, b, key, ascending) {
+export function compareRows(a, b, key, ascending) {
   const first = a[key];
   const second = b[key];
+  if (typeof first === "string" || typeof second === "string") {
+    if (!first) return second ? 1 : 0;
+    if (!second) return -1;
+    return ascending ? first.localeCompare(second, "zh-CN") : second.localeCompare(first, "zh-CN");
+  }
   if (!Number.isFinite(first)) return Number.isFinite(second) ? 1 : 0;
   if (!Number.isFinite(second)) return -1;
   return ascending ? first - second : second - first;
+}
+
+export function SortHeader({ column: { key, label, title, ascendingFirst = false, className }, sort, onSort }) {
+  const active = sort.key === key;
+  return (
+    <th scope="col" className={className} aria-sort={active ? sort.ascending ? "ascending" : "descending" : undefined}>
+      <button type="button" className="sort-button" title={title}
+        onClick={() => onSort({ key, ascending: active ? !sort.ascending : ascendingFirst })}>
+        {label}{active && <span className="sort-indicator" aria-hidden="true">{sort.ascending ? "↑" : "↓"}</span>}
+      </button>
+    </th>
+  );
 }
 
 function DirectionTiming({ timestamp, average, count }) {
@@ -151,16 +168,8 @@ export default function Standings({ rows, battleViews, groupTag, week, isSample,
   ];
   const sorted = [...rankedRows].sort((a, b) => compareRows(a, b, sort.key, sort.ascending) || compareRows(a, b, "rank", true));
 
-  function sortHeader({ key, label, title, ascendingFirst = false }) {
-    const active = sort.key === key;
-    return (
-      <th key={key} scope="col" aria-sort={active ? sort.ascending ? "ascending" : "descending" : undefined}>
-        <button type="button" className="sort-button" title={title}
-          onClick={() => setSort({ key, ascending: active ? !sort.ascending : ascendingFirst })}>
-          {label}{active && <span className="sort-indicator" aria-hidden="true">{sort.ascending ? "↑" : "↓"}</span>}
-        </button>
-      </th>
-    );
+  function sortHeader(column) {
+    return <SortHeader key={column.key} column={column} sort={sort} onSort={setSort} />;
   }
 
   return (
