@@ -50,10 +50,14 @@ test("equipment usage groups gear under its hero and computes rates", () => {
     [["#A", 2, 0.5, 0.75], ["#B", 1, 1, null]]);
 });
 
-test("queen charge bowler needs Monolith Arrow and at least four healers", () => {
+test("queen charge bowler only needs the queen carrying Monolith Arrow", () => {
   assert.equal(strategyOf("h1e16_17u4x80-5x7"), "天女蓝胖");
-  assert.equal(strategyOf("h1e16_17u4x80"), "其他蓝胖");
+  assert.equal(strategyOf("h1e16_17u4x80"), "天女蓝胖");
   assert.equal(strategyOf("h1e17_15u4x80-5x7"), "其他蓝胖");
+});
+
+test("Monolith Arrow queen wins over the invisible dragon rule", () => {
+  assert.equal(strategyOf("h1e16_17-7e59_60u4x80s3x35"), "天女蓝胖");
 });
 
 test("invisible dragon bowler needs Dragon Duke with Electro Fangs and three invisibility spells", () => {

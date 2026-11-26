@@ -17,7 +17,9 @@ function rate(value) {
   return Number.isFinite(value) ? percent.format(value) : "—";
 }
 
-export default function EquipmentFilter({ attacks, standings, groupTag, week, isSample, personalOnly, onOpenPlayer }) {
+const noClassified = [];
+
+export default function EquipmentFilter({ attacks, classifiedAttacks = noClassified, standings, groupTag, week, isSample, personalOnly, onOpenPlayer }) {
   const usage = useMemo(() => equipmentUsage(attacks, standings), [attacks, standings]);
   const heroes = useMemo(() => equipmentByHero(usage), [usage]);
   const itemById = useMemo(() => new Map(usage.map((item) => [item.id, item])), [usage]);
@@ -37,6 +39,19 @@ export default function EquipmentFilter({ attacks, standings, groupTag, week, is
     }
     return new Map([...byPlayer].map(([tag, list]) => [tag, armySets(list)]));
   }, [matching]);
+  const strategiesByPlayer = useMemo(() => {
+    const labels = new Map(classifiedAttacks.map(({ id, strategy }) => [id, strategy]));
+    const counts = new Map();
+    for (const attack of matching) {
+      const strategy = labels.get(attack.id) || attack.strategy;
+      if (!strategy) continue;
+      if (!counts.has(attack.playerTag)) counts.set(attack.playerTag, new Map());
+      const player = counts.get(attack.playerTag);
+      player.set(strategy, (player.get(strategy) ?? 0) + 1);
+    }
+    return new Map([...counts].map(([tag, byName]) => [tag, [...byName]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "zh-CN")).map(([name]) => name)]));
+  }, [matching, classifiedAttacks]);
   const label = selectedItems.map((item) => item.name).join(" + ");
 
   function blockedReason(item) {
@@ -102,7 +117,7 @@ export default function EquipmentFilter({ attacks, standings, groupTag, week, is
                     <th scope="col" title="同时携带所选装备的进攻中三星的比例">携带时三星率</th>
                     <th scope="col">携带时平均星</th>
                     <th scope="col">携带时平均摧毁率</th>
-                    <th scope="col" title="官方统计的本周全部排位进攻胜 / 负，不区分是否携带">本周进攻胜率</th>
+                    <th scope="col" title="携带所选装备的进攻被识别为的流派，按场次多到少">使用流派</th>
                   </tr></thead>
                   <tbody>{players.map((player) => {
                     const name = player.playerName || player.playerTag;
@@ -126,8 +141,7 @@ export default function EquipmentFilter({ attacks, standings, groupTag, week, is
                         <td>{rate(player.threeStarRate)}{player.scored > 0 && <small> {player.threeStars}/{player.scored}</small>}</td>
                         <td>{Number.isFinite(player.averageStars) ? player.averageStars.toFixed(2) : "—"}</td>
                         <td>{Number.isFinite(player.averageDestruction) ? player.averageDestruction.toFixed(1) + "%" : "—"}</td>
-                        <td>{rate(player.weekWinRate)}{Number.isInteger(player.attackWins) && Number.isInteger(player.attackLosses)
-                          && <small> {player.attackWins}胜{player.attackLosses}负</small>}</td>
+                        <td className="strategy-names">{strategiesByPlayer.get(player.playerTag)?.join(" / ") || "—"}</td>
                       </tr>
                       {expanded && <tr className="army-expanded-row"><td colSpan={6} id={panelId}>
                         <div className="group-army-history">
@@ -152,7 +166,7 @@ export default function EquipmentFilter({ attacks, standings, groupTag, week, is
                 </table>
               )}
               {players.length > 0 && <ArmyAttribution />}
-              <p className="battle-note">点「N 套阵容」展开该玩家用过的阵容：兵种、法术、攻城机器的种类和数量相同就算同一套（与下兵顺序无关），英雄装备取该套最近一场。点击玩家名字可跳到「排位排名」并展开其阵容，符合条件的场次会标出。本周进攻胜率来自官方胜负统计，包含不符合条件的场次。</p>
+              <p className="battle-note">点「N 套阵容」展开该玩家用过的阵容：兵种、法术、攻城机器的种类和数量相同就算同一套（与下兵顺序无关），英雄装备取该套最近一场。点击玩家名字可跳到「排位排名」并展开其阵容，符合条件的场次会标出。</p>
             </div>
           )}
         </>

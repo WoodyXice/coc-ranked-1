@@ -559,7 +559,7 @@ export default function App() {
               attacks={payload.raw?.attacks ?? report.attacks} classifiedAttacks={report.attacks}
               groupTag={report.groupTag} week={report.week} isSample={report.source === "sample"} focus={standingFocus} />}
             {report && tab === "equipment" && <EquipmentFilter key={report.groupTag + report.week}
-              attacks={payload.raw?.attacks ?? []} standings={payload.raw?.standings ?? []}
+              attacks={payload.raw?.attacks ?? []} classifiedAttacks={report.attacks} standings={payload.raw?.standings ?? []}
               groupTag={report.groupTag} week={report.week} isSample={report.source === "sample"}
               personalOnly={!!battleViews?.personalOnly} onOpenPlayer={openPlayer} />}
             {report && (tab === "attacks" || tab === "defenses") && <BattleLog key={battleViews?.playerTag + tab} kind={tab} battleViews={battleViews}

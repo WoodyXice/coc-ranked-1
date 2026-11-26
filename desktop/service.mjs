@@ -40,7 +40,20 @@ function withStrategies(records) {
   const attacks = withArmy.map(({ id, timestamp, armyShareCode, army }) => ({ id, timestamp, armyShareCode, army }));
   const classified = getReport({ source: "api", attacks }).attacks;
   const strategies = new Map(classified.map(({ id, strategy }) => [id, strategy]));
-  return withArmy.map((battle) => ({ ...battle, strategy: battle.strategy || strategies.get(battle.id) || "" }));
+  // Always reclassify with the current rules; a saved label is only a fallback for armies we cannot decode.
+  return withArmy.map((battle) => ({ ...battle, strategy: strategies.get(battle.id) || battle.strategy || "" }));
+}
+
+function withClassifiedViews(raw) {
+  if (!raw.battleViews) return raw;
+  return {
+    ...raw,
+    battleViews: {
+      ...raw.battleViews,
+      attacks: withStrategies(raw.battleViews.attacks ?? []),
+      defenses: withStrategies(raw.battleViews.defenses ?? []),
+    },
+  };
 }
 
 export async function collectData({ playerTag, token } = {}, options = {}) {
@@ -54,21 +67,16 @@ export async function collectData({ playerTag, token } = {}, options = {}) {
     week: rankedWeek(now),
     includeBattleViews: true,
   });
-  if (raw.battleViews) {
-    raw.battleViews = {
-      ...raw.battleViews,
-      attacks: withStrategies(raw.battleViews.attacks),
-      defenses: withStrategies(raw.battleViews.defenses),
-    };
-  }
-  return { raw, report: getReport(raw) };
+  const classified = withClassifiedViews(raw);
+  return { raw: classified, report: getReport(classified) };
 }
 
 // A saved report is reused only within the ranked week it was collected in.
 export function cachedReport(saved, now = new Date()) {
   if (!saved?.raw || !saved.fetchedAt) return null;
   if (rankedWeek(new Date(saved.fetchedAt)) !== rankedWeek(now)) return null;
-  return { raw: saved.raw, report: getReport(saved.raw), fetchedAt: saved.fetchedAt };
+  const raw = withClassifiedViews(saved.raw);
+  return { raw, report: getReport(raw), fetchedAt: saved.fetchedAt };
 }
 
 export function sampleReport() {

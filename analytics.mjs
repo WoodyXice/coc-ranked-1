@@ -174,8 +174,8 @@ function classify(army) {
   const hasHero = name => army.heroes.some(unit => unit.name === name);
   const hasGear = name => army.equipment.some(unit => unit.name === name);
   if (troop('Super Bowler') >= 3 || troop('Bowler') >= 8) {
+    if (hasHero('Archer Queen') && hasGear('Monolith Arrow')) return '天女蓝胖';
     if (hasHero('Dragon Duke') && hasGear('Electro Fangs') && invisibility >= 3) return '隐龙蓝胖';
-    if (hasHero('Archer Queen') && hasGear('Monolith Arrow') && troop('Healer') >= 4) return '天女蓝胖';
     return '其他蓝胖';
   }
   if (troop('Super Yeti') >= 3) return '超级大雪怪';

@@ -111,3 +111,13 @@ test("the latest report per village survives a reopen and is reused only in the 
   assert.equal(cachedReport(saved, new Date("2026-11-30T05:00:00Z")), null);
   assert.equal(cachedReport(null), null);
 });
+
+test("a cached report reclassifies saved personal battles with the current rules", () => {
+  const stale = battle("s1", { armyShareCode: "h1e16_17-7e59_60u4x80s3x35", strategy: "隐龙蓝胖" });
+  const saved = {
+    raw: { ...sampleReport().raw, battleViews: { ...sampleReport().raw.battleViews, attacks: [stale], defenses: [] } },
+    fetchedAt: "2026-11-24T00:00:00.000Z",
+  };
+  const cached = cachedReport(saved, new Date("2026-11-25T00:00:00Z"));
+  assert.equal(cached.raw.battleViews.attacks[0].strategy, "天女蓝胖");
+});
