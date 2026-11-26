@@ -8,8 +8,12 @@ const directions = { attacks: "进攻", defenses: "防守" };
 const dailyLimit = 8;
 const dayResetOffset = 5 * 60 * 60 * 1000;
 
+function tagWithoutPrefix(value) {
+  return typeof value === "string" ? value.replace(/^\s*#\s*/, "") : "";
+}
+
 function normalizeTag(value) {
-  const tag = typeof value === "string" ? value.trim().replace(/^#/, "").toUpperCase() : "";
+  const tag = tagWithoutPrefix(value).trim().toUpperCase();
   return /^[A-Z0-9]{2,20}$/.test(tag) ? `#${tag}` : "";
 }
 
@@ -86,7 +90,7 @@ function PlayerDay({ result }) {
 }
 
 export default function LegendPlayer({ hasDeveloperToken, accountLoading, initialTag = "" }) {
-  const [tag, setTag] = useState(initialTag ?? "");
+  const [tag, setTag] = useState(() => tagWithoutPrefix(initialTag));
   const [request, setRequest] = useState(() => {
     const playerTag = normalizeTag(initialTag);
     return playerTag ? { playerTag } : null;
@@ -123,7 +127,7 @@ export default function LegendPlayer({ hasDeveloperToken, accountLoading, initia
   }, [canLookup, request]);
 
   function editTag(value) {
-    setTag(value);
+    setTag(tagWithoutPrefix(value));
     setValidation("");
     if (request && normalizeTag(value) !== request.playerTag) {
       setRequest(null);
@@ -136,11 +140,11 @@ export default function LegendPlayer({ hasDeveloperToken, accountLoading, initia
     if (!canLookup || waiting) return;
     const playerTag = normalizeTag(tag);
     if (!playerTag) {
-      setValidation("请输入有效的玩家标签，例如 #2PP8QG。");
+      setValidation("请输入有效的玩家标签，例如 2PP8QG。");
       return;
     }
     setValidation("");
-    setTag(playerTag);
+    setTag(tagWithoutPrefix(playerTag));
     setReply(null);
     setRequest({ playerTag });
   }
@@ -153,9 +157,12 @@ export default function LegendPlayer({ hasDeveloperToken, accountLoading, initia
       <form className="query-card legend-player-search" onSubmit={submit}>
         <label>
           玩家标签
-          <input value={tag} onChange={(event) => editTag(event.target.value)} placeholder="#2PP8QG"
-            autoComplete="off" spellCheck={false} aria-invalid={Boolean(validation)}
-            aria-describedby={validation ? `${headingId}-feedback` : undefined} />
+          <span className="legend-tag-field">
+            <span className="legend-tag-prefix" aria-hidden="true">#</span>
+            <input value={tag} onChange={(event) => editTag(event.target.value)} placeholder="2PP8QG"
+              autoComplete="off" spellCheck={false} aria-invalid={Boolean(validation)}
+              aria-describedby={validation ? `${headingId}-feedback` : undefined} />
+          </span>
         </label>
         <button className="primary" type="submit" disabled={!canLookup || waiting}>查询</button>
         <p className="editor-help">临时查询的标签只在本次使用。</p>

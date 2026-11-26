@@ -15,6 +15,18 @@
   grid-column: 1 / -1;
 }
 
+.legend-tag-field { position: relative; }
+.legend-tag-prefix {
+  position: absolute;
+  inset-inline-start: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  pointer-events: none;
+  user-select: none;
+}
+.legend-player-search .legend-tag-field input:not([type="checkbox"]) { padding-inline-start: 26px; }
+
 .legend-player-profile {
   display: flex;
   align-items: center;
