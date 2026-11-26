@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { toBlob } from "html-to-image";
 import AccountPanel from "./AccountPanel.jsx";
-import ArmyLineup, { ArmyAttribution, hasLineup } from "./ArmyLineup.jsx";
-import Standings, { StandingSummary, Trophy } from "./Standings.jsx";
+import BattleLog from "./BattleLog.jsx";
+import LegendLeaderboard from "./LegendLeaderboard.jsx";
+import LegendPlayer from "./LegendPlayer.jsx";
+import Standings, { StandingSummary } from "./Standings.jsx";
 import UpdatePanel from "./UpdatePanel.jsx";
-import { formatDuration, formatTime } from "./battle-time.mjs";
 
 const TAU = Math.PI * 2;
 const CHART_SIZE = 400;
@@ -194,97 +195,10 @@ function Report({ report, reportRef, battleViews }) {
   );
 }
 
-const tags = ["meta", "standings", "attacks", "defenses"];
+const legendTabs = ["legend-global", "legend-regional", "legend-player"];
+const tags = ["meta", "standings", "attacks", "defenses", ...legendTabs];
 const sourceLabels = { sample: "截图示例", api: "官方 API" };
 const initialAccounts = { accounts: [], selectedTag: "", hasDeveloperToken: false };
-
-function BattleLog({ kind, battleViews, isSample, accountName }) {
-  const offense = kind === "attacks";
-  const mode = battleViews?.defenseTrophyMode;
-  const lost = !offense && mode === "lost";
-  const trophyLabel = offense ? "进攻得杯" : lost ? "防守扣杯" : mode === "mixed" ? "防守杯数变动" : "防守得杯";
-  const label = offense ? "进攻" : "防守";
-  const lineupLabel = offense ? "己方阵容" : "对手阵容";
-  const rows = [...(battleViews?.[kind] ?? [])].sort((a, b) => (b.battleTimestamp || b.timestamp || "").localeCompare(a.battleTimestamp || a.timestamp || ""));
-  const knownDestruction = rows.filter((row) => Number.isFinite(row.destruction));
-  const threeStars = rows.reduce((count, row) => count + Number(row.stars === 3), 0);
-  const average = knownDestruction.length
-    ? (knownDestruction.reduce((sum, row) => sum + row.destruction, 0) / knownDestruction.length).toFixed(1) + "%"
-    : "—";
-  const partialDurations = rows.some((row) => !Number.isFinite(row.durationSeconds));
-  const hasDuration = rows.some((row) => Number.isFinite(row.durationSeconds));
-
-  return (
-    <section className="battle-log" aria-labelledby="battle-title">
-      <header className="report-header">
-        <h2 id="battle-title">本周{label}记录</h2>
-        {battleViews?.playerTag && <p>{[accountName || battleViews.playerName, battleViews.playerTag, "时间为北京时间"].filter(Boolean).join(" · ")}</p>}
-      </header>
-      <StandingSummary battleViews={battleViews} standing={battleViews?.standing} showPlayer={false} />
-      {rows.length === 0 ? (
-        <div className="empty-card">
-          <p>{isSample ? "示例没有这类战绩。查询村庄后可查看个人战绩。" : "官方 API 本次未返回该村庄本周的" + label + "记录。"}</p>
-        </div>
-      ) : (
-        <>
-          <dl className="battle-summary">
-            <div><dt>{label}场次</dt><dd>{formatNumber.format(rows.length)}</dd></div>
-            <div><dt>{offense ? "三星场次" : "被三星场次"}</dt><dd>{formatNumber.format(threeStars)}</dd></div>
-            <div><dt>{offense ? "平均摧毁率" : "对手平均摧毁率"}</dt><dd>{average}</dd></div>
-          </dl>
-          <div className="battle-card">
-            <table className="battle-table personal-battle-table">
-              <colgroup>
-                <col className="battle-player-column" /><col className="battle-time-column" />
-                <col className="battle-duration-column" /><col className="battle-result-column" span={2} />
-                <col className="battle-trophy-column" /><col />
-              </colgroup>
-              <thead><tr>
-                <th scope="col">{offense ? "防守方" : "进攻方"}</th>
-                <th scope="col">对战时间</th><th scope="col">用时</th><th scope="col">星数</th><th scope="col">摧毁率</th>
-                <th scope="col">{trophyLabel}</th><th scope="col" className="battle-army-cell">{lineupLabel}</th>
-              </tr></thead>
-              <tbody>
-                {rows.map((row, index) => {
-                  const showArmy = hasLineup(row.army);
-                  const timestamp = row.battleTimestamp || row.timestamp;
-                  const strategy = row.strategy || "已获取阵容";
-                  const opponent = row.opponentName || row.opponentTag || "未知玩家";
-                  return (
-                    <tr key={row.id || index}>
-                      <th scope="row">
-                        <span className="battle-opponent-name" title={opponent}>{opponent}</span>
-                        {row.opponentTag && row.opponentName && <small>{row.opponentTag}</small>}
-                      </th>
-                      <td><time dateTime={timestamp || undefined}>{formatTime(timestamp)}</time></td>
-                      <td>{formatDuration(row.durationSeconds)}</td>
-                      <td>{Number.isInteger(row.stars) && row.stars >= 0 && row.stars <= 3 ? (
-                        <span className="stars" aria-label={`${row.stars} 星`}>
-                          <span aria-hidden="true">{"★".repeat(row.stars)}</span><span className="star-empty" aria-hidden="true">{"☆".repeat(3 - row.stars)}</span>
-                        </span>
-                      ) : "—"}</td>
-                      <td>{Number.isFinite(row.destruction) ? row.destruction + "%" : "—"}</td>
-                      <td>{Number.isFinite(row.trophyDelta) ? <Trophy value={row.trophyDelta} /> : <Trophy value={row.trophies} loss={lost} />}</td>
-                      <td className="battle-army-cell">{showArmy ? (
-                        <div className="battle-army">
-                          <span className="battle-army-strategy" title={strategy}>{strategy}</span>
-                          <ArmyLineup army={row.army} label={lineupLabel} />
-                        </div>
-                      ) : <span className="missing-lineup">{row.strategy || (row.armyShareCode ? "阵容待解析" : "暂无阵容")}</span>}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          {rows.some((row) => hasLineup(row.army)) && <ArmyAttribution />}
-          {rows.some((row) => row.strategy) && <p className="battle-note">流派根据公开阵容推断，实际打法可能不同。</p>}
-          {partialDurations && <p className="battle-note">{hasDuration ? "部分对战的用时未由官方 API 提供。" : "本次战绩没有附单场用时。"}</p>}
-        </>
-      )}
-    </section>
-  );
-}
 
 function getErrorMessage(failure, secrets = []) {
   const message = String(failure?.message || "操作失败，请重试。");
@@ -304,6 +218,8 @@ export default function App() {
   const [accounts, setAccounts] = useState(initialAccounts);
   const [accountLoading, setAccountLoading] = useState(true);
   const [tab, setTab] = useState("meta");
+  const [legendLookup, setLegendLookup] = useState({ tag: "", sequence: 0 });
+  const [tokenRevision, setTokenRevision] = useState(0);
   const [busy, setBusy] = useState("");
   const [feedback, setFeedback] = useState(null);
   const reportRef = useRef(null);
@@ -313,11 +229,18 @@ export default function App() {
   const report = payload?.report;
   const battleViews = payload?.raw?.battleViews;
   const battleAccountName = accounts.accounts.find(({ tag }) => tag === battleViews?.playerTag)?.name;
+  const isLegendTab = legendTabs.includes(tab);
+  const selectedStanding = battleViews?.personalOnly && battleViews.playerTag === accounts.selectedTag
+    ? { rank: battleViews.currentLegendRank, trophies: battleViews.currentLegendTrophies }
+    : null;
   const tabLabels = {
     meta: "小组流派",
     standings: "排位排名",
     attacks: "进攻" + (battleViews?.attacks ? ` ${battleViews.attacks.length}` : ""),
     defenses: "防守" + (battleViews?.defenses ? ` ${battleViews.defenses.length}` : ""),
+    "legend-global": "传奇 I 全球榜",
+    "legend-regional": "传奇 I 地区榜",
+    "legend-player": "传奇 I 查村庄",
   };
 
   useEffect(() => {
@@ -409,6 +332,7 @@ export default function App() {
     return run(token ? "正在保存开发者令牌…" : "正在清除开发者令牌…", async () => {
       if (token && !/^[\w-]+\.[\w-]+\.[\w-]+$/.test(token)) throw new Error("请输入从 Supercell 开发者后台获取的完整 JWT 令牌。");
       applyAccountState(await window.cocApp.saveDeveloperToken(token));
+      setTokenRevision((revision) => revision + 1);
       setFeedback({ message: token ? "开发者 API 令牌已保存在本机。" : "已清除开发者 API 令牌。" });
     }, [token]);
   }
@@ -446,6 +370,17 @@ export default function App() {
     });
   }
 
+  function openLegendPlayer(playerTag) {
+    setLegendLookup(({ sequence }) => ({ tag: playerTag, sequence: sequence + 1 }));
+    setTab("legend-player");
+    document.getElementById("tab-legend-player")?.focus();
+  }
+
+  function openLegendLeaderboard() {
+    setTab("legend-global");
+    document.getElementById("tab-legend-global")?.focus();
+  }
+
   function moveTab(event) {
     const index = tags.indexOf(tab);
     const next = {
@@ -481,7 +416,7 @@ export default function App() {
                   disabled={busy === "正在生成图片…"} onClick={() => setTab(name)} onKeyDown={moveTab}>{tabLabels[name]}</button>
               ))}
             </div>
-            {report && <div className="export-actions">
+            {report && !isLegendTab && <div className="export-actions">
               {sourceLabels[report.source] && <span className="source-label">{sourceLabels[report.source]}</span>}
               <button type="button" onClick={exportExcel} disabled={!!busy}>导出 Excel</button>
               {tab === "meta" && <button type="button" onClick={exportPng} disabled={!!busy}>保存图片</button>}
@@ -492,10 +427,17 @@ export default function App() {
               report={report} reportRef={reportRef} battleViews={battleViews} />}
             {report && tab === "standings" && <Standings key={report.groupTag + report.week} rows={payload.raw?.standings ?? []} battleViews={battleViews}
               attacks={payload.raw?.attacks ?? report.attacks} classifiedAttacks={report.attacks}
-              groupTag={report.groupTag} week={report.week} leagueTier={payload.raw?.leagueTier} isSample={report.source === "sample"} />}
+              groupTag={report.groupTag} week={report.week} leagueTier={payload.raw?.leagueTier} isSample={report.source === "sample"}
+              onOpenLegend={openLegendLeaderboard} />}
             {report && (tab === "attacks" || tab === "defenses") && <BattleLog key={battleViews?.playerTag + tab} kind={tab} battleViews={battleViews}
               isSample={report.source === "sample"} accountName={battleAccountName} />}
-            {!report && <section className="empty-card empty-results" aria-label="暂无战报">
+            {(tab === "legend-global" || tab === "legend-regional") && <LegendLeaderboard key={tab + tokenRevision}
+              scope={tab === "legend-global" ? "global" : "regional"} hasDeveloperToken={accounts.hasDeveloperToken}
+              accountLoading={accountLoading} selectedTag={accounts.selectedTag} selectedStanding={selectedStanding}
+              onLookupPlayer={openLegendPlayer} />}
+            {tab === "legend-player" && <LegendPlayer key={`${tokenRevision}:${legendLookup.sequence}`}
+              hasDeveloperToken={accounts.hasDeveloperToken} accountLoading={accountLoading} initialTag={legendLookup.tag} />}
+            {!report && !isLegendTab && <section className="empty-card empty-results" aria-label="暂无战报">
               <p>{busy ? "查询结果会显示在这里。" : accounts.selectedTag && accounts.hasDeveloperToken
                 ? "点击「查询本周排位」获取当前村庄的战报。" : "添加村庄并设置开发者 API 令牌，即可查询本周排位。"}</p>
             </section>}

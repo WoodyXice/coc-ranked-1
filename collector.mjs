@@ -330,6 +330,14 @@ function authorizationError(payload) {
   return clientError(403, '官方 API 未接受当前开发者密钥。请检查密钥是否有效，以及是否允许本机公网出口 IP。');
 }
 
+function requiredApiToken(value) {
+  const token = typeof value === 'string' ? value.trim() : '';
+  if (!token || token.length > 4096 || /[^!-~]/.test(token)) {
+    throw clientError(400, '请输入有效的 Clash of Clans API 令牌。');
+  }
+  return token;
+}
+
 function apiRequest(token, fetchImpl, interval) {
   let nextRequestAt = 0;
   let retryAt = 0;
@@ -809,19 +817,17 @@ function buildBattleViews(member, playerAttacks, playerDefenses, attackTelemetry
   };
 }
 
-async function fetchRecentPlayerReport(request, member, week, player) {
-  const start = Date.parse(`${week}T05:00:00Z`);
-  const logs = await requestBattleLog(request, member.playerTag);
+function recentPlayerBattles(logs, member, { start = -Infinity, end = Infinity, legendOnly = false } = {}) {
   const ledger = { attacks: new Map(), defenses: new Map() };
   const malformed = { attacks: 0, defenses: 0 };
 
   for (const row of logs) {
     const mode = battleMode(row?.battleType);
-    if (!row || (mode !== 'LEGEND' && mode !== 'RANKED')
+    if (!row || (mode !== 'LEGEND' && (legendOnly || mode !== 'RANKED'))
         || (row.attack !== true && row.attack !== false)) continue;
     const key = row.attack ? 'attacks' : 'defenses';
     const epoch = timestamp(row.battleTimestamp);
-    if (epoch < start || epoch >= start + 7 * day) continue;
+    if (epoch < start || epoch >= end) continue;
     const battle = groupBattle({ ...row, creationTime: row.battleTimestamp }, member, !row.attack);
     if (!battle) {
       malformed[key] += 1;
@@ -837,8 +843,21 @@ async function fetchRecentPlayerReport(request, member, week, player) {
     ledger[key].set(battle.id, recorded ? mergeBattleDetails(current, recorded) : current);
   }
 
-  const attackRows = [...ledger.attacks.values()];
-  const defenseRows = [...ledger.defenses.values()];
+  return { attackRows: [...ledger.attacks.values()], defenseRows: [...ledger.defenses.values()], malformed };
+}
+
+function legendProfileStats(player) {
+  const current = player.legendStatistics?.currentSeason;
+  return {
+    currentLegendRank: nonnegativeInteger(current?.rank) || null,
+    currentLegendTrophies: nonnegativeInteger(current?.trophies) ?? nonnegativeInteger(player.trophies),
+  };
+}
+
+async function fetchRecentPlayerReport(request, member, week, player) {
+  const start = Date.parse(`${week}T05:00:00Z`);
+  const logs = await requestBattleLog(request, member.playerTag);
+  const { attackRows, defenseRows, malformed } = recentPlayerBattles(logs, member, { start, end: start + 7 * day });
   const battleViews = buildBattleViews(
     member,
     attackRows,
@@ -854,10 +873,8 @@ async function fetchRecentPlayerReport(request, member, week, player) {
   const defenseTrophyMode = earned && lost ? 'mixed' : earned ? 'earned' : 'lost';
   if (defenseTrophyMode === 'mixed') defenseSummary.trophies = null;
 
-  const current = player.legendStatistics?.currentSeason;
-  const currentLegendRank = nonnegativeInteger(current?.rank) || null;
-  const currentLegendTrophies = nonnegativeInteger(current?.trophies) ?? nonnegativeInteger(player.trophies);
-  const rank = week === weekMonday(Date.now() - rankedWeekStartOffset) ? currentLegendRank : null;
+  const legendStats = legendProfileStats(player);
+  const rank = week === weekMonday(Date.now() - rankedWeekStartOffset) ? legendStats.currentLegendRank : null;
   const standing = buildStanding(member, rank, attackSummary, defenseSummary, attackSummary.trophies + defenseNet);
   const tier = leagueTierInfo(player.leagueTier);
   return {
@@ -872,8 +889,7 @@ async function fetchRecentPlayerReport(request, member, week, player) {
       ...battleViews,
       personalOnly: true,
       defenseTrophyMode,
-      currentLegendRank,
-      currentLegendTrophies,
+      ...legendStats,
       standing: { ...standing, defenseNetTrophies: defenseNet },
     },
   };
@@ -885,12 +901,9 @@ export async function fetchRankedReport({
 } = {}) {
   const playerTag = normalizeTag(rawTag);
   const requestedGroup = normalizeTag(rawGroup);
-  const token = typeof rawToken === 'string' ? rawToken.trim() : '';
   if (!playerTag) throw clientError(400, '请输入有效的玩家标签，例如 #P0LYQ。');
   if (rawGroup && !requestedGroup) throw clientError(400, '请输入有效的排位小组标签。');
-  if (!token || token.length > 4096 || /[^!-~]/.test(token)) {
-    throw clientError(400, '请输入有效的 Clash of Clans API 令牌。');
-  }
+  const token = requiredApiToken(rawToken);
   if (week) {
     const epoch = Date.parse(`${week}T00:00:00Z`);
     if (typeof week !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(week)
@@ -1035,5 +1048,108 @@ export async function fetchRankedReport({
       malformedAttacks,
     },
     ...(battleViews ? { battleViews } : {}),
+  };
+}
+
+function officialLocationId(value) {
+  const id = typeof value === 'string' && value === value.trim() && /^\d{1,10}$/.test(value) ? Number(value) : value;
+  return Number.isSafeInteger(id) && id > 0 && id <= 2_147_483_647 ? id : null;
+}
+
+function leaderboardRow(entry) {
+  const rank = nonnegativeInteger(entry?.rank);
+  const playerTag = normalizeTag(entry?.tag);
+  const trophies = nonnegativeInteger(entry?.trophies);
+  if (!rank || !playerTag || trophies === null) return null;
+  const playerName = typeof entry.name === 'string' ? entry.name.trim() : '';
+  const clanName = typeof entry.clan?.name === 'string' ? entry.clan.name.trim() : '';
+  return {
+    rank,
+    previousRank: nonnegativeInteger(entry.previousRank) || null,
+    playerTag,
+    playerName: playerName || playerTag,
+    trophies,
+    townHallLevel: nonnegativeInteger(entry.townHallLevel) || null,
+    clanName,
+    clanTag: normalizeTag(entry.clan?.tag),
+  };
+}
+
+export async function fetchLegendLeaderboard(
+  { token, location: inputLocation = 'global' } = {},
+  { fetchImpl = globalThis.fetch, requestIntervalMs = 100 } = {},
+) {
+  const location = inputLocation === 'global' ? inputLocation : officialLocationId(inputLocation);
+  if (location === null) throw clientError(400, '请选择有效的传奇排行榜地区。');
+  const request = apiRequest(requiredApiToken(token), fetchImpl, requestIntervalMs);
+  const data = await request(`/locations/${location}/rankings/players?limit=200`).catch((error) => {
+    if (error.status === 404) throw clientError(404, '官方 API 暂未提供此地区的排行榜。');
+    throw error;
+  });
+  if (!Array.isArray(data.items)) throw clientError(502, '官方 API 未返回有效的传奇排行榜。');
+
+  const hasTierData = data.items.some((item) => item?.leagueTier?.id != null);
+  const candidates = data.items.flatMap((item) => {
+    const row = leaderboardRow(item);
+    return row ? [{ row, tierId: item.leagueTier?.id }] : [];
+  });
+  if (data.items.length && !candidates.length) {
+    throw clientError(502, '官方 API 未返回有效的传奇排行榜。');
+  }
+  candidates.sort((a, b) => a.row.rank - b.row.rank);
+  const rows = new Map();
+  for (const { row, tierId } of candidates) {
+    if (hasTierData && tierId !== legendOneTierId) continue;
+    if (!rows.has(row.playerTag)) rows.set(row.playerTag, row);
+  }
+  return { location, fetchedAt: new Date().toISOString(), rows: [...rows.values()], hasTierData };
+}
+
+export async function fetchLegendLocations(
+  { token } = {},
+  { fetchImpl = globalThis.fetch, requestIntervalMs = 100 } = {},
+) {
+  const request = apiRequest(requiredApiToken(token), fetchImpl, requestIntervalMs);
+  const data = await request('/locations');
+  if (!Array.isArray(data.items)) throw clientError(502, '官方 API 未返回有效的排行榜地区。');
+
+  const countries = new Map();
+  for (const item of data.items) {
+    if (item?.isCountry !== true) continue;
+    const id = officialLocationId(item.id);
+    const name = typeof item.name === 'string' ? item.name.trim() : '';
+    if (!id || !name || countries.has(id)) continue;
+    const suppliedCode = typeof item.countryCode === 'string' ? item.countryCode.toUpperCase() : '';
+    countries.set(id, { id, name, countryCode: /^[A-Z]{2}$/.test(suppliedCode) && suppliedCode.length === 2 ? suppliedCode : '' });
+  }
+  return [...countries.values()];
+}
+
+export async function fetchLegendPlayer(
+  { token, playerTag: rawTag } = {},
+  { fetchImpl = globalThis.fetch, requestIntervalMs = 100 } = {},
+) {
+  const playerTag = normalizeTag(rawTag);
+  if (!playerTag) throw clientError(400, '请输入有效的传奇 I 村庄标签。');
+  const request = apiRequest(requiredApiToken(token), fetchImpl, requestIntervalMs);
+  const player = await request(playerPath(playerTag));
+  if (player.leagueTier?.id !== legendOneTierId) {
+    throw clientError(400, '该村庄当前不是传奇 I，请输入传奇 I 村庄的标签。');
+  }
+
+  const member = { playerTag, playerName: player.name ?? playerTag };
+  const logs = await requestBattleLog(request, playerTag);
+  const { attackRows, defenseRows, malformed } = recentPlayerBattles(logs, member, { legendOnly: true });
+  const battleViews = buildBattleViews(
+    member,
+    mergeBattles(attackRows, []).rows,
+    mergeBattles(defenseRows, []).rows,
+    { malformed: malformed.attacks, logFailures: 0 },
+    { malformed: malformed.defenses, logFailures: 0 },
+  );
+  return {
+    battleViews: { ...battleViews, personalOnly: true, defenseTrophyMode: 'lost', ...legendProfileStats(player) },
+    leagueTier: leagueTierInfo(player.leagueTier),
+    fetchedAt: new Date().toISOString(),
   };
 }

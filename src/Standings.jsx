@@ -128,7 +128,7 @@ function ArmyHistory({ history, player }) {
 
 const emptyAttacks = [];
 
-export default function Standings({ rows, battleViews, groupTag, week, leagueTier, isSample, attacks = emptyAttacks, classifiedAttacks = emptyAttacks }) {
+export default function Standings({ rows, battleViews, groupTag, week, leagueTier, isSample, attacks = emptyAttacks, classifiedAttacks = emptyAttacks, onOpenLegend }) {
   const [sort, setSort] = useState({ key: "rank", ascending: true });
   const [expandedPlayer, setExpandedPlayer] = useState(null);
   const panelPrefix = useId();
@@ -184,8 +184,14 @@ export default function Standings({ rows, battleViews, groupTag, week, leagueTie
         <p>{[groupTag && `小组 ${groupTag}`, week && `${week} 周`, rows.length > 0 && "时间为北京时间"].filter(Boolean).join(" · ")}</p>
       </header>
       {rows.length === 0 ? (
-        <div className="empty-card"><p>{battleViews?.personalOnly ? "传奇 I 使用排行榜，这里只提供该村庄本周的个人战绩。"
-          : isSample ? "示例未包含小组排名。查询村庄后可查看排名。" : "官方 API 本次未返回该小组的成员排名。"}</p></div>
+        <div className="empty-card">
+          {battleViews?.personalOnly ? (
+            <div className="standings-legend-entry">
+              <p>传奇 I 的名次在全球榜和地区榜中显示，本周战绩可在进攻和防守页查看。</p>
+              {onOpenLegend && <button type="button" onClick={onOpenLegend}>查看传奇 I 全球榜</button>}
+            </div>
+          ) : <p>{isSample ? "示例未包含小组排名。查询村庄后可查看排名。" : "官方 API 本次未返回该小组的成员排名。"}</p>}
+        </div>
       ) : (
         <div className="battle-card standings-card">
           <table className="battle-table standings-table">

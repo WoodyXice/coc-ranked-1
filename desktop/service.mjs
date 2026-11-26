@@ -1,6 +1,6 @@
 import { isIPv4 } from "node:net";
 import { getReport, sampleData } from "../analytics.mjs";
-import { decodeArmyShareCode, fetchRankedReport } from "../collector.mjs";
+import { decodeArmyShareCode, fetchLegendPlayer, fetchRankedReport } from "../collector.mjs";
 
 const hour = 3_600_000;
 export const developerPortal = "https://developer.clashofclans.com/#/new-key";
@@ -43,6 +43,19 @@ function withStrategies(records) {
   return withArmy.map((battle) => ({ ...battle, strategy: battle.strategy || strategies.get(battle.id) || "" }));
 }
 
+function classifyBattleViews(battleViews) {
+  return {
+    ...battleViews,
+    attacks: withStrategies(battleViews.attacks),
+    defenses: withStrategies(battleViews.defenses),
+  };
+}
+
+export async function collectLegendPlayer(input, options) {
+  const result = await fetchLegendPlayer(input, options);
+  return { ...result, battleViews: classifyBattleViews(result.battleViews) };
+}
+
 export async function collectData({ playerTag, token } = {}, options = {}) {
   if (typeof playerTag !== "string" || !playerTag.trim()) throw new Error("请输入你的村庄 Tag。");
   if (typeof token !== "string" || !token.trim()) throw new Error("请输入 Supercell 开发者 API 令牌。");
@@ -55,11 +68,7 @@ export async function collectData({ playerTag, token } = {}, options = {}) {
     includeBattleViews: true,
   });
   if (raw.battleViews) {
-    raw.battleViews = {
-      ...raw.battleViews,
-      attacks: withStrategies(raw.battleViews.attacks),
-      defenses: withStrategies(raw.battleViews.defenses),
-    };
+    raw.battleViews = classifyBattleViews(raw.battleViews);
   }
   return { raw, report: getReport(raw) };
 }

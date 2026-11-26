@@ -9,6 +9,9 @@ function invoke(channel, ...args) {
 
 contextBridge.exposeInMainWorld("cocApp", {
   collect: (input) => invoke("coc:collect", input),
+  fetchLegendLeaderboard: (input) => invoke("coc:legend-leaderboard", input),
+  fetchLegendLocations: () => invoke("coc:legend-locations"),
+  fetchLegendPlayer: (input) => invoke("coc:legend-player", input),
   listAccounts: () => invoke("coc:accounts"),
   saveAccount: (input) => invoke("coc:save-account", input),
   selectAccount: (tag) => invoke("coc:select-account", tag),

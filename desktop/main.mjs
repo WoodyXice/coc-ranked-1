@@ -5,8 +5,9 @@ import { isIP } from "node:net";
 import { basename, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { getReport } from "../analytics.mjs";
+import { fetchLegendLeaderboard, fetchLegendLocations } from "../collector.mjs";
 import { workbookBytes } from "../files.mjs";
-import { collectData, developerPortal, getPublicIp, sampleReport } from "./service.mjs";
+import { collectData, collectLegendPlayer, developerPortal, getPublicIp, sampleReport } from "./service.mjs";
 import { createAccountStore, validateDeveloperToken } from "./accounts.mjs";
 import { createDefenseNoteStore } from "./defense-notes.mjs";
 import { createUpdater, releasePage } from "./updater.mjs";
@@ -80,6 +81,11 @@ function createWindow() {
   });
   const snapshotDir = resolve(app.getPath("userData"), "ranked-snapshots");
   const accountStore = createAccountStore(resolve(app.getPath("userData"), "accounts.json"), safeStorage);
+  async function savedDeveloperToken() {
+    const token = await accountStore.getDeveloperToken();
+    if (!token) throw new Error("请先保存 Supercell 开发者 API 令牌。");
+    return token;
+  }
   const defenseNotes = createDefenseNoteStore(resolve(app.getPath("userData"), "defense-notes.json"));
   const contents = window.webContents;
   const updates = createUpdater({ app, publish(state) {
@@ -125,9 +131,14 @@ function createWindow() {
   bind(window, "coc:save-defense-note", defenseNotes.save);
   bind(window, "coc:sample", () => withDefenseNotes(sampleReport()));
   bind(window, "coc:collect", async (input) => {
-    const token = validateDeveloperToken(input?.token) || await accountStore.getDeveloperToken();
+    const token = validateDeveloperToken(input?.token) || await savedDeveloperToken();
     return withDefenseNotes(await collectData({ playerTag: input?.playerTag, token }, { snapshotDir }));
   });
+  bind(window, "coc:legend-leaderboard", async (input) =>
+    fetchLegendLeaderboard({ token: await savedDeveloperToken(), location: input?.location }));
+  bind(window, "coc:legend-locations", async () => fetchLegendLocations({ token: await savedDeveloperToken() }));
+  bind(window, "coc:legend-player", async (input) =>
+    collectLegendPlayer({ token: await savedDeveloperToken(), playerTag: input?.playerTag }));
   bind(window, "coc:workbook", async (raw) => {
     const report = getReport(raw);
     const noted = raw.battleViews ? { ...raw, battleViews: await defenseNotes.withNotes(raw.battleViews) } : raw;
