@@ -11,6 +11,7 @@ import { cachedReport, collectData, collectGroupedPlayer, collectTemporaryPlayer
 import { createAccountStore, importAccountsJson, validateDeveloperToken } from "./accounts.mjs";
 import { openDatabase } from "./database.mjs";
 import { createDefenseNoteStore } from "./defense-notes.mjs";
+import { createLegendMetricsService } from "./legend-metrics.mjs";
 import { importLegacyJson } from "./legacy-import.mjs";
 import { createUpdater, releasePage } from "./updater.mjs";
 
@@ -88,6 +89,9 @@ function createWindow(database, storageWarnings) {
   });
   const accountStore = createAccountStore(database, safeStorage);
   const defenseNotes = createDefenseNoteStore(database.db);
+  const legendMetrics = createLegendMetricsService({ readHistory: database.playerHistory.read });
+  window.once("closed", legendMetrics.reset);
+  let legendTokenRevision = 0;
   let displayedReport = null;
   async function savedDeveloperToken() {
     const token = await accountStore.getDeveloperToken();
@@ -130,7 +134,12 @@ function createWindow(database, storageWarnings) {
   bind(window, "coc:save-account", accountStore.saveAccount);
   bind(window, "coc:select-account", accountStore.selectAccount);
   bind(window, "coc:remove-account", accountStore.removeAccount);
-  bind(window, "coc:save-developer-token", accountStore.saveDeveloperToken);
+  bind(window, "coc:save-developer-token", async (value) => {
+    const saved = await accountStore.saveDeveloperToken(value);
+    legendTokenRevision += 1;
+    legendMetrics.reset();
+    return saved;
+  });
   bind(window, "coc:public-ip", () => getPublicIp());
   bind(window, "coc:copy-public-ip", (ip) => {
     if (typeof ip !== "string" || !isIP(ip)) throw new Error("无效的 IP 地址。");
@@ -162,8 +171,15 @@ function createWindow(database, storageWarnings) {
     const saved = playerTag ? cachedReport(database.reports.load(playerTag)) : null;
     return displayReport(saved);
   });
-  bind(window, "coc:legend-leaderboard", async (input) =>
-    fetchLegendLeaderboard({ token: await savedDeveloperToken(), location: input?.location }));
+  bind(window, "coc:legend-leaderboard", async (input) => {
+    const revision = legendTokenRevision;
+    const token = await savedDeveloperToken();
+    const board = await fetchLegendLeaderboard({ token, location: input?.location });
+    if (!window.isDestroyed() && board.location === "global" && legendTokenRevision === revision) legendMetrics.setRows(token, board.rows);
+    return board;
+  });
+  bind(window, "coc:legend-player-metrics", async (input) =>
+    legendMetrics.fetchBatch(await savedDeveloperToken(), input?.playerTags));
   bind(window, "coc:legend-locations", async () => fetchLegendLocations({ token: await savedDeveloperToken() }));
   bind(window, "coc:temporary-query-history", database.temporaryQueries.list);
   bind(window, "coc:temporary-player", async (input) => {

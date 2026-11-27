@@ -134,16 +134,22 @@ function createPlayerHistoryStore(db) {
     "DELETE FROM player_history WHERE player_tag = ? AND direction = ? AND battle_type = ? AND id = ?",
   );
   const key = (direction, battleType, id) => JSON.stringify([direction, battleType, id]);
+  function readRows(player, stored) {
+    const history = { attacks: [], defenses: [] };
+    for (const entry of select.all(player)) {
+      stored?.set(key(entry.direction, entry.battle_type, entry.id), entry);
+      history[entry.direction].push(JSON.parse(entry.data));
+    }
+    return history;
+  }
+
   return {
+    read: (playerTag) => readRows(normalizePlayerTag(playerTag)),
     merge(playerTag, recent, fetchedAt = new Date().toISOString()) {
       const player = normalizePlayerTag(playerTag);
       return transaction(db, () => {
-        const archived = { attacks: [], defenses: [] };
         const stored = new Map();
-        for (const entry of select.all(player)) {
-          stored.set(key(entry.direction, entry.battle_type, entry.id), entry);
-          archived[entry.direction].push(JSON.parse(entry.data));
-        }
+        const archived = readRows(player, stored);
         const merged = mergePlayerHistory(recent, archived);
         for (const [direction, rows] of Object.entries(merged)) {
           for (const row of rows) {

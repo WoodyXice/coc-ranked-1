@@ -89,6 +89,81 @@ export function playerStrategyStats(attacks = []) {
     || (a.strategy ?? "").localeCompare(b.strategy ?? "", "zh-CN"));
 }
 
+const leagueDayMs = 86_400_000;
+const legendResetOffsetMs = 5 * 3_600_000;
+const legendDailyLimit = 8;
+
+function legendDayNumber(epoch) {
+  return Math.floor((epoch - legendResetOffsetMs) / leagueDayMs);
+}
+
+function battleInstant(battle) {
+  return Date.parse(battle.battleTimestamp || battle.timestamp);
+}
+
+function recentLegendDays(battles, epoch, firstDay) {
+  const days = new Map();
+  for (const battle of battles) {
+    if (battle?.battleType !== "LEGEND") continue;
+    const time = battleInstant(battle);
+    const day = legendDayNumber(time);
+    if (!Number.isFinite(day) || day < firstDay || time > epoch) continue;
+    const rows = days.get(day) ?? [];
+    rows.push(battle);
+    days.set(day, rows);
+  }
+  return days;
+}
+
+function fullDayTrophies(rows, min, max) {
+  if (rows?.length !== legendDailyLimit) return null;
+  let total = 0;
+  for (const { trophyDelta } of rows) {
+    if (!Number.isInteger(trophyDelta) || trophyDelta < min || trophyDelta > max) return null;
+    total += trophyDelta;
+  }
+  return total;
+}
+
+export function legendPlayerMetrics(history, now = new Date()) {
+  const epoch = now.getTime();
+  const yesterday = legendDayNumber(epoch) - 1;
+  const attacks = recentLegendDays(history?.attacks ?? [], epoch, yesterday);
+  const defenses = recentLegendDays(history?.defenses ?? [], epoch, yesterday);
+  const recentAttacks = [...attacks.values()].flatMap((rows) =>
+    rows.toSorted((a, b) => battleInstant(b) - battleInstant(a)).slice(0, legendDailyLimit));
+  const strategies = playerStrategyStats(recentAttacks);
+  const common = strategies.find(({ strategy }) => strategy && strategy !== "其他");
+  const attackCount = strategies.reduce((sum, item) => sum + item.scoredCount, 0);
+  const threeStarCount = strategies.reduce((sum, item) => sum + item.threeStarCount, 0);
+
+  let attackTotal = 0;
+  let attackDays = 0;
+  let net = 0;
+  let completedDays = 0;
+  for (const [day, rows] of attacks) {
+    const gained = fullDayTrophies(rows, 0, 40);
+    if (gained === null) continue;
+    attackTotal += gained;
+    attackDays += 1;
+    const lost = fullDayTrophies(defenses.get(day), -40, 0);
+    if (lost === null) continue;
+    net += gained + lost;
+    completedDays += 1;
+  }
+
+  return {
+    strategy: common?.strategy ?? null,
+    strategyCount: common?.count ?? 0,
+    attackCount,
+    threeStarRate: attackCount ? threeStarCount / attackCount : null,
+    averageDailyAttack: attackDays ? attackTotal / attackDays : null,
+    attackDays,
+    averageDailyNet: completedDays ? net / completedDays : null,
+    completedDays,
+  };
+}
+
 function carriedTotal(item) {
   return item.players.reduce((sum, player) => sum + player.carried, 0);
 }

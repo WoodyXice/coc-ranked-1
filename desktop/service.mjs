@@ -1,6 +1,7 @@
 import { isIPv4 } from "node:net";
 import { getReport, sampleData } from "../analytics.mjs";
-import { buildGroupedPlayerReport, decodeArmyShareCode, fetchRankedReport, fetchTemporaryPlayer } from "../collector.mjs";
+import { buildGroupedPlayerReport, createLegendBattleLogCollector, decodeArmyShareCode, fetchRankedReport, fetchTemporaryPlayer } from "../collector.mjs";
+import { legendPlayerMetrics } from "../insights.mjs";
 
 const hour = 3_600_000;
 export const developerPortal = "https://developer.clashofclans.com/#/new-key";
@@ -49,6 +50,14 @@ function classifyBattleViews(battleViews) {
     ...battleViews,
     attacks: withStrategies(battleViews.attacks ?? []),
     defenses: withStrategies(battleViews.defenses ?? []),
+  };
+}
+
+export function createLegendMetricsCollector(token) {
+  const collect = createLegendBattleLogCollector({ token });
+  return async (playerTag, archive) => {
+    const history = await collect({ playerTag, archive });
+    return legendPlayerMetrics({ ...history, attacks: withStrategies(history.attacks) });
   };
 }
 

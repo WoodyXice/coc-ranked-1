@@ -498,10 +498,11 @@ export default function App() {
               personalOnly={!!battleViews?.personalOnly} onOpenPlayer={openEquipmentPlayer} />}
             {report && (tab === "attacks" || tab === "defenses") && <BattleLog key={battleViews?.playerTag + tab} kind={tab} battleViews={battleViews}
               isSample={report.source === "sample"} accountName={battleAccountName} standings={payload.raw?.standings ?? []} />}
-            {(tab === "legend-global" || tab === "legend-regional") && <LegendLeaderboard key={tab + tokenRevision}
-              scope={tab === "legend-global" ? "global" : "regional"} hasDeveloperToken={accounts.hasDeveloperToken}
-              accountLoading={accountLoading} selectedTag={accounts.selectedTag} selectedStanding={selectedStanding}
-              onLookupPlayer={openTemporaryPlayer} />}
+            {legendTabs.map((name) => <div key={name + tokenRevision} hidden={tab !== name}>
+              <LegendLeaderboard scope={name === "legend-global" ? "global" : "regional"} active={tab === name}
+                hasDeveloperToken={accounts.hasDeveloperToken} accountLoading={accountLoading} selectedTag={accounts.selectedTag}
+                selectedStanding={selectedStanding} onLookupPlayer={openTemporaryPlayer} />
+            </div>)}
             {isTemporaryTab && <TemporaryPlayer lookup={temporaryLookup} onLookupPlayer={canLookupPlayer ? openTemporaryPlayer : undefined} />}
             {!report && !isStandaloneTab && <section className="empty-card empty-results" aria-label="暂无战报">
               <p>{busy ? "查询结果会显示在这里。" : accounts.selectedTag && accounts.hasDeveloperToken

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fetchLegendLeaderboard, fetchLegendLocations, fetchTemporaryPlayer, mergePlayerHistory } from "../collector.mjs";
+import { createLegendBattleLogCollector, fetchLegendLeaderboard, fetchLegendLocations, fetchTemporaryPlayer, mergePlayerHistory } from "../collector.mjs";
 
 const mockToken = "fixture-developer-token";
 const country = 32000056;
@@ -116,6 +116,38 @@ function battleLogRow(timestamp, options = {}) {
     battleTimestamp: timestamp, stars: 2, destructionPercentage: 80, ...options,
   };
 }
+
+test("Legend board collectors request battle logs only and recover archived Legend battles without double counting", async () => {
+  const rounded = "20261124T051600.000Z";
+  const { calls, options } = apiFixture({
+    [battleLogPath]: { items: [
+      battleLogRow(rounded),
+      battleLogRow(rounded, { battleType: "ranked" }),
+      battleLogRow("20261126T050000.000Z"),
+      battleLogRow("20261125T060000.000Z", { attack: false, trophies: -13 }),
+      battleLogRow("20261125T060000.000Z", { stars: "invalid" }),
+    ] },
+    "/v1/players/%23LOCKED/battlelog": new Response(null, { status: 403 }),
+  });
+  const collect = createLegendBattleLogCollector({ token: mockToken }, { ...options, now: currentDate });
+  const archived = {
+    id: "archived", battleType: "LEGEND", opponentTag: "#OPPONENT", timestamp: "2026-11-24T05:15:59.801Z",
+    stars: 2, destruction: 80, trophies: 26, armyShareCode: "u9x80", armySource: "attack",
+  };
+  const archive = { attacks: [archived, { ...archived, id: "ranked", battleType: "RANKED" }] };
+  const result = await collect({ playerTag: "legenda", archive });
+  assert.deepEqual(result.attacks.map(({ battleType, id, armyShareCode, trophyDelta }) =>
+    [battleType, id, armyShareCode, trophyDelta]), [["LEGEND", "archived", "u9x80", 26]]);
+  assert.equal(result.attacks[0].timestamp, archived.timestamp);
+  assert.equal(result.defenses[0].trophyDelta, -13);
+  assert.equal(result.attacks[0].previousIds.length, 1);
+
+  const missing = await collect({ playerTag: "#MISSING", archive });
+  assert.deepEqual(missing.attacks.map(({ id }) => id), ["archived"]);
+  await assert.rejects(collect({ playerTag: "#LOCKED" }), { status: 403 });
+  await assert.rejects(collect({ playerTag: "../injected" }), { status: 400 });
+  assert.deepEqual(calls.map(({ path }) => path), [battleLogPath, "/v1/players/%23MISSING/battlelog", "/v1/players/%23LOCKED/battlelog"]);
+});
 
 test("an arbitrary Legend I player gets strictly Legend logs across week reset with precision dedup", async () => {
   const priorWeek = "20261123T045900.000Z";

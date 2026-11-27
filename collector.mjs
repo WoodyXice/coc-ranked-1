@@ -1256,8 +1256,8 @@ function currentCompetitiveMode(logs, start, now) {
   return latestMode;
 }
 
-function recentHistory(logs, member, epoch) {
-  const { attackRows, defenseRows } = recentPlayerBattles(logs, member, { end: epoch + 1 });
+function recentHistory(logs, member, window) {
+  const { attackRows, defenseRows } = recentPlayerBattles(logs, member, window);
   const deduplicate = (rows) => [...Map.groupBy(rows, (row) => row.battleType).values()]
     .flatMap((matches) => mergeBattles(matches, []).rows);
   const { attacks, defenses } = buildBattleViews(member, deduplicate(attackRows), deduplicate(defenseRows));
@@ -1293,6 +1293,26 @@ export function mergePlayerHistory(recent, archived) {
   return {
     attacks: merge(recent?.attacks, archived?.attacks, false),
     defenses: merge(recent?.defenses, archived?.defenses, true),
+  };
+}
+
+export function createLegendBattleLogCollector(
+  { token } = {},
+  { fetchImpl = globalThis.fetch, requestIntervalMs = 220, now } = {},
+) {
+  const request = apiRequest(requiredApiToken(token), fetchImpl, requestIntervalMs);
+  return async function collect({ playerTag: rawTag, archive } = {}) {
+    const playerTag = normalizeTag(rawTag);
+    if (!playerTag) throw clientError(400, '请输入有效的村庄标签。');
+    const logs = await requestBattleLog(request, playerTag).catch((error) => {
+      if (error.status !== 404) throw error;
+      return [];
+    });
+    const epoch = (now ?? new Date()).getTime();
+    const recent = recentHistory(logs, { playerTag }, { battleType: 'LEGEND', end: epoch + 1 });
+    if (!archive) return recent;
+    const legendRows = (rows) => (Array.isArray(rows) ? rows : []).filter((row) => battleMode(row?.battleType) === 'LEGEND');
+    return mergePlayerHistory(recent, { attacks: legendRows(archive.attacks), defenses: legendRows(archive.defenses) });
   };
 }
 
@@ -1361,7 +1381,7 @@ export async function fetchTemporaryPlayer(
   }
   return {
     battleViews,
-    history: recentHistory(logs, profile, epoch),
+    history: recentHistory(logs, profile, { end: epoch + 1 }),
     profile,
     leagueTier,
     weekStart,

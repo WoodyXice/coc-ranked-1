@@ -4,7 +4,7 @@ import ExcelJS from "exceljs";
 import { getReport } from "../analytics.mjs";
 import { decodeArmyShareCode } from "../collector.mjs";
 import { workbookBytes } from "../files.mjs";
-import { armySets, attacksWithEquipment, defenseRanks, equipmentUsage, myAttacksByOpponent, playerStrategyStats } from "../insights.mjs";
+import { armySets, attacksWithEquipment, defenseRanks, equipmentUsage, legendPlayerMetrics, myAttacksByOpponent, playerStrategyStats } from "../insights.mjs";
 
 function strategyOf(code) {
   return getReport({ source: "api", attacks: [{ id: "x", armyShareCode: code }] }).attacks[0].strategy;
@@ -57,6 +57,91 @@ test("player strategy metrics keep distinct unknowns and use each observed score
   assert.equal(stats[3].threeStarRate, null);
   assert.equal(stats[3].averageDestruction, null);
   assert.deepEqual(playerStrategyStats(), []);
+});
+
+function legendRows(date, trophyDelta, { length = 8, stars = 2, strategy = "龙流" } = {}) {
+  const start = Date.parse(`${date}T05:00:00.000Z`);
+  return Array.from({ length }, (_, index) => ({
+    battleType: "LEGEND", timestamp: new Date(start + 60_000 * index).toISOString(),
+    trophyDelta, stars, strategy,
+  }));
+}
+
+test("Legend board metrics use up to sixteen attacks across the two latest league days at the 05:00 UTC reset", () => {
+  const now = new Date("2026-11-27T18:00:00Z");
+  const today = legendRows("2026-11-27", 40, { stars: 3 });
+  const yesterday = legendRows("2026-11-26", 20);
+  yesterday[7].timestamp = "2026-11-27T04:59:59.900Z";
+  yesterday[6].strategy = "天女蓝胖";
+  yesterday[7].strategy = "天女蓝胖";
+  const attacks = [
+    ...today,
+    ...yesterday,
+    ...legendRows("2026-11-25", 40, { stars: 3, strategy: "巨矛投手" }),
+    { ...today[0], timestamp: "2026-11-26T04:59:59.900Z" },
+    { ...yesterday[0], battleType: "RANKED" },
+    { ...yesterday[0], timestamp: "2026-11-27T18:00:01.000Z" },
+    { ...yesterday[0], timestamp: "invalid" },
+  ];
+  const defenses = [
+    ...legendRows("2026-11-27", -20),
+    ...legendRows("2026-11-26", -30),
+    ...legendRows("2026-11-25", -30),
+  ];
+  assert.deepEqual(legendPlayerMetrics({ attacks, defenses }, now), {
+    strategy: "龙流", strategyCount: 14,
+    attackCount: 16, threeStarRate: 0.5,
+    averageDailyAttack: 240, attackDays: 2,
+    averageDailyNet: 40, completedDays: 2,
+  });
+
+  const extra = { ...today[0], timestamp: "2026-11-27T12:00:00Z" };
+  const anomalous = legendPlayerMetrics({ attacks: [...attacks, extra], defenses }, now);
+  assert.equal(anomalous.attackCount, 16);
+  assert.equal(anomalous.attackDays, 1);
+  assert.equal(anomalous.completedDays, 1);
+});
+
+test("incomplete defenses do not discard a complete attack day from the attack average", () => {
+  const now = new Date("2026-11-27T18:00:00Z");
+  const attacks = [...legendRows("2026-11-27", 40, { stars: 3 }), ...legendRows("2026-11-26", 20)];
+  const defenses = [...legendRows("2026-11-27", -20, { length: 7 }), ...legendRows("2026-11-26", -30)];
+  assert.deepEqual(legendPlayerMetrics({ attacks, defenses }, now), {
+    strategy: "龙流", strategyCount: 16,
+    attackCount: 16, threeStarRate: 0.5,
+    averageDailyAttack: 240, attackDays: 2,
+    averageDailyNet: -80, completedDays: 1,
+  });
+  assert.deepEqual(legendPlayerMetrics({ attacks: [{ ...attacks[0], trophyDelta: null }, ...attacks.slice(1)], defenses }, now), {
+    strategy: "龙流", strategyCount: 16,
+    attackCount: 16, threeStarRate: 0.5,
+    averageDailyAttack: 160, attackDays: 1,
+    averageDailyNet: -80, completedDays: 1,
+  });
+});
+
+test("Legend board metrics distinguish missing samples, zero scores, and tied named strategies", () => {
+  const now = new Date("2026-11-27T18:00:00Z");
+  const none = {
+    strategy: null, strategyCount: 0, attackCount: 0, threeStarRate: null,
+    averageDailyAttack: null, attackDays: 0, averageDailyNet: null, completedDays: 0,
+  };
+  assert.deepEqual(legendPlayerMetrics({}, now), none);
+  const attacks = legendRows("2026-11-26", 0, { stars: 0, strategy: "其他" });
+  const defenses = legendRows("2026-11-26", 0);
+  assert.deepEqual(legendPlayerMetrics({ attacks, defenses }, now), {
+    ...none, attackCount: 8, threeStarRate: 0, averageDailyAttack: 0, attackDays: 1, averageDailyNet: 0, completedDays: 1,
+  });
+  const mixed = [
+    { ...attacks[0], strategy: "龙流" },
+    { ...attacks[1], strategy: "巨矛投手" },
+    ...attacks.slice(2),
+  ];
+  const eitherOrder = legendPlayerMetrics({ attacks: mixed, defenses }, now);
+  assert.equal(eitherOrder.strategy, "巨矛投手");
+  assert.equal(eitherOrder.strategyCount, 1);
+  assert.deepEqual(legendPlayerMetrics({ attacks: [...mixed].reverse(), defenses }, now), eitherOrder);
+  assert.equal(legendPlayerMetrics({ attacks, defenses: [...defenses, { ...defenses[0] }] }, now).averageDailyNet, null);
 });
 
 test("equipment usage groups gear under its hero and computes rates", () => {
