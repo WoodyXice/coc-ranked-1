@@ -1,6 +1,7 @@
 node_modules/
 dist/
 release/
+/部落冲突排位助手/
 /*.exe
 /*.xlsx
 /COC-*.png
