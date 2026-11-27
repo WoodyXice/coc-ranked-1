@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld("cocApp", {
   fetchLegendPlayerMetrics: (input) => invoke("coc:legend-player-metrics", input),
   fetchLegendLocations: () => invoke("coc:legend-locations"),
   fetchTemporaryPlayer: (input) => invoke("coc:temporary-player", input),
+  fetchTemporaryGroupDetails: (input) => invoke("coc:temporary-group-details", input),
   getTemporaryQueryHistory: () => invoke("coc:temporary-query-history"),
   cachedReport: (tag) => invoke("coc:cached-report", tag),
   listAccounts: () => invoke("coc:accounts"),

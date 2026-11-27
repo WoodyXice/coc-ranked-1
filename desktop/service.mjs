@@ -1,6 +1,6 @@
 import { isIPv4 } from "node:net";
 import { getReport, sampleData } from "../analytics.mjs";
-import { buildGroupedPlayerReport, createLegendBattleLogCollector, decodeArmyShareCode, fetchRankedReport, fetchTemporaryPlayer } from "../collector.mjs";
+import { buildGroupedPlayerReport, createLegendBattleLogCollector, decodeArmyShareCode, fetchRankedReport, fetchTemporaryGroupDetails, fetchTemporaryPlayer } from "../collector.mjs";
 import { legendPlayerMetrics } from "../insights.mjs";
 
 const hour = 3_600_000;
@@ -100,6 +100,58 @@ export async function collectTemporaryPlayer(input, { playerHistory, ...requestO
     },
     historySaved,
   };
+}
+
+export function createTemporaryGroupService({ snapshots, now = () => new Date(), collect = fetchTemporaryGroupDetails } = {}) {
+  let selected = null;
+  let cache = null;
+
+  function remember(result) {
+    const group = result?.weeklyLeaderboard;
+    selected = group && {
+      playerTag: result.battleViews.playerTag, groupTag: group.groupTag, seasonId: group.seasonId, week: group.week,
+      // A newly observed score or change of official order supersedes a still-fresh table.
+      roster: JSON.stringify(group.rows.map(({ playerTag, trophies, attackCount, defenseCount }) =>
+        [playerTag, trophies, attackCount, defenseCount])),
+    };
+  }
+
+  async function fetch(input, token) {
+    const scope = selected;
+    const time = now();
+    if (!scope || scope.week !== rankedWeek(time) || input?.playerTag !== scope.playerTag
+        || input.groupTag !== scope.groupTag || input.seasonId !== scope.seasonId || input.week !== scope.week) {
+      throw new Error("请重新查询该村庄，再打开本周小组排名。");
+    }
+    if (!cache || cache.token !== token || cache.groupTag !== scope.groupTag || cache.seasonId !== scope.seasonId
+        || cache.week !== scope.week || cache.roster !== scope.roster) {
+      cache = { token, groupTag: scope.groupTag, seasonId: scope.seasonId, week: scope.week, roster: scope.roster };
+    }
+    const entry = cache;
+    const cachedMember = entry.board?.rows.some((member) => member.playerTag === scope.playerTag);
+    const lifetime = entry.board?.partial ? 60_000 : 10 * 60_000;
+    if (!entry.pending && (!cachedMember || input.force === true || time.getTime() - entry.loadedAt >= lifetime)) {
+      entry.pending = collect({ ...scope, token }, { snapshots, now: time }).then((board) => {
+        const lineups = board.attacks.filter((attack) => attack.armyShareCode || attack.army);
+        entry.board = { ...board, attacks: withStrategies(lineups) };
+        entry.loadedAt = now().getTime();
+      }).finally(() => { entry.pending = null; });
+    }
+    await entry.pending;
+    if (scope !== selected || cache !== entry || scope.week !== rankedWeek(now())) {
+      throw new Error("正在查看的村庄或周次已切换，请重新打开小组排名。");
+    }
+    const standing = entry.board.rows.find((member) => member.playerTag === scope.playerTag);
+    if (!standing) throw new Error("完整小组榜中未找到该村庄，请重新查询。");
+    return { ...entry.board, battleViews: { playerTag: scope.playerTag, standing, defenseTrophyMode: "earned" } };
+  }
+
+  function reset() {
+    selected = null;
+    cache = null;
+  }
+
+  return { remember, fetch, reset };
 }
 
 export async function collectGroupedPlayer(input) {

@@ -201,7 +201,8 @@ function MyResult({ results }) {
 }
 
 export default function Standings({ rows, battleViews, groupTag, week, leagueTier, isSample,
-  attacks = emptyAttacks, classifiedAttacks = emptyAttacks, onOpenLegend, onLookupPlayer, focus = null, showOwnResults = true }) {
+  attacks = emptyAttacks, classifiedAttacks = emptyAttacks, onOpenLegend, onLookupPlayer, focus = null,
+  showOwnResults = true, requireFullDefenseRanks = false }) {
   const [sort, setSort] = useState(initialSort);
   const [openPanel, setOpenPanel] = useState(null);
   const [compact, setCompact] = useState(false);
@@ -212,7 +213,7 @@ export default function Standings({ rows, battleViews, groupTag, week, leagueTie
   const selected = battleViews?.playerTag;
   const ranks = useMemo(() => defenseRanks(rows, mode), [rows, mode]);
   const mine = useMemo(() => showOwnResults ? myAttacksByOpponent(battleViews) : null, [battleViews, showOwnResults]);
-  const showDefenseRank = !battleViews?.personalOnly && ranks.size > 0;
+  const showDefenseRank = !battleViews?.personalOnly && ranks.size > 0 && (!requireFullDefenseRanks || ranks.size === rows.length);
   const showMyResult = showOwnResults && showDefenseRank;
   const rankedRows = rows.map((row) => ({ ...row, defenseRank: ranks.get(row.playerTag) ?? null }));
 

@@ -91,7 +91,101 @@ test("the installed updater still downloads and installs only on separate action
   assert.equal(nativeUpdater.autoDownload, false);
   assert.equal(nativeUpdater.autoInstallOnAppQuit, false);
   assert.equal((await updater.downloadUpdate()).status, "downloaded");
-  assert.deepEqual(operations, ["check", "download"]);
+  assert.deepEqual(operations, ["check", "check", "download"]);
   assert.equal((await updater.installUpdate()).status, "installing");
-  assert.deepEqual(operations, ["check", "download", "install"]);
+  assert.deepEqual(operations, ["check", "check", "download", "check", "download", "check", "install"]);
+});
+
+function installedFixture() {
+  const state = { latest: "1.4.10", checksum: "first", cached: null, downloads: [], installs: [] };
+  let selected;
+  const native = Object.assign(new EventEmitter(), {
+    async checkForUpdates() {
+      if (state.checkError) throw new Error("offline");
+      selected = { version: state.latest, files: [{ url: "setup.exe", sha512: state.checksum }] };
+      return { isUpdateAvailable: Boolean(state.latest), updateInfo: selected };
+    },
+    async downloadUpdate() {
+      const file = selected.version + "/" + selected.files[0].sha512;
+      if (state.cached !== file) {
+        await state.beforeDownload?.(file);
+        state.downloads.push(file);
+        state.cached = file;
+      }
+      return ["setup.exe"];
+    },
+    quitAndInstall() { state.installs.push(state.cached); },
+  });
+  const updater = createUpdater({
+    app, platform: "win32", portable: false, publish() {}, loadUpdater: async () => native,
+  });
+  return { state, updater };
+}
+
+test("clicking an old notification downloads the latest release, and restart skips obsolete pending installers", async () => {
+  const { state, updater } = installedFixture();
+  assert.equal((await updater.checkForUpdates()).availableVersion, "1.4.10");
+  state.latest = "1.6.0";
+  assert.equal((await updater.downloadUpdate()).availableVersion, "1.6.0");
+  state.latest = "2.0.0";
+  state.beforeDownload = () => { state.latest = "2.1.0"; };
+  assert.equal((await updater.installUpdate()).status, "installing");
+  assert.deepEqual(state.downloads, ["1.6.0/first", "2.0.0/first", "2.1.0/first"]);
+  assert.deepEqual(state.installs, ["2.1.0/first"]);
+});
+
+test("network failures while confirming a release or preparing its replacement keep restart retryable", async () => {
+  const { state, updater } = installedFixture();
+  await updater.checkForUpdates();
+  await updater.downloadUpdate();
+  state.checkError = true;
+  assert.equal((await updater.installUpdate()).failedOperation, "install");
+  state.checkError = false;
+  state.latest = "1.5.0";
+  state.beforeDownload = () => { throw new Error("download failed"); };
+  assert.equal((await updater.installUpdate()).failedOperation, "install");
+  assert.deepEqual(state.installs, []);
+  state.latest = "1.6.0";
+  state.beforeDownload = undefined;
+  assert.equal((await updater.installUpdate()).status, "installing");
+  assert.deepEqual(state.installs, ["1.6.0/first"]);
+});
+
+test("a withdrawn release cannot install from cache or download from a stale notification", async () => {
+  const { state, updater } = installedFixture();
+  await updater.checkForUpdates();
+  state.latest = null;
+  assert.equal((await updater.downloadUpdate()).status, "current");
+  assert.deepEqual(state.downloads, []);
+  state.latest = "1.6.0";
+  await updater.checkForUpdates();
+  await updater.downloadUpdate();
+  state.latest = null;
+  const result = await updater.installUpdate();
+  assert.equal(result.status, "current");
+  assert.equal(result.availableVersion, null);
+  assert.deepEqual(state.installs, []);
+});
+
+test("concurrent restart requests install once, using the final checksum even if the tag is unchanged", async () => {
+  const { state, updater } = installedFixture();
+  await updater.checkForUpdates();
+  await updater.downloadUpdate();
+  state.checksum = "second";
+  let downloading;
+  const started = new Promise((resolve) => { downloading = resolve; });
+  let resume;
+  const wait = new Promise((resolve) => { resume = resolve; });
+  state.beforeDownload = async () => {
+    downloading();
+    await wait;
+    state.checksum = "third";
+  };
+  const first = updater.installUpdate();
+  await started;
+  assert.equal((await updater.installUpdate()).status, "downloading");
+  assert.equal((await updater.checkForUpdates()).status, "downloading");
+  resume();
+  assert.equal((await first).status, "installing");
+  assert.deepEqual(state.installs, ["1.4.10/third"]);
 });

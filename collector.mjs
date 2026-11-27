@@ -429,6 +429,25 @@ function groupMembers(group) {
   return [...members.values()];
 }
 
+async function collectGroupLedgers(members, playerTag, group, scoped, readLedger = readGroupBattles) {
+  const results = await inBatches(members, (member) =>
+    member.playerTag === playerTag ? group : scoped(member.playerTag));
+  const groupLedgers = new Map();
+  let malformedAttacks = 0;
+  let groupLogFailures = 0;
+  for (const [index, { value, status }] of results.entries()) {
+    const member = members[index];
+    if (status || (!Array.isArray(value?.attackLogs) && memberAttackCount(member) > 0)) {
+      groupLogFailures += 1;
+    }
+    const attacks = readLedger(value?.attackLogs, member, false);
+    const defenses = readLedger(value?.defenseLogs, member, true);
+    groupLedgers.set(member.playerTag, { attacks, defenses });
+    malformedAttacks += attacks.malformed;
+  }
+  return { groupLedgers, malformedAttacks, groupLogFailures };
+}
+
 function playerPath(playerTag) {
   return `/players/${encodeURIComponent(playerTag)}`;
 }
@@ -1052,22 +1071,7 @@ export async function fetchRankedReport({
   const members = groupMembers(group);
   const leagueTier = groupLeagueTier(request, player, playerTag, league);
 
-  const groupResults = await inBatches(members, (member) =>
-    member.playerTag === playerTag ? group : scoped(member.playerTag));
-
-  const groupLedgers = new Map();
-  let malformedAttacks = 0;
-  let groupLogFailures = 0;
-  for (const [index, { value, status }] of groupResults.entries()) {
-    const member = members[index];
-    if (status || (!Array.isArray(value?.attackLogs) && memberAttackCount(member) > 0)) {
-      groupLogFailures += 1;
-    }
-    const attacks = readGroupBattles(value?.attackLogs, member);
-    const defenses = readGroupBattles(value?.defenseLogs, member, true);
-    groupLedgers.set(member.playerTag, { attacks, defenses });
-    malformedAttacks += attacks.malformed;
-  }
+  const { groupLedgers, malformedAttacks, groupLogFailures } = await collectGroupLedgers(members, playerTag, group, scoped);
 
   const selectedMember = members.find((member) => member.playerTag === playerTag)
     ?? { playerTag, playerName: player.name ?? playerTag };
@@ -1323,6 +1327,26 @@ export function createLegendBattleLogCollector(
   };
 }
 
+function readWeeklyLedger(logs, member, defense, start, end) {
+  const ledger = readGroupBattles(logs, member, defense);
+  const rows = capturedGroupRows(ledger.rows, defense ? 'opponentTag' : 'playerTag', member.playerTag, start, end);
+  return { ...ledger, rows: mergeBattles(rows, []).rows };
+}
+
+function supplementWeeklyLedger(ledger, archived, owner, tag, expected, start, end) {
+  const known = capturedGroupRows(archived, owner, tag, start, end);
+  if (!known.length) return ledger;
+  return { ...ledger, rows: mergeBattles(ledger.rows, known).rows, present: ledger.present || expected !== null };
+}
+
+function temporaryStanding(member, attacks, defenses) {
+  return {
+    ...groupStanding(member, attacks, defenses),
+    clanTag: normalizeTag(member.clanTag),
+    clanName: typeof member.clanName === 'string' ? member.clanName.trim() : '',
+  };
+}
+
 async function temporaryWeeklyLeaderboard(request, league, profile, start, end) {
   if (!league) return { weeklyLeaderboardStatus: 'unavailable', weeklyLeaderboard: null };
 
@@ -1334,21 +1358,11 @@ async function temporaryWeeklyLeaderboard(request, league, profile, start, end) 
     const selected = members.find(({ playerTag }) => playerTag === profile.playerTag);
     if (!selected) return { weeklyLeaderboardStatus: 'unavailable', weeklyLeaderboard: null };
     const member = { ...selected, playerName: selected.playerName || profile.playerName };
-    const scopedLedger = (logs, defense) => {
-      const ledger = readGroupBattles(logs, member, defense);
-      const rows = capturedGroupRows(ledger.rows, defense ? 'opponentTag' : 'playerTag', member.playerTag, start, end);
-      return { ...ledger, rows: mergeBattles(rows, []).rows };
-    };
-    const attacks = scopedLedger(group.attackLogs, false);
-    const defenses = scopedLedger(group.defenseLogs, true);
+    const attacks = readWeeklyLedger(group.attackLogs, member, false, start, end);
+    const defenses = readWeeklyLedger(group.defenseLogs, member, true, start, end);
     const emptyLedger = { rows: [], malformed: 0, present: false };
-    const standing = (row, attackLedger, defenseLedger) => ({
-      ...groupStanding(row, attackLedger, defenseLedger),
-      clanTag: normalizeTag(row.clanTag),
-      clanName: typeof row.clanName === 'string' ? row.clanName.trim() : '',
-    });
-    const own = standing(member, attacks, defenses);
-    const rows = members.map((row) => row === selected ? own : standing(row, emptyLedger, emptyLedger));
+    const own = temporaryStanding(member, attacks, defenses);
+    const rows = members.map((row) => row === selected ? own : temporaryStanding(row, emptyLedger, emptyLedger));
     const battleViews = buildBattleViews(member, attacks.rows, defenses.rows,
       { malformed: attacks.malformed }, { malformed: defenses.malformed });
     return {
@@ -1363,6 +1377,59 @@ async function temporaryWeeklyLeaderboard(request, league, profile, start, end) 
   } catch (error) {
     return { weeklyLeaderboardStatus: error.status === 404 ? 'unavailable' : 'error', weeklyLeaderboard: null };
   }
+}
+
+// Only opening the full table requests the other members' official ledgers.
+// Scoring does not depend on fetching additional players outside this group.
+export async function fetchTemporaryGroupDetails(
+  { token, playerTag: rawTag, groupTag: rawGroup, week, seasonId } = {},
+  { fetchImpl = globalThis.fetch, requestIntervalMs = 100, snapshots, now = new Date() } = {},
+) {
+  const playerTag = normalizeTag(rawTag);
+  const groupTag = normalizeTag(rawGroup);
+  if (!playerTag || !groupTag || !Number.isSafeInteger(seasonId) || week !== weekMonday(now.getTime() - rankedWeekStartOffset)) {
+    throw clientError(400, '本周小组已变更，请重新查询村庄。');
+  }
+  const request = apiRequest(requiredApiToken(token), fetchImpl, requestIntervalMs);
+  const player = await request(playerPath(playerTag));
+  const league = findLeagueGroup(player, week, groupTag, { currentOnly: true });
+  if (player.leagueTier?.id === legendOneTierId || league?.seasonId !== seasonId) {
+    throw clientError(404, '该村庄当前的小组或周次已变更，请重新查询。');
+  }
+  const scoped = (tag) => request(groupBattlePath(groupTag, seasonId, tag));
+  const group = await scoped(playerTag);
+  const members = groupMembers(group);
+  const selected = members.find((member) => member.playerTag === playerTag);
+  if (!selected) throw clientError(404, '当前小组未返回该村庄，请重新查询。');
+  selected.playerName ||= player.name || playerTag;
+  const start = Date.parse(`${week}T05:00:00Z`);
+  const end = Math.min(start + 7 * day, now.getTime() + 1);
+  const { groupLedgers, groupLogFailures } = await collectGroupLedgers(members, playerTag, group, scoped,
+    (logs, member, defense) => readWeeklyLedger(logs, member, defense, start, end));
+  let cached;
+  try {
+    cached = await snapshots?.read(league);
+  } catch {
+    console.warn('Could not read cached weekly group ledgers.');
+  }
+  const cachedAttacks = groupByOwner(cached?.attacks ?? [], 'playerTag');
+  const cachedDefenses = groupByOwner(cached?.defenses ?? [], 'opponentTag');
+  const attacks = [];
+  const rows = members.map((member) => {
+    const tag = member.playerTag;
+    const ledgers = groupLedgers.get(tag);
+    const attack = supplementWeeklyLedger(ledgers.attacks, cachedAttacks.get(tag), 'playerTag', tag, memberAttackCount(member), start, end);
+    const defense = supplementWeeklyLedger(ledgers.defenses, cachedDefenses.get(tag), 'opponentTag', tag, memberDefenseCount(member), start, end);
+    attacks.push(...attack.rows);
+    return temporaryStanding(member, attack, defense);
+  });
+  return {
+    ...league,
+    rows,
+    attacks: attacks.sort(newestFirst),
+    leagueTier: leagueTierInfo(player.leagueTier),
+    partial: groupLogFailures > 0 || rows.some((row) => row.attackTrophies === null || row.defenseTrophies === null),
+  };
 }
 
 export async function fetchTemporaryPlayer(

@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { getReport } from "../analytics.mjs";
 import { fetchLegendLeaderboard, fetchLegendLocations } from "../collector.mjs";
 import { workbookBytes } from "../files.mjs";
-import { cachedReport, collectData, collectGroupedPlayer, collectTemporaryPlayer, developerPortal, getPublicIp, sampleReport } from "./service.mjs";
+import { cachedReport, collectData, collectGroupedPlayer, collectTemporaryPlayer, createTemporaryGroupService, developerPortal, getPublicIp, sampleReport } from "./service.mjs";
 import { createAccountStore, importAccountsJson, validateDeveloperToken } from "./accounts.mjs";
 import { openDatabase } from "./database.mjs";
 import { createDefenseNoteStore } from "./defense-notes.mjs";
@@ -91,6 +91,9 @@ function createWindow(database, storageWarnings) {
   const defenseNotes = createDefenseNoteStore(database.db);
   const legendMetrics = createLegendMetricsService({ readHistory: database.playerHistory.read });
   window.once("closed", legendMetrics.reset);
+  const temporaryGroups = createTemporaryGroupService({ snapshots: database.snapshots });
+  window.once("closed", temporaryGroups.reset);
+  let temporaryLookupId = 0;
   let globalBoard = { token: null, data: null, pending: null };
   let legendTokenRevision = 0;
   let displayedReport = null;
@@ -155,6 +158,7 @@ function createWindow(database, storageWarnings) {
     legendTokenRevision += 1;
     globalBoard = { token: null, data: null, pending: null };
     legendMetrics.reset();
+    temporaryGroups.reset();
     return saved;
   });
   bind(window, "coc:public-ip", () => getPublicIp());
@@ -199,7 +203,15 @@ function createWindow(database, storageWarnings) {
     legendMetrics.fetchBatch(await savedDeveloperToken(), input?.playerTags));
   bind(window, "coc:legend-locations", async () => fetchLegendLocations({ token: await savedDeveloperToken() }));
   bind(window, "coc:temporary-query-history", database.temporaryQueries.list);
+  bind(window, "coc:temporary-group-details", async (input) => {
+    const revision = legendTokenRevision;
+    const token = await savedDeveloperToken();
+    if (revision !== legendTokenRevision) throw new Error("开发者令牌已更新，请重新查询村庄。");
+    return temporaryGroups.fetch(input, token);
+  });
   bind(window, "coc:temporary-player", async (input) => {
+    const lookupId = ++temporaryLookupId;
+    temporaryGroups.remember(null);
     const group = input?.group;
     if (!group) {
       const revision = legendTokenRevision;
@@ -208,6 +220,9 @@ function createWindow(database, storageWarnings) {
         playerHistory: database.playerHistory,
       });
       const { playerTag, playerName } = result.battleViews;
+      if (lookupId === temporaryLookupId && revision === legendTokenRevision && !window.isDestroyed()) {
+        temporaryGroups.remember(result);
+      }
       if (result.period === "retained" && !result.battleViews.currentLegendRank && legendTokenRevision === revision && !window.isDestroyed()) {
         const board = await loadGlobalBoard(token).catch(() => null);
         const rank = board?.hasTierData && board.rows.find((row) => row.playerTag === playerTag)?.rank;

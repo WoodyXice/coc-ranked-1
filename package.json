@@ -1,12 +1,13 @@
 {
   "name": "coc-ranked",
-  "version": "1.4.8",
+  "version": "1.4.9",
   "description": "部落冲突排位助手",
   "author": "COC Ranked",
   "private": true,
   "type": "module",
   "main": "desktop/main.mjs",
   "scripts": {
+    "harness": "node --test test/*.test.mjs && npm run build",
     "build": "vite build",
     "start": "electron .",
     "package:windows": "npm run build && electron-builder --win nsis portable --x64 --publish never",

@@ -9,6 +9,11 @@ const directions = { attacks: "进攻", defenses: "防守" };
 const dailyLimit = 8;
 const dayResetOffset = 5 * 60 * 60 * 1000;
 const legendOneTierId = 105000036;
+const groupLoadMessages = {
+  loading: "正在查询组员的攻防数据和阵容…",
+  partial: "部分组员的战报暂未取全。",
+  error: "组员战报加载失败。",
+};
 
 function tagWithoutPrefix(value) {
   return typeof value === "string" ? value.replace(/^\s*#\s*/, "") : "";
@@ -50,15 +55,38 @@ function isLegendReport(result) {
 function PlayerProfile({ result, onOpenLegend, onLookupPlayer }) {
   const { battleViews, profile, leagueTier, groupReport, weeklyLeaderboard, weeklyLeaderboardStatus } = result;
   const [rankingOpen, setRankingOpen] = useState(false);
+  const [details, setDetails] = useState(null);
+  const [detailStatus, setDetailStatus] = useState("idle");
   const rankingId = useId();
   const legend = isLegendReport(result);
-  const hasWeeklyRanking = !legend && weeklyLeaderboard?.rows?.length > 0;
-  const weeklyRow = hasWeeklyRanking ? weeklyLeaderboard.rows.find(({ playerTag }) => playerTag === battleViews.playerTag) : null;
+  const board = details ?? weeklyLeaderboard;
+  const hasWeeklyRanking = !legend && board?.rows?.length > 0;
+  const weeklyRow = hasWeeklyRanking ? board.rows.find(({ playerTag }) => playerTag === battleViews.playerTag) : null;
   const rank = legend ? battleViews.currentLegendRank : groupReport ? battleViews.standing?.rank : weeklyRow?.rank;
   const hasRank = Number.isSafeInteger(rank) && rank > 0;
   const trophies = legend ? battleViews.currentLegendTrophies : weeklyRow?.trophies ?? profile?.trophies;
   const trophyLabel = legend ? "当前传奇杯" : Number.isFinite(weeklyRow?.trophies) ? "本周总杯数" : "当前奖杯";
   const unavailable = !legend && !groupReport && !hasWeeklyRanking;
+  async function loadGroupDetails(force = false) {
+    const fetchDetails = window.cocApp?.fetchTemporaryGroupDetails;
+    if (typeof fetchDetails !== "function" || detailStatus === "loading") return;
+    const { groupTag, seasonId, week } = weeklyLeaderboard;
+    const playerTag = battleViews.playerTag;
+    setDetailStatus("loading");
+    try {
+      const next = await fetchDetails({ playerTag, groupTag, seasonId, week, force });
+      if (next?.groupTag !== groupTag || next.week !== week || String(next.seasonId) !== String(seasonId)
+        || !next.rows?.some((row) => row.playerTag === playerTag)) throw new Error("小组榜单不匹配");
+      setDetails(next);
+      setDetailStatus(next.partial ? "partial" : "ready");
+    } catch {
+      setDetailStatus("error");
+    }
+  }
+  function toggleRanking() {
+    if (!rankingOpen && detailStatus === "idle") void loadGroupDetails();
+    setRankingOpen(!rankingOpen);
+  }
   return (
     <>
       <header className="legend-player-profile">
@@ -82,7 +110,7 @@ function PlayerProfile({ result, onOpenLegend, onLookupPlayer }) {
           </dl>
           {legend && onOpenLegend && <button type="button" onClick={onOpenLegend}>查看全球榜</button>}
           {hasWeeklyRanking && <button type="button" aria-expanded={rankingOpen} aria-controls={rankingId}
-            onClick={() => setRankingOpen((open) => !open)}>{rankingOpen ? "收起本周小组排名" : "查看本周小组排名"}</button>}
+            onClick={toggleRanking}>{rankingOpen ? "收起本周小组排名" : "查看本周小组排名"}</button>}
           {unavailable && <p className="legend-player-ranking-message">
             {weeklyLeaderboardStatus === "error" ? "暂时无法读取小组排名，可重新查询。" : "暂无可查询的本周小组排名。"}
           </p>}
@@ -90,10 +118,14 @@ function PlayerProfile({ result, onOpenLegend, onLookupPlayer }) {
       </header>
       {hasWeeklyRanking && <div id={rankingId} className="temporary-weekly-ranking" hidden={!rankingOpen}>
         {rankingOpen && <>
-          {onLookupPlayer && <p className="temporary-weekly-ranking-note">点击玩家名称可查询该村庄的攻防明细。</p>}
-          <Standings rows={weeklyLeaderboard.rows} battleViews={weeklyLeaderboard.battleViews ?? { playerTag: battleViews.playerTag }}
-            leagueTier={leagueTier} groupTag={weeklyLeaderboard.groupTag} week={weeklyLeaderboard.week}
-            attacks={weeklyLeaderboard.attacks} onLookupPlayer={onLookupPlayer} showOwnResults={false} />
+          <div className="temporary-ranking-controls">
+            <span role="status">{groupLoadMessages[detailStatus] ?? (onLookupPlayer ? "点击玩家名称可查看攻防明细。" : "")}</span>
+            {(detailStatus === "error" || detailStatus === "partial") &&
+              <button type="button" onClick={() => { void loadGroupDetails(true); }}>重新加载组员战报</button>}
+          </div>
+          <Standings rows={board.rows} battleViews={board.battleViews ?? { playerTag: battleViews.playerTag }}
+            leagueTier={board.leagueTier ?? leagueTier} groupTag={board.groupTag} week={board.week}
+            attacks={board.attacks} onLookupPlayer={onLookupPlayer} showOwnResults={false} requireFullDefenseRanks />
         </>}
       </div>}
     </>
@@ -434,7 +466,8 @@ export default function TemporaryPlayer({ lookup, onLookupPlayer, onOpenLegend }
     <section className="legend-player" aria-labelledby={headingId}>
       <h2 id={headingId}>临时村庄战报</h2>
       {result && <PlayerReport result={result}
-        key={[result.battleViews.playerTag, groupReport?.groupTag, groupReport?.week].join(":")}
+        key={[result.battleViews.playerTag, groupReport?.groupTag ?? result.weeklyLeaderboard?.groupTag,
+          groupReport?.week ?? result.weeklyLeaderboard?.week, result.weeklyLeaderboard?.seasonId].join(":")}
         onLookupPlayer={onLookupPlayer} onOpenLegend={onOpenLegend} />}
       {!result && !waiting && !error && <div className="empty-card">
         <p>在上方输入玩家标签，或点击榜单和战报中的玩家名称。</p>

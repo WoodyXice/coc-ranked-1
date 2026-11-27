@@ -88,10 +88,7 @@ export default function UpdatePanel({ busy }) {
     }
   }
 
-  const status = pending === "checkForUpdates" ? "checking"
-    : pending === "downloadUpdate" ? "downloading"
-      : pending === "installUpdate" ? "installing"
-        : state?.status ?? (feedback ? "error" : undefined);
+  const status = state?.status ?? (feedback ? "error" : undefined);
   const version = versionLabel(state?.currentVersion);
   const nextVersion = versionLabel(state?.availableVersion);
   const hasUpdate = ["available", "downloading", "downloaded", "installing"].includes(status)

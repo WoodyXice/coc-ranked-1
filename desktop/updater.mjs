@@ -33,6 +33,21 @@ function isNewerVersion(candidate, current) {
   return firstDifference >= 0 && next[firstDifference] > installed[firstDifference];
 }
 
+async function latestInstaller(updater, installedVersion) {
+  const result = await updater.checkForUpdates();
+  if (!result || typeof result.isUpdateAvailable !== "boolean") throw new Error("Missing release information");
+  if (!result.isUpdateAvailable) return null;
+  const info = result.updateInfo;
+  if (!stableVersion.test(info?.version) || !stableVersion.test(installedVersion)
+    || !isNewerVersion(info.version, installedVersion)) throw new Error("Invalid stable release");
+  return info;
+}
+
+// A release asset can be replaced under the same tag. Compare the manifest used for the download.
+function installerIdentity(info) {
+  return JSON.stringify([info.version, info.files, info.path, info.sha512]);
+}
+
 export function createUpdater({
   app,
   publish,
@@ -57,8 +72,8 @@ export function createUpdater({
     return state;
   }
 
-  function fail(operation) {
-    return change("error", { failedOperation: operation, progress: null, message: failureMessages[operation] });
+  function fail(operation, message = failureMessages[operation]) {
+    return change("error", { failedOperation: operation, progress: null, message });
   }
 
   function getUpdater() {
@@ -110,42 +125,53 @@ export function createUpdater({
           availableVersion: version, message: "发现新版本，可在 GitHub 发布页下载新的便携版。",
         }) : change("current");
       }
-      const result = await (await getUpdater()).checkForUpdates();
-      if (!result) return fail("check");
-      if (!result.isUpdateAvailable) return change("current");
-      const version = result.updateInfo?.version;
-      if (typeof version !== "string" || !/^\d{1,9}\.\d{1,9}\.\d{1,9}$/.test(version)) return fail("check");
-      return change("available", { availableVersion: version });
+      const info = await latestInstaller(await getUpdater(), state.currentVersion);
+      return info ? change("available", { availableVersion: info.version }) : change("current");
     } catch {
       return fail("check");
     }
   }
 
-  async function downloadUpdate() {
+  async function applyLatest(operation) {
     if (mode !== "installed") return state;
-    const retry = state.status === "error" && state.failedOperation === "download";
-    if (state.status !== "available" && !retry) return state;
-    change("downloading", { progress: 0 });
+    const install = operation === "install";
+    const retry = state.status === "error" && state.failedOperation === operation;
+    if (state.status !== (install ? "downloaded" : "available") && !retry) return state;
+
+    const checking = { progress: null, message: "正在确认 GitHub 最新正式版…" };
+    let failure = failureMessages.check;
+    change("checking", checking);
     try {
-      const files = await (await getUpdater()).downloadUpdate();
-      return Array.isArray(files) && files.length > 0 ? change("downloaded", { progress: 100 }) : fail("download");
+      const updater = await getUpdater();
+      let target = await latestInstaller(updater, state.currentVersion);
+      while (target) {
+        failure = failureMessages.download;
+        change("downloading", { availableVersion: target.version, progress: 0, message: "正在准备最新版本的安装包…" });
+        // electron-updater validates its pending installer against the selected manifest and reuses matching files.
+        const files = await updater.downloadUpdate();
+        if (!Array.isArray(files) || !files.length) return fail(operation, failure);
+        if (!install) return change("downloaded", { progress: 100 });
+
+        failure = failureMessages.check;
+        change("checking", checking);
+        const latest = await latestInstaller(updater, state.currentVersion);
+        if (latest && installerIdentity(latest) === installerIdentity(target)) {
+          failure = failureMessages.install;
+          change("installing", { progress: null });
+          updater.quitAndInstall(false, true);
+          return state;
+        }
+        target = latest;
+      }
+      return change("current", { availableVersion: null, progress: null });
     } catch {
-      return fail("download");
+      return fail(operation, failure);
     }
   }
 
-  async function installUpdate() {
-    if (mode !== "installed") return state;
-    const retry = state.status === "error" && state.failedOperation === "install";
-    if (state.status !== "downloaded" && !retry) return state;
-    change("installing", { progress: null });
-    try {
-      (await getUpdater()).quitAndInstall(false, true);
-      return state;
-    } catch {
-      return fail("install");
-    }
-  }
-
-  return { getUpdateState: () => state, checkForUpdates, downloadUpdate, installUpdate };
+  return {
+    getUpdateState: () => state, checkForUpdates,
+    downloadUpdate: () => applyLatest("download"),
+    installUpdate: () => applyLatest("install"),
+  };
 }
