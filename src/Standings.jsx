@@ -201,7 +201,7 @@ function MyResult({ results }) {
 }
 
 export default function Standings({ rows, battleViews, groupTag, week, leagueTier, isSample,
-  attacks = emptyAttacks, classifiedAttacks = emptyAttacks, onOpenLegend, onLookupPlayer, focus = null }) {
+  attacks = emptyAttacks, classifiedAttacks = emptyAttacks, onOpenLegend, onLookupPlayer, focus = null, showOwnResults = true }) {
   const [sort, setSort] = useState(initialSort);
   const [openPanel, setOpenPanel] = useState(null);
   const [compact, setCompact] = useState(false);
@@ -211,8 +211,9 @@ export default function Standings({ rows, battleViews, groupTag, week, leagueTie
   const lost = mode === "lost";
   const selected = battleViews?.playerTag;
   const ranks = useMemo(() => defenseRanks(rows, mode), [rows, mode]);
-  const mine = useMemo(() => myAttacksByOpponent(battleViews), [battleViews]);
+  const mine = useMemo(() => showOwnResults ? myAttacksByOpponent(battleViews) : null, [battleViews, showOwnResults]);
   const showDefenseRank = !battleViews?.personalOnly && ranks.size > 0;
+  const showMyResult = showOwnResults && showDefenseRank;
   const rankedRows = rows.map((row) => ({ ...row, defenseRank: ranks.get(row.playerTag) ?? null }));
 
   useLayoutEffect(() => {
@@ -255,7 +256,7 @@ export default function Standings({ rows, battleViews, groupTag, week, leagueTie
   const sortColumns = [rankColumn, ...scoreColumns, ...(showDefenseRank ? [defenseRankColumn] : []), ...detailColumns];
   const activeSort = sort.key === "defenseRank" && !showDefenseRank ? initialSort : sort;
   const coreCount = 2 + scoreColumns.length + Number(showDefenseRank);
-  const extraCount = detailColumns.length + Number(showDefenseRank);
+  const extraCount = detailColumns.length + Number(showMyResult);
   const visibleCount = coreCount + (compact ? 0 : extraCount);
   const sorted = rankedRows.sort((a, b) => compareRows(a, b, activeSort.key, activeSort.ascending) || compareRows(a, b, "rank", true));
 
@@ -290,7 +291,7 @@ export default function Standings({ rows, battleViews, groupTag, week, leagueTie
               <col className={`player-column ${coreClass.player}`} />
               {scoreColumns.map((column) => <col key={column.key} className={`stat-column ${column.className}`} />)}
               {showDefenseRank && <col className={`defense-rank-column ${coreClass.defenseRank}`} />}
-              {showDefenseRank && !compact && <col className="standings-extra my-result-column" />}
+              {showMyResult && !compact && <col className="standings-extra my-result-column" />}
               {!compact && detailColumns.map((column) => <col key={column.key} className={`standings-extra ${column.widthClass}`} />)}
             </colgroup>
             <thead><tr>
@@ -298,7 +299,7 @@ export default function Standings({ rows, battleViews, groupTag, week, leagueTie
               <th scope="col" className={coreClass.player}>村庄</th>
               {scoreColumns.map(sortHeader)}
               {showDefenseRank && sortHeader(defenseRankColumn)}
-              {showDefenseRank && !compact && <th scope="col" className="standings-extra" title="本人本周对该玩家的进攻">我打过</th>}
+              {showMyResult && !compact && <th scope="col" className="standings-extra" title="本人本周对该玩家的进攻">我打过</th>}
               {!compact && detailColumns.map((column) => sortHeader({ ...column, className: "standings-extra" }))}
             </tr></thead>
             <tbody>{sorted.map((row) => {
@@ -309,9 +310,9 @@ export default function Standings({ rows, battleViews, groupTag, week, leagueTie
               const panelId = `${panelPrefix}-${row.playerTag.replace(/^#/, "")}`;
               const name = row.playerName || row.playerTag;
               const lookupName = name === row.playerTag ? name : `${name} ${row.playerTag}`;
-              const results = mine.get(row.playerTag) ?? [];
+              const results = mine?.get(row.playerTag) ?? [];
               const myResult = selected === row.playerTag ? "本人" : results.length ? <MyResult results={results} /> : "—";
-              const topHit = showDefenseRank && results.length > 0 && row.defenseRank !== null && row.defenseRank <= DEFENSE_TOP_N;
+              const topHit = showMyResult && results.length > 0 && row.defenseRank !== null && row.defenseRank <= DEFENSE_TOP_N;
               const rowClass = [selected === row.playerTag && "standing-selected", topHit && "defense-top-hit"].filter(Boolean).join(" ");
               const togglePanel = (panel) => setOpenPanel(open === panel ? null : { playerTag: row.playerTag, panel });
               return (
@@ -339,13 +340,13 @@ export default function Standings({ rows, battleViews, groupTag, week, leagueTie
                     <td className={coreClass.defense}><Trophy value={row.defenseTrophies} loss={lost} /></td>
                     <td className={`total-trophies ${coreClass.total}`}><Trophy value={row.trophies} change={lost} /></td>
                     {showDefenseRank && <td className={coreClass.defenseRank}>{row.defenseRank ? `第 ${row.defenseRank} 名` : "—"}</td>}
-                    {showDefenseRank && !compact && <td className="standings-extra my-result-cell">{myResult}</td>}
+                    {showMyResult && !compact && <td className="standings-extra my-result-cell">{myResult}</td>}
                     {!compact && detailColumns.map((column) => <td key={column.key} className="standings-extra">{column.value(row)}</td>)}
                   </tr>
                   {(detailsExpanded || lineupExpanded) && <tr className={detailsExpanded ? "army-expanded-row standings-detail-row" : "army-expanded-row"}><td colSpan={visibleCount} id={panelId}>
                     {detailsExpanded ? <section className="standings-detail-panel" aria-label={`${name} 数据详情`}>
                       <dl className="standings-detail-stats">
-                        {(showDefenseRank || results.length > 0) && <div><dt>我打过</dt><dd>{myResult}</dd></div>}
+                        {showOwnResults && (showDefenseRank || results.length > 0) && <div><dt>我打过</dt><dd>{myResult}</dd></div>}
                         {detailColumns.map((column) => <div key={column.key}><dt>{column.label}</dt><dd>{column.value(row)}</dd></div>)}
                       </dl>
                     </section> : <ArmyHistory history={history} player={row}
@@ -356,7 +357,8 @@ export default function Standings({ rows, battleViews, groupTag, week, leagueTie
             })}</tbody>
           </table>
           <p className="battle-note">平均用时只计入已知用时的对战。「最近」是最近一场的对战时间。
-            {showDefenseRank && ` 防守排名按防守得杯，并列时平均被打星少的靠前；打过防守前 ${DEFENSE_TOP_N} 的行标黄。`}</p>
+            {showDefenseRank && " 防守排名按防守得杯，并列时平均被打星少的靠前。"}
+            {showMyResult && `打过防守前 ${DEFENSE_TOP_N} 的行标黄。`}</p>
         </div>
       )}
     </section>

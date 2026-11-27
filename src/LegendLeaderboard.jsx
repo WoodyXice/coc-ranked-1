@@ -13,8 +13,8 @@ async function loadLocations() {
   return locations.filter(({ id, name }) => Number.isSafeInteger(id) && id > 0 && typeof name === "string" && name.trim());
 }
 
-async function loadLeaderboard(location) {
-  const board = await window.cocApp.fetchLegendLeaderboard({ location });
+async function loadLeaderboard(location, force) {
+  const board = await window.cocApp.fetchLegendLeaderboard({ location, force });
   if (!Array.isArray(board?.rows)) throw new Error("官方接口未返回榜单数据。");
   return board;
 }

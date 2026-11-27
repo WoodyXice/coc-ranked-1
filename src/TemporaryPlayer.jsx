@@ -2,12 +2,13 @@ import { useEffect, useId, useRef, useState } from "react";
 import BattleLog from "./BattleLog.jsx";
 import PlayerStrategyStats from "./PlayerStrategyStats.jsx";
 import { formatTime } from "./battle-time.mjs";
-import { LeagueBadge, scoreText, Trophy } from "./Standings.jsx";
+import Standings, { LeagueBadge, scoreText, Trophy } from "./Standings.jsx";
 import "./temporary-player.css";
 
 const directions = { attacks: "进攻", defenses: "防守" };
 const dailyLimit = 8;
 const dayResetOffset = 5 * 60 * 60 * 1000;
+const legendOneTierId = 105000036;
 
 function tagWithoutPrefix(value) {
   return typeof value === "string" ? value.replace(/^\s*#\s*/, "") : "";
@@ -42,29 +43,60 @@ function sumRecordedTrophies(rows, loss = false) {
   return total;
 }
 
-function PlayerProfile({ result, daily }) {
-  const { battleViews, profile, leagueTier, groupReport } = result;
-  const rank = daily ? battleViews.currentLegendRank : battleViews.standing?.rank;
-  const trophies = daily ? battleViews.currentLegendTrophies : profile?.trophies;
+function isLegendReport(result) {
+  return !result.groupReport && (result.period === "retained" || result.leagueTier?.id === legendOneTierId);
+}
+
+function PlayerProfile({ result, onOpenLegend, onLookupPlayer }) {
+  const { battleViews, profile, leagueTier, groupReport, weeklyLeaderboard, weeklyLeaderboardStatus } = result;
+  const [rankingOpen, setRankingOpen] = useState(false);
+  const rankingId = useId();
+  const legend = isLegendReport(result);
+  const hasWeeklyRanking = !legend && weeklyLeaderboard?.rows?.length > 0;
+  const weeklyRow = hasWeeklyRanking ? weeklyLeaderboard.rows.find(({ playerTag }) => playerTag === battleViews.playerTag) : null;
+  const rank = legend ? battleViews.currentLegendRank : groupReport ? battleViews.standing?.rank : weeklyRow?.rank;
+  const hasRank = Number.isSafeInteger(rank) && rank > 0;
+  const trophies = legend ? battleViews.currentLegendTrophies : weeklyRow?.trophies ?? profile?.trophies;
+  const trophyLabel = legend ? "当前传奇杯" : Number.isFinite(weeklyRow?.trophies) ? "本周总杯数" : "当前奖杯";
+  const unavailable = !legend && !groupReport && !hasWeeklyRanking;
   return (
-    <header className="legend-player-profile">
-      <div>
-        <h3>{battleViews.playerName || battleViews.playerTag}</h3>
-        <p className="legend-player-profile-details">
-          <span>{battleViews.playerTag}</span>
-          {leagueTier ? <LeagueBadge tier={leagueTier} /> : <span>段位未返回</span>}
-          {Number.isSafeInteger(profile?.townHallLevel) && profile.townHallLevel > 0 && <span>{profile.townHallLevel} 本</span>}
-          {profile?.clanName && <span>{profile.clanName}</span>}
-        </p>
-      </div>
-      <dl>
-        {(daily || groupReport || Number.isSafeInteger(rank) && rank > 0) && <div>
-          <dt>{daily ? "当前全球排名" : groupReport ? "小组排名" : "本周小组排名"}</dt>
-          <dd>{Number.isSafeInteger(rank) && rank > 0 ? `第 ${scoreText(rank)} 名` : "—"}</dd>
-        </div>}
-        {!groupReport && <div><dt>{daily ? "当前传奇杯" : "当前奖杯"}</dt><dd>{scoreText(trophies)}</dd></div>}
-      </dl>
-    </header>
+    <>
+      <header className="legend-player-profile">
+        <div>
+          <h3>{battleViews.playerName || battleViews.playerTag}</h3>
+          <p className="legend-player-profile-details">
+            <span>{battleViews.playerTag}</span>
+            {leagueTier ? <LeagueBadge tier={leagueTier} /> : <span>段位未返回</span>}
+            {Number.isSafeInteger(profile?.townHallLevel) && profile.townHallLevel > 0 && <span>{profile.townHallLevel} 本</span>}
+            {profile?.clanName && <span>{profile.clanName}</span>}
+          </p>
+        </div>
+        <div className="legend-player-ranking">
+          <dl>
+            <div><dt>榜单</dt><dd>{legend ? "传奇 I 全球榜" : "周排位小组"}</dd></div>
+            <div>
+              <dt>{legend ? "当前全球排名" : "本周小组排名"}</dt>
+              <dd title={legend && !hasRank ? "官方暂未提供全球名次" : undefined}>{hasRank ? `第 ${scoreText(rank)} 名` : "—"}</dd>
+            </div>
+            {!groupReport && <div><dt>{trophyLabel}</dt><dd>{scoreText(trophies)}</dd></div>}
+          </dl>
+          {legend && onOpenLegend && <button type="button" onClick={onOpenLegend}>查看全球榜</button>}
+          {hasWeeklyRanking && <button type="button" aria-expanded={rankingOpen} aria-controls={rankingId}
+            onClick={() => setRankingOpen((open) => !open)}>{rankingOpen ? "收起本周小组排名" : "查看本周小组排名"}</button>}
+          {unavailable && <p className="legend-player-ranking-message">
+            {weeklyLeaderboardStatus === "error" ? "暂时无法读取小组排名，可重新查询。" : "暂无可查询的本周小组排名。"}
+          </p>}
+        </div>
+      </header>
+      {hasWeeklyRanking && <div id={rankingId} className="temporary-weekly-ranking" hidden={!rankingOpen}>
+        {rankingOpen && <>
+          {onLookupPlayer && <p className="temporary-weekly-ranking-note">点击玩家名称可查询该村庄的攻防明细。</p>}
+          <Standings rows={weeklyLeaderboard.rows} battleViews={weeklyLeaderboard.battleViews ?? { playerTag: battleViews.playerTag }}
+            leagueTier={leagueTier} groupTag={weeklyLeaderboard.groupTag} week={weeklyLeaderboard.week}
+            attacks={weeklyLeaderboard.attacks} onLookupPlayer={onLookupPlayer} showOwnResults={false} />
+        </>}
+      </div>}
+    </>
   );
 }
 
@@ -110,9 +142,9 @@ function HistoryCoverage({ recentCoverage, history, historySaved }) {
   );
 }
 
-function PlayerHistory({ result, onLookupPlayer }) {
+function PlayerHistory({ result, onLookupPlayer, onOpenLegend }) {
   const { battleViews, history = battleViews, fetchedAt, weekStart, recentCoverage, historySaved } = result;
-  const defaultMode = result.period === "retained" ? "LEGEND" : "RANKED";
+  const defaultMode = isLegendReport(result) ? "LEGEND" : "RANKED";
   const [mode, setMode] = useState(defaultMode);
   const [selectedRange, setSelectedRange] = useState("");
   const [kind, setKind] = useState(battleViews.attacks?.length || !battleViews.defenses?.length ? "attacks" : "defenses");
@@ -153,7 +185,7 @@ function PlayerHistory({ result, onLookupPlayer }) {
 
   return (
     <>
-      <PlayerProfile result={result} daily={defaultMode === "LEGEND"} />
+      <PlayerProfile result={result} onOpenLegend={onOpenLegend} onLookupPlayer={onLookupPlayer} />
       <PlayerStrategyStats ranges={strategyRanges} />
       <div className="legend-player-day-bar legend-player-week-bar query-card">
         <div className="history-controls">
@@ -392,7 +424,7 @@ export function TemporaryPlayerSearch({ lookup, disabled, onLookupPlayer }) {
   );
 }
 
-export default function TemporaryPlayer({ lookup, onLookupPlayer }) {
+export default function TemporaryPlayer({ lookup, onLookupPlayer, onOpenLegend }) {
   const headingId = useId();
   const { result, waiting, error } = lookup;
   const groupReport = result?.groupReport;
@@ -402,7 +434,8 @@ export default function TemporaryPlayer({ lookup, onLookupPlayer }) {
     <section className="legend-player" aria-labelledby={headingId}>
       <h2 id={headingId}>临时村庄战报</h2>
       {result && <PlayerReport result={result}
-        key={[result.battleViews.playerTag, groupReport?.groupTag, groupReport?.week].join(":")} onLookupPlayer={onLookupPlayer} />}
+        key={[result.battleViews.playerTag, groupReport?.groupTag, groupReport?.week].join(":")}
+        onLookupPlayer={onLookupPlayer} onOpenLegend={onOpenLegend} />}
       {!result && !waiting && !error && <div className="empty-card">
         <p>在上方输入玩家标签，或点击榜单和战报中的玩家名称。</p>
       </div>}

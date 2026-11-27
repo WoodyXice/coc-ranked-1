@@ -232,8 +232,9 @@ function weekMonday(epoch) {
   return new Date(epoch - offset * day).toISOString().slice(0, 10);
 }
 
-function findLeagueGroup(player, week, requestedGroup) {
-  const choices = ['current', 'previous'].flatMap((period) => {
+function findLeagueGroup(player, week, requestedGroup, { currentOnly = false } = {}) {
+  const periods = currentOnly ? ['current'] : ['current', 'previous'];
+  const choices = periods.flatMap((period) => {
     const groupTag = normalizeTag(player[`${period}LeagueGroupTag`]);
     const seasonId = Number(player[`${period}LeagueSeasonId`]);
     if (!groupTag || !Number.isSafeInteger(seasonId) || seasonId < 1e9 || seasonId >= 1e10) return [];
@@ -339,8 +340,8 @@ function apiRequest(token, fetchImpl, interval) {
   let nextRequestAt = 0;
   let retryAt = 0;
 
-  return async function request(path) {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+  return async function request(path, { maxAttempts = 3, timeoutMs = 12_000 } = {}) {
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       const now = Date.now();
       const start = Math.max(now, nextRequestAt, retryAt);
       nextRequestAt = start + interval;
@@ -351,10 +352,10 @@ function apiRequest(token, fetchImpl, interval) {
         response = await fetchImpl(apiRoot + path, {
           headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
           redirect: 'error',
-          signal: AbortSignal.timeout(12_000),
+          signal: AbortSignal.timeout(timeoutMs),
         });
       } catch {
-        if (attempt === 2) throw clientError(502, '无法连接 Clash of Clans 官方 API。');
+        if (attempt + 1 === maxAttempts) throw clientError(502, '无法连接 Clash of Clans 官方 API。');
         await delay(500 * (attempt + 1));
         continue;
       }
@@ -379,7 +380,7 @@ function apiRequest(token, fetchImpl, interval) {
       if (status === 404) throw clientError(404, '官方 API 找不到该玩家、排位小组或战斗日志。');
       if (status === 400) throw clientError(400, '官方 API 拒绝了玩家或排位小组参数。');
       if (status === 429 || status >= 500) {
-        if (attempt === 2) {
+        if (attempt + 1 === maxAttempts) {
           if (status === 429) throw clientError(429, '官方 API 请求频率受限，请稍后重新抓取。');
           throw clientError(502, '官方 API 暂时不可用，请稍后重试。');
         }
@@ -415,6 +416,17 @@ async function inBatches(items, fn) {
 
 function groupBattlePath(groupTag, seasonId, playerTag) {
   return `/leaguegroup/${encodeURIComponent(groupTag)}/${seasonId}?playerTag=${encodeURIComponent(playerTag)}`;
+}
+
+function groupMembers(group) {
+  if (!Array.isArray(group.members)) throw clientError(502, '官方 API 未返回小组成员名单。');
+  const members = new Map();
+  for (const [index, member] of group.members.entries()) {
+    const tag = normalizeTag(member?.playerTag);
+    // The official list is already sorted, including its own tiebreaks.
+    if (tag && !members.has(tag)) members.set(tag, { ...member, playerTag: tag, rank: index + 1 });
+  }
+  return [...members.values()];
 }
 
 function playerPath(playerTag) {
@@ -1037,14 +1049,9 @@ export async function fetchRankedReport({
   if (!league) throw clientError(404, '该玩家在所选周未返回排位小组。官方玩家资料仅提供当前及上一届小组。');
   const scoped = (tag) => request(groupBattlePath(league.groupTag, league.seasonId, tag));
   const group = await scoped(playerTag);
-  if (!Array.isArray(group.members)) throw clientError(502, '官方 API 未返回小组成员名单。');
+  const members = groupMembers(group);
   const leagueTier = groupLeagueTier(request, player, playerTag, league);
 
-  const members = [...new Map(group.members.flatMap((member, index) => {
-    const tag = normalizeTag(member?.playerTag);
-    // The official member list is already sorted, including its own tiebreaks.
-    return tag ? [[tag, { ...member, playerTag: tag, rank: index + 1 }]] : [];
-  })).values()];
   const groupResults = await inBatches(members, (member) =>
     member.playerTag === playerTag ? group : scoped(member.playerTag));
 
@@ -1316,6 +1323,48 @@ export function createLegendBattleLogCollector(
   };
 }
 
+async function temporaryWeeklyLeaderboard(request, league, profile, start, end) {
+  if (!league) return { weeklyLeaderboardStatus: 'unavailable', weeklyLeaderboard: null };
+
+  try {
+    const group = await request(groupBattlePath(league.groupTag, league.seasonId, profile.playerTag), {
+      maxAttempts: 1, timeoutMs: 4_000,
+    });
+    const members = groupMembers(group);
+    const selected = members.find(({ playerTag }) => playerTag === profile.playerTag);
+    if (!selected) return { weeklyLeaderboardStatus: 'unavailable', weeklyLeaderboard: null };
+    const member = { ...selected, playerName: selected.playerName || profile.playerName };
+    const scopedLedger = (logs, defense) => {
+      const ledger = readGroupBattles(logs, member, defense);
+      const rows = capturedGroupRows(ledger.rows, defense ? 'opponentTag' : 'playerTag', member.playerTag, start, end);
+      return { ...ledger, rows: mergeBattles(rows, []).rows };
+    };
+    const attacks = scopedLedger(group.attackLogs, false);
+    const defenses = scopedLedger(group.defenseLogs, true);
+    const emptyLedger = { rows: [], malformed: 0, present: false };
+    const standing = (row, attackLedger, defenseLedger) => ({
+      ...groupStanding(row, attackLedger, defenseLedger),
+      clanTag: normalizeTag(row.clanTag),
+      clanName: typeof row.clanName === 'string' ? row.clanName.trim() : '',
+    });
+    const own = standing(member, attacks, defenses);
+    const rows = members.map((row) => row === selected ? own : standing(row, emptyLedger, emptyLedger));
+    const battleViews = buildBattleViews(member, attacks.rows, defenses.rows,
+      { malformed: attacks.malformed }, { malformed: defenses.malformed });
+    return {
+      weeklyLeaderboardStatus: 'ready',
+      weeklyLeaderboard: {
+        ...league,
+        rows,
+        attacks: attacks.rows.map((attack) => ({ ...attack, army: decodeArmyShareCode(attack.armyShareCode) })),
+        battleViews: { ...battleViews, standing: own, defenseTrophyMode: 'earned' },
+      },
+    };
+  } catch (error) {
+    return { weeklyLeaderboardStatus: error.status === 404 ? 'unavailable' : 'error', weeklyLeaderboard: null };
+  }
+}
+
 export async function fetchTemporaryPlayer(
   { token, playerTag: rawTag } = {},
   { fetchImpl = globalThis.fetch, requestIntervalMs = 100, now } = {},
@@ -1338,21 +1387,26 @@ export async function fetchTemporaryPlayer(
   const leagueTier = player.leagueTier?.id === firstLeagueTierId
     ? { id: firstLeagueTierId, name: '未进入联赛', iconUrl: null, attackLimit: null }
     : leagueTierInfo(player.leagueTier);
-  let logAvailable = true;
-  const logs = await requestBattleLog(request, playerTag).catch((error) => {
-    if (error.status !== 404) throw error;
-    logAvailable = false;
-    return [];
-  });
   const epoch = (now ?? new Date()).getTime();
   const weekStart = weekMonday(epoch - rankedWeekStartOffset);
   const start = Date.parse(`${weekStart}T05:00:00Z`);
+  const end = Math.min(start + 7 * day, epoch + 1);
   const confirmedLegend = leagueTier?.id === legendOneTierId;
+  const league = confirmedLegend ? null : findLeagueGroup(player, weekStart, undefined, { currentOnly: true });
+  let logAvailable = true;
+  const [logs, weekly] = await Promise.all([
+    requestBattleLog(request, playerTag).catch((error) => {
+      if (error.status !== 404) throw error;
+      logAvailable = false;
+      return [];
+    }),
+    temporaryWeeklyLeaderboard(request, league, profile, start, end),
+  ]);
   const legendMode = confirmedLegend || (!leagueTier && !profile.currentGroupTag
     && currentCompetitiveMode(logs, start, epoch) === 'LEGEND');
   const window = legendMode
     ? { battleType: 'LEGEND', end: epoch + 1 }
-    : { battleType: 'RANKED', start, end: Math.min(start + 7 * day, epoch + 1) };
+    : { battleType: 'RANKED', start, end };
   const { attackRows, defenseRows, malformed } = recentPlayerBattles(logs, profile, window);
   const attacks = mergeBattles(attackRows, []).rows;
   const defenses = mergeBattles(defenseRows, []).rows;
@@ -1369,6 +1423,8 @@ export async function fetchTemporaryPlayer(
   };
   if (legendMode) {
     Object.assign(battleViews, legendProfileStats(player, confirmedLegend ? profile.trophies : null));
+  } else if (weekly.weeklyLeaderboard) {
+    battleViews.standing = weekly.weeklyLeaderboard.battleViews.standing;
   } else if (logAvailable) {
     const attackSummary = summarizeStandingSide({ rows: attacks, present: true, malformed: 0 }, null);
     const defenseSummary = summarizeStandingSide({ rows: defenses, present: true, malformed: 0 }, null);
@@ -1381,6 +1437,7 @@ export async function fetchTemporaryPlayer(
   }
   return {
     battleViews,
+    ...weekly,
     history: recentHistory(logs, profile, { end: epoch + 1 }),
     profile,
     leagueTier,

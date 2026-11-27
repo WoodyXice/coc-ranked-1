@@ -11,6 +11,9 @@ const playerPath = "/v1/players/%23LEGENDA";
 const battleLogPath = playerPath + "/battlelog";
 const tierId = 105000036;
 const currentDate = new Date("2026-11-25T18:00:00Z");
+const currentLeagueSeason = Date.parse("2026-11-23T05:00:00Z") / 1000;
+const currentLeagueGroup = "#GROUP1";
+const currentLeaguePath = `/v1/leaguegroup/%23GROUP1/${currentLeagueSeason}?playerTag=%23LEGENDA`;
 const legendTier = {
   id: tierId, name: "Legend League I",
   iconUrls: { small: "https://api-assets.clashofclans.com/leagues/72/fixture.png" },
@@ -215,6 +218,8 @@ test("temporary lookup keeps the weekly summary and exposes history from both co
   assert.equal(result.period, "week");
   assert.equal(result.weekStart, "2026-11-23");
   assert.equal(result.leagueTier.attackLimit, 30);
+  assert.equal(result.weeklyLeaderboardStatus, "unavailable");
+  assert.equal(result.weeklyLeaderboard, null);
   assert.deepEqual(result.profile, {
     playerTag, playerName: "Fixture weekly player", townHallLevel: 18, trophies: 940,
     clanName: "Fixture Clan", clanTag: "#CLAN1", currentGroupTag: "#GROUP1",
@@ -236,6 +241,110 @@ test("temporary lookup keeps the weekly summary and exposes history from both co
   assert.deepEqual(new Map(result.history.defenses.map(({ battleType, trophyDelta }) => [battleType, trophyDelta])),
     new Map([["RANKED", 14], ["LEGEND", -26]]));
   assert.deepEqual(calls.map(({ path }) => path), [playerPath, battleLogPath]);
+});
+
+for (const [description, leagueId, attackLimit] of [
+  ["Legend II", 105000035, 30],
+  ["Legend III", 105000034, 24],
+  ["Electro 33", 105000033, 18],
+]) {
+  test(`temporary ${description} lookup loads the official current group without requesting each member`, async () => {
+    const groupBattle = (creationTime, options) => ({
+      creationTime, opponentPlayerTag: "#OTHER2", opponentName: "Other member", stars: 3,
+      destructionPercentage: 100, trophies: 40, armyShareCode: "u8x8", ...options,
+    });
+    const { options, calls } = apiFixture({
+      [playerPath]: {
+        name: "Fixture weekly player", trophies: 1500, leagueTier: { id: leagueId },
+        currentLeagueGroupTag: currentLeagueGroup, currentLeagueSeasonId: currentLeagueSeason,
+      },
+      [battleLogPath]: { items: [
+        battleLogRow("20261124T060000.000Z", { battleType: "ranked", armyShareCode: "u9x80" }),
+      ] },
+      [currentLeaguePath]: {
+        members: [
+          { playerTag: "#OTHER2", playerName: "Other member", leagueTrophies: 68, attackWinCount: 3, attackLoseCount: 0,
+            defenseWinCount: 0, defenseLoseCount: 2, clanTag: " #clan1 ", clanName: " Fixture Clan " },
+          { playerTag, leagueTrophies: 68, attackWinCount: 1, attackLoseCount: 0, defenseWinCount: 1, defenseLoseCount: 0 },
+          { playerTag: "#OLDER", playerName: "Third", leagueTrophies: 0, attackWinCount: 0, attackLoseCount: 0,
+            defenseWinCount: 0, defenseLoseCount: 0 },
+        ],
+        attackLogs: [
+          groupBattle("20261123T045959.999Z"),
+          groupBattle("20261123T050000.000Z"),
+          groupBattle("20261126T050000.000Z"),
+        ],
+        defenseLogs: [groupBattle("20261124T074200.000Z", { stars: 1, destructionPercentage: 69, trophies: 28 })],
+      },
+    });
+    const result = await fetchTemporaryPlayer({ token: mockToken, playerTag }, { ...options, now: currentDate });
+    assert.equal(result.period, "week");
+    assert.equal(result.groupReport, undefined);
+    assert.equal(result.leagueTier.attackLimit, attackLimit);
+    assert.equal(result.weeklyLeaderboardStatus, "ready");
+    const board = result.weeklyLeaderboard;
+    assert.deepEqual([board.groupTag, board.seasonId, board.week], [currentLeagueGroup, currentLeagueSeason, "2026-11-23"]);
+    assert.deepEqual(board.rows.map(({ rank, playerTag, trophies, attackCount, defenseCount }) =>
+      [rank, playerTag, trophies, attackCount, defenseCount]), [
+      [1, "#OTHER2", 68, 3, 2],
+      [2, playerTag, 68, 1, 1],
+      [3, "#OLDER", 0, 0, 0],
+    ]);
+    assert.equal(board.rows[0].attackTrophies, null);
+    assert.equal(board.rows[0].clanTag, "#CLAN1");
+    assert.equal(board.rows[0].clanName, "Fixture Clan");
+    assert.equal(board.rows[1].playerName, "Fixture weekly player");
+    assert.equal(board.rows[1].attackTrophies, 40);
+    assert.equal(board.rows[1].defenseTrophies, 28);
+    assert.equal(board.battleViews.attacks[0].trophyDelta, 40);
+    assert.equal(board.battleViews.defenses[0].trophyDelta, 28);
+    assert.deepEqual(board.attacks.map(({ battleType, timestamp }) => [battleType, timestamp]), [
+      ["RANKED", "2026-11-23T05:00:00.000Z"],
+    ]);
+    assert.equal(result.battleViews.standing.rank, 2);
+    assert.equal(result.battleViews.attacks[0].armyShareCode, "u9x80");
+    assert.equal(result.history.attacks.length, 1);
+    assert.deepEqual(calls.map(({ path }) => path), [playerPath, battleLogPath, currentLeaguePath]);
+  });
+}
+
+test("temporary lookup skips stale and previous weekly groups and keeps Legend I on the global board", async () => {
+  const currentWeek = { currentLeagueGroupTag: currentLeagueGroup, currentLeagueSeasonId: currentLeagueSeason };
+  const previousWeek = { previousLeagueGroupTag: "#GROUP2", previousLeagueSeasonId: currentLeagueSeason };
+  for (const profile of [
+    { ...previousWeek, leagueTier: { id: tierId - 1 } },
+    { ...currentWeek, ...previousWeek, currentLeagueSeasonId: currentLeagueSeason - 7 * 86_400, leagueTier: { id: tierId - 2 } },
+    { ...currentWeek, leagueTier: legendTier },
+  ]) {
+    const { options, calls } = apiFixture({ [playerPath]: profile, [battleLogPath]: { items: [] } });
+    const result = await fetchTemporaryPlayer({ token: mockToken, playerTag }, { ...options, now: currentDate });
+    assert.equal(result.weeklyLeaderboardStatus, "unavailable");
+    assert.equal(result.weeklyLeaderboard, null);
+    assert.deepEqual(calls.map(({ path }) => path), [playerPath, battleLogPath]);
+  }
+});
+
+test("optional weekly-group failures leave the personal battlelog available", async () => {
+  const profile = { currentLeagueGroupTag: currentLeagueGroup, currentLeagueSeasonId: currentLeagueSeason, leagueTier: { id: tierId - 1 } };
+  for (const [group, status] of [
+    [new Response(null, { status: 404 }), "unavailable"],
+    [new Response(null, { status: 429 }), "error"],
+    [new Response(null, { status: 500 }), "error"],
+    [{ bad: "response" }, "error"],
+    [{ members: [{ playerTag: "#OTHER2" }] }, "unavailable"],
+  ]) {
+    const { options, calls } = apiFixture({
+      [playerPath]: profile, [currentLeaguePath]: group,
+      [battleLogPath]: { items: [battleLogRow("20261124T060000.000Z", { battleType: "ranked" })] },
+    });
+    const result = await fetchTemporaryPlayer({ token: mockToken, playerTag }, { ...options, now: currentDate });
+    assert.equal(result.weeklyLeaderboardStatus, status);
+    assert.equal(result.weeklyLeaderboard, null);
+    assert.equal(result.battleViews.standing.attackCount, 1);
+    assert.equal(result.battleViews.standing.rank, null);
+    assert.equal(result.history.attacks.length, 1);
+    assert.deepEqual(calls.map(({ path }) => path), [playerPath, battleLogPath, currentLeaguePath]);
+  }
 });
 
 test("an unknown tier requires recent current-week Legend evidence to use the retained-day view", async () => {

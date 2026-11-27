@@ -91,12 +91,28 @@ function createWindow(database, storageWarnings) {
   const defenseNotes = createDefenseNoteStore(database.db);
   const legendMetrics = createLegendMetricsService({ readHistory: database.playerHistory.read });
   window.once("closed", legendMetrics.reset);
+  let globalBoard = { token: null, data: null, pending: null };
   let legendTokenRevision = 0;
   let displayedReport = null;
   async function savedDeveloperToken() {
     const token = await accountStore.getDeveloperToken();
     if (!token) throw new Error("请先保存 Supercell 开发者 API 令牌。");
     return token;
+  }
+
+  function loadGlobalBoard(token, force = false) {
+    if (globalBoard.token !== token) globalBoard = { token, data: null, pending: null };
+    const state = globalBoard;
+    if (state.pending) return state.pending;
+    if (!force && state.data && Date.now() - Date.parse(state.data.fetchedAt) < 10 * 60_000) return Promise.resolve(state.data);
+    state.pending = fetchLegendLeaderboard({ token, location: "global" }).then((board) => {
+      if (!window.isDestroyed() && globalBoard === state) {
+        state.data = board;
+        legendMetrics.setRows(token, board.rows);
+      }
+      return board;
+    }).finally(() => { state.pending = null; });
+    return state.pending;
   }
   const contents = window.webContents;
   const updates = createUpdater({ app, publish(state) {
@@ -137,6 +153,7 @@ function createWindow(database, storageWarnings) {
   bind(window, "coc:save-developer-token", async (value) => {
     const saved = await accountStore.saveDeveloperToken(value);
     legendTokenRevision += 1;
+    globalBoard = { token: null, data: null, pending: null };
     legendMetrics.reset();
     return saved;
   });
@@ -174,9 +191,9 @@ function createWindow(database, storageWarnings) {
   bind(window, "coc:legend-leaderboard", async (input) => {
     const revision = legendTokenRevision;
     const token = await savedDeveloperToken();
-    const board = await fetchLegendLeaderboard({ token, location: input?.location });
-    if (!window.isDestroyed() && board.location === "global" && legendTokenRevision === revision) legendMetrics.setRows(token, board.rows);
-    return board;
+    if (legendTokenRevision !== revision) throw new Error("开发者令牌已更新，请重新查询榜单。");
+    return input?.location === undefined || input.location === "global" ? loadGlobalBoard(token, input?.force === true)
+      : fetchLegendLeaderboard({ token, location: input.location });
   });
   bind(window, "coc:legend-player-metrics", async (input) =>
     legendMetrics.fetchBatch(await savedDeveloperToken(), input?.playerTags));
@@ -185,10 +202,17 @@ function createWindow(database, storageWarnings) {
   bind(window, "coc:temporary-player", async (input) => {
     const group = input?.group;
     if (!group) {
-      const result = await collectTemporaryPlayer({ token: await savedDeveloperToken(), playerTag: input?.playerTag }, {
+      const revision = legendTokenRevision;
+      const token = await savedDeveloperToken();
+      const result = await collectTemporaryPlayer({ token, playerTag: input?.playerTag }, {
         playerHistory: database.playerHistory,
       });
       const { playerTag, playerName } = result.battleViews;
+      if (result.period === "retained" && !result.battleViews.currentLegendRank && legendTokenRevision === revision && !window.isDestroyed()) {
+        const board = await loadGlobalBoard(token).catch(() => null);
+        const rank = board?.hasTierData && board.rows.find((row) => row.playerTag === playerTag)?.rank;
+        if (rank) result.battleViews.currentLegendRank = rank;
+      }
       try {
         database.temporaryQueries.record({ playerTag, playerName, lastQueriedAt: result.fetchedAt });
       } catch {

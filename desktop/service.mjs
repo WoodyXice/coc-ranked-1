@@ -69,6 +69,7 @@ function buildReport(raw) {
 export async function collectTemporaryPlayer(input, { playerHistory, ...requestOptions } = {}) {
   const result = await fetchTemporaryPlayer(input, requestOptions);
   const recent = result.history;
+  const weekly = result.weeklyLeaderboard;
   const coverage = (rows) => ({
     count: rows.length,
     oldestAt: rows.reduce((oldest, row) => {
@@ -88,6 +89,7 @@ export async function collectTemporaryPlayer(input, { playerHistory, ...requestO
   }
   return {
     ...result,
+    ...(weekly && { weeklyLeaderboard: { ...weekly, attacks: withStrategies(weekly.attacks) } }),
     battleViews: classifyBattleViews(result.battleViews),
     history: classifyBattleViews(history),
     recentAttacks: withStrategies(recent.attacks).map(({ battleType, strategy, stars, destruction }) => ({

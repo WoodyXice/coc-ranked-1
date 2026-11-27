@@ -23,7 +23,7 @@ export function createLegendRequestCache(load, now = Date.now) {
       return null;
     }
 
-    const pending = Promise.resolve().then(() => load(key)).then(
+    const pending = Promise.resolve().then(() => load(key, force)).then(
       (data) => update(key, { status: "ready", data, fetchedAt: now(), pending: null }),
       (error) => update(key, { status: "error", error: error?.message || "查询失败，请重试。", pending: null }),
     );

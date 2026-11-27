@@ -127,6 +127,21 @@
   font-variant-numeric: tabular-nums;
 }
 
+.legend-player-ranking {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  max-width: 100%;
+}
+.legend-player-ranking .legend-player-ranking-message {
+  flex: 0 1 100%;
+  margin: 0;
+  font-size: 13px;
+}
+.temporary-weekly-ranking { margin-top: 14px; }
+.temporary-weekly-ranking-note { margin: 0 0 8px; color: var(--muted); font-size: 13px; }
+
 .legend-player-day-bar {
   margin: 10px 0 16px;
   padding: 12px 16px;

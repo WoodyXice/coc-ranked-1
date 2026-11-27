@@ -25,20 +25,20 @@ test("a leaderboard snapshot is reused for ten minutes and stays visible while r
 
 test("leaderboard requests share an in-flight fetch per location, and manual refresh can bypass the fresh cache", async () => {
   const calls = [];
-  const cache = createLegendRequestCache(async (location) => {
-    calls.push(location);
+  const cache = createLegendRequestCache(async (location, force) => {
+    calls.push([location, force]);
     return { location };
   });
   const first = cache.request("global");
   assert.equal(cache.request("global"), first);
   assert.equal(cache.request("global", true), first);
   await Promise.all([first, cache.request(32000000)]);
-  assert.deepEqual(calls, ["global", 32000000]);
+  assert.deepEqual(calls, [["global", false], [32000000, false]]);
   assert.deepEqual(cache.read(32000000).data, { location: 32000000 });
   assert.equal(cache.request(32000000), null);
 
   await cache.request("global", true);
-  assert.deepEqual(calls, ["global", 32000000, "global"]);
+  assert.deepEqual(calls, [["global", false], [32000000, false], ["global", true]]);
 });
 
 test("a failed refresh retains the old leaderboard and retries after an expired tab return", async () => {

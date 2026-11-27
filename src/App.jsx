@@ -503,7 +503,8 @@ export default function App() {
                 hasDeveloperToken={accounts.hasDeveloperToken} accountLoading={accountLoading} selectedTag={accounts.selectedTag}
                 selectedStanding={selectedStanding} onLookupPlayer={openTemporaryPlayer} />
             </div>)}
-            {isTemporaryTab && <TemporaryPlayer lookup={temporaryLookup} onLookupPlayer={canLookupPlayer ? openTemporaryPlayer : undefined} />}
+            {isTemporaryTab && <TemporaryPlayer lookup={temporaryLookup} onLookupPlayer={canLookupPlayer ? openTemporaryPlayer : undefined}
+              onOpenLegend={canLookupPlayer ? openLegendLeaderboard : undefined} />}
             {!report && !isStandaloneTab && <section className="empty-card empty-results" aria-label="暂无战报">
               <p>{busy ? "查询结果会显示在这里。" : accounts.selectedTag && accounts.hasDeveloperToken
                 ? "点击「查询本周排位」获取当前村庄的战报。" : "添加村庄并设置开发者 API 令牌，即可查询本周排位。"}</p>
