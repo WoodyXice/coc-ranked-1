@@ -29,6 +29,12 @@ function leagueKey(league) {
   return [String(league.groupTag), String(league.seasonId)];
 }
 
+function normalizePlayerTag(value) {
+  const tag = text(value)?.trim().toUpperCase().replace(/^#/, "") ?? "";
+  if (!/^[A-Z0-9]{2,20}$/.test(tag)) throw new Error("请输入有效的村庄标签。");
+  return "#" + tag;
+}
+
 function createSnapshotStore(db) {
   const selectBattles = db.prepare(
     "SELECT kind, data FROM battles WHERE group_tag = ? AND season_id = ? ORDER BY rowid",
@@ -130,9 +136,7 @@ function createPlayerHistoryStore(db) {
   const key = (direction, battleType, id) => JSON.stringify([direction, battleType, id]);
   return {
     merge(playerTag, recent, fetchedAt = new Date().toISOString()) {
-      const tag = typeof playerTag === "string" ? playerTag.trim().toUpperCase().replace(/^#/, "") : "";
-      if (!/^[A-Z0-9]{2,20}$/.test(tag)) throw new Error("请输入有效的村庄标签。");
-      const player = "#" + tag;
+      const player = normalizePlayerTag(playerTag);
       return transaction(db, () => {
         const archived = { attacks: [], defenses: [] };
         const stored = new Map();
@@ -152,6 +156,30 @@ function createPlayerHistoryStore(db) {
         }
         for (const { direction, battle_type: mode, id } of stored.values()) remove.run(player, direction, mode, id);
         return merged;
+      });
+    },
+  };
+}
+
+function createTemporaryQueryStore(db) {
+  const limit = 50;
+  const select = db.prepare(`
+    SELECT player_tag AS playerTag, player_name AS playerName, last_queried_at AS lastQueriedAt
+    FROM temporary_queries ORDER BY id DESC
+  `);
+  // Replacing a tag assigns it a new ID so repeated lookups move to the top, even with identical timestamps.
+  const record = db.prepare("INSERT OR REPLACE INTO temporary_queries (player_tag, player_name, last_queried_at) VALUES (?, ?, ?)");
+  const prune = db.prepare(`
+    DELETE FROM temporary_queries WHERE id IN (SELECT id FROM temporary_queries ORDER BY id DESC LIMIT -1 OFFSET ?)
+  `);
+  return {
+    list: () => select.all(),
+    record({ playerTag, playerName, lastQueriedAt = new Date().toISOString() }) {
+      const tag = normalizePlayerTag(playerTag);
+      const name = text(playerName)?.trim() || tag;
+      transaction(db, () => {
+        record.run(tag, name, lastQueriedAt);
+        prune.run(limit);
       });
     },
   };
@@ -210,6 +238,7 @@ export function openDatabase(file, { migrations } = {}) {
       snapshots: createSnapshotStore(db),
       reports: createReportStore(db),
       ...(migration.to >= 3 ? { playerHistory: createPlayerHistoryStore(db) } : {}),
+      ...(migration.to >= 4 ? { temporaryQueries: createTemporaryQueryStore(db) } : {}),
       getMeta: (key) => getMeta.get(key)?.value,
       setMeta: (key, value) => setMeta.run(key, String(value)),
       close() {

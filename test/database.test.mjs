@@ -56,6 +56,36 @@ test("partially overlapping player history is preserved across a database reopen
   }
 });
 
+test("recent village queries persist, deduplicate and retain the 50 latest distinct tags", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "coc-ranked-queries-test-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const file = join(directory, "coc-ranked.db");
+  const lastQueriedAt = "2026-11-27T10:00:00.000Z";
+  const initial = openDatabase(file);
+  try {
+    assert.deepEqual(initial.temporaryQueries.list(), []);
+    for (let number = 0; number < 52; number += 1) {
+      initial.temporaryQueries.record({ playerTag: `#MOCK${number}`, lastQueriedAt });
+    }
+    initial.temporaryQueries.record({ playerTag: " mock2 ", playerName: "重查玩家", lastQueriedAt });
+  } finally {
+    initial.close();
+  }
+
+  const reopened = openDatabase(file);
+  try {
+    const rows = reopened.temporaryQueries.list();
+    assert.equal(rows.length, 50);
+    assert.deepEqual({ ...rows[0] }, { playerTag: "#MOCK2", playerName: "重查玩家", lastQueriedAt });
+    assert.equal(rows[1].playerTag, "#MOCK51");
+    assert.equal(rows[1].playerName, "#MOCK51");
+    assert.equal(rows.at(-1).playerTag, "#MOCK3");
+    assert.equal(new Set(rows.map(({ playerTag }) => playerTag)).size, 50);
+  } finally {
+    reopened.close();
+  }
+});
+
 test("snapshots round-trip and a later write replaces superseded battles", (context) => {
   const database = openDatabase(":memory:");
   context.after(() => database.close());

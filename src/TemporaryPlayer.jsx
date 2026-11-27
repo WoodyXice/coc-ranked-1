@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import BattleLog from "./BattleLog.jsx";
 import PlayerStrategyStats from "./PlayerStrategyStats.jsx";
 import { formatTime } from "./battle-time.mjs";
@@ -230,10 +230,30 @@ export function useTemporaryPlayerLookup({ enabled, tokenRevision }) {
   const [request, setRequest] = useState(null);
   const [reply, setReply] = useState(null);
   const [validation, setValidation] = useState("");
+  const [history, setHistory] = useState([]);
+  const [historyRevision, setHistoryRevision] = useState(0);
   const requestEnabled = Boolean(request && (request.group || enabled));
   const revision = request?.group ? null : tokenRevision;
   const currentReply = requestEnabled && reply?.request === request && reply.revision === revision ? reply : null;
   const waiting = requestEnabled && !currentReply;
+
+  useEffect(() => {
+    const api = window.cocApp;
+    if (typeof api?.getTemporaryQueryHistory !== "function") return;
+    let active = true;
+
+    async function loadHistory() {
+      try {
+        const entries = await api.getTemporaryQueryHistory();
+        if (active && Array.isArray(entries)) setHistory(entries);
+      } catch {
+        // History is optional for opening a player's report.
+      }
+    }
+
+    void loadHistory();
+    return () => { active = false; };
+  }, [historyRevision]);
 
   useEffect(() => {
     if (!requestEnabled) return;
@@ -246,6 +266,7 @@ export function useTemporaryPlayerLookup({ enabled, tokenRevision }) {
         }
         const result = await window.cocApp.fetchTemporaryPlayer(request);
         if (!result?.battleViews) throw new Error("本次查询未返回村庄战报，请重试。");
+        if (!request.group) setHistoryRevision((value) => value + 1);
         if (active) setReply({ request, revision, result });
       } catch (error) {
         const message = String(error?.message || "查询失败，请重试。")
@@ -281,29 +302,90 @@ export function useTemporaryPlayerLookup({ enabled, tokenRevision }) {
     return true;
   }
 
-  return { tag, editTag, query, waiting, validation, error: currentReply?.error, result: currentReply?.result };
+  return { tag, editTag, query, waiting, validation, history, error: currentReply?.error, result: currentReply?.result };
 }
 
 export function TemporaryPlayerSearch({ lookup, disabled, onLookupPlayer }) {
   const feedbackId = useId();
-  const { tag, editTag, waiting, validation, error } = lookup;
+  const historyId = useId();
+  const field = useRef(null);
+  const input = useRef(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const { tag, editTag, waiting, validation, error, history = [] } = lookup;
   const message = validation || error;
+  const unavailable = disabled || waiting;
+  const showHistory = historyOpen && !waiting;
+  const visibleHistory = expanded ? history : history.slice(0, 5);
+
+  function closeHistory() {
+    setHistoryOpen(false);
+    setExpanded(false);
+  }
+
+  useEffect(() => {
+    if (!showHistory) return;
+    function dismissOutside(event) {
+      if (!field.current?.contains(event.target)) closeHistory();
+    }
+    document.addEventListener("pointerdown", dismissOutside);
+    return () => document.removeEventListener("pointerdown", dismissOutside);
+  }, [showHistory]);
+
+  function submit(value) {
+    closeHistory();
+    if (!unavailable) onLookupPlayer(value);
+  }
+
+  function openHistory() {
+    if (!waiting) setHistoryOpen(true);
+  }
 
   return (
     <form className="legend-player-search" onSubmit={(event) => {
       event.preventDefault();
-      if (!disabled && !waiting) onLookupPlayer(tag);
+      submit(tag);
     }}>
-      <label>
-        临时查村庄
-        <span className="legend-tag-field">
-          <span className="legend-tag-prefix" aria-hidden="true">#</span>
-          <input id="temporary-village-tag" value={tag} onChange={(event) => editTag(event.target.value)} placeholder="2PP8QG"
-            autoComplete="off" spellCheck={false} aria-invalid={Boolean(validation)}
-            aria-describedby={message ? feedbackId : undefined} />
-        </span>
-      </label>
-      <button type="submit" disabled={disabled || waiting}>临时查询</button>
+      <div className="legend-lookup-field" ref={field}
+        onBlur={(event) => {
+          if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) closeHistory();
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== "Escape" || !showHistory) return;
+          event.preventDefault();
+          input.current?.focus();
+          closeHistory();
+        }}>
+        <label>
+          临时查村庄
+          <span className="legend-tag-field">
+            <span className="legend-tag-prefix" aria-hidden="true">#</span>
+            <input id="temporary-village-tag" ref={input} value={tag} onChange={(event) => editTag(event.target.value)} placeholder="2PP8QG"
+              onFocus={openHistory} onClick={openHistory}
+              autoComplete="off" spellCheck={false} aria-invalid={Boolean(validation)}
+              aria-describedby={message ? feedbackId : undefined} aria-controls={showHistory ? historyId : undefined} />
+          </span>
+        </label>
+        {showHistory && <section className="legend-query-history" id={historyId} aria-label="查询历史">
+          <p className="legend-query-history-heading">查询历史</p>
+          {history.length > 0 ? <ul className="legend-query-history-list" id={`${historyId}-entries`}>
+            {visibleHistory.map(({ playerTag, playerName }) => <li key={playerTag}>
+              <button type="button" disabled={unavailable} onClick={() => {
+                input.current?.focus({ preventScroll: true });
+                submit(playerTag);
+              }}>
+                {playerName && playerName !== playerTag && <span className="legend-query-history-name" title={playerName}>{playerName}</span>}
+                <span className="legend-query-history-tag">{playerTag}</span>
+              </button>
+            </li>)}
+          </ul> : <p className="legend-query-history-empty">暂无查询记录</p>}
+          {history.length > 5 && <div className="legend-query-history-footer">
+            <button type="button" className="text-button" aria-expanded={expanded} aria-controls={`${historyId}-entries`}
+              onClick={() => setExpanded(!expanded)}>{expanded ? "收起" : "展开更多"}</button>
+          </div>}
+        </section>}
+      </div>
+      <button type="submit" disabled={unavailable}>临时查询</button>
       {waiting && <p className="editor-help" role="status">正在查询村庄战报…</p>}
       {message && <p id={feedbackId} className="editor-help legend-lookup-error" role="alert">{message}</p>}
     </form>

@@ -165,11 +165,21 @@ function createWindow(database, storageWarnings) {
   bind(window, "coc:legend-leaderboard", async (input) =>
     fetchLegendLeaderboard({ token: await savedDeveloperToken(), location: input?.location }));
   bind(window, "coc:legend-locations", async () => fetchLegendLocations({ token: await savedDeveloperToken() }));
+  bind(window, "coc:temporary-query-history", database.temporaryQueries.list);
   bind(window, "coc:temporary-player", async (input) => {
     const group = input?.group;
-    if (!group) return collectTemporaryPlayer({ token: await savedDeveloperToken(), playerTag: input?.playerTag }, {
-      playerHistory: database.playerHistory,
-    });
+    if (!group) {
+      const result = await collectTemporaryPlayer({ token: await savedDeveloperToken(), playerTag: input?.playerTag }, {
+        playerHistory: database.playerHistory,
+      });
+      const { playerTag, playerName } = result.battleViews;
+      try {
+        database.temporaryQueries.record({ playerTag, playerName, lastQueriedAt: result.fetchedAt });
+      } catch {
+        console.warn("Could not save the temporary village query.");
+      }
+      return result;
+    }
     const raw = displayedReport?.raw;
     const fetchedAt = displayedReport?.fetchedAt;
     if (raw?.source !== "api" || raw.groupTag !== group.groupTag || raw.seasonId !== group.seasonId

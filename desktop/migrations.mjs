@@ -106,4 +106,18 @@ export const migrations = [
       `);
     },
   },
+  {
+    version: 4,
+    name: "temporary village queries",
+    up(db) {
+      db.exec(`
+        CREATE TABLE temporary_queries (
+          id INTEGER PRIMARY KEY,
+          player_tag TEXT NOT NULL UNIQUE,
+          player_name TEXT NOT NULL,
+          last_queried_at TEXT NOT NULL
+        );
+      `);
+    },
+  },
 ];

@@ -38,6 +38,45 @@
 }
 .legend-player-search .legend-tag-field input:not([type="checkbox"]) { padding-inline-start: 26px; }
 
+.legend-lookup-field { min-width: 0; position: relative; }
+.legend-query-history {
+  position: absolute;
+  z-index: 5;
+  inset-inline: 0;
+  top: calc(100% + 6px);
+  border: 1px solid #424344;
+  border-radius: 8px;
+  background: #202123;
+  box-shadow: 0 9px 20px #0006;
+}
+.legend-query-history-heading, .legend-query-history-empty { margin: 0; padding: 8px 10px; font-size: 13px; color: var(--muted); }
+.legend-query-history-list {
+  list-style: none;
+  padding: 2px 6px;
+  margin: 0;
+  max-height: min(270px, 38vh);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.query-card .legend-query-history-list button {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  padding: 7px 8px;
+  background: transparent;
+  border-color: transparent;
+  text-align: start;
+  white-space: normal;
+}
+.query-card .legend-query-history-list button:hover { background: #26344a; }
+.query-card .legend-query-history-list button:focus-visible { outline-offset: -2px; }
+.legend-query-history-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.legend-query-history-tag { color: var(--soft); font-size: 13px; overflow-wrap: anywhere; }
+.legend-query-history-footer { border-top: 1px solid var(--line); padding-inline: 10px; }
+
 .legend-player-profile {
   display: flex;
   align-items: center;

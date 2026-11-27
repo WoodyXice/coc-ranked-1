@@ -74,6 +74,24 @@ test("upgrading v2 adds player history and retains group snapshots, notes and ac
   });
 });
 
+test("upgrading v3 adds recent queries and preserves collected personal battles", async (context) => {
+  const { file } = await tempFile(context);
+  const v3 = { migrations: migrations.slice(0, 3) };
+  withDatabase(file, v3, (database) => {
+    assert.equal(database.temporaryQueries, undefined);
+    database.playerHistory.merge("#MOCK1", { attacks: [{
+      id: "old-attack", battleType: "RANKED", timestamp: "2026-11-24T00:00:00.000Z",
+      opponentTag: "#MOCK2", stars: 3, destruction: 100,
+    }] });
+  });
+  withDatabase(file, {}, (database) => {
+    assert.equal(database.migration.from, 3);
+    assert.equal(userVersion(database.migration.backup), 3);
+    assert.deepEqual(database.temporaryQueries.list(), []);
+    assert.equal(database.playerHistory.merge("#MOCK1", {}).attacks[0].id, "old-attack");
+  });
+});
+
 test("a later migration backs up the old file, keeps data and bumps the version", async (context) => {
   const { directory, file } = await tempFile(context);
   withDatabase(file, {}, (database) => database.snapshots.write(league, [{ id: "a1", stars: 3 }], []));
