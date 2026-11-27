@@ -4,7 +4,7 @@ import test from "node:test";
 import { createUpdater } from "../desktop/updater.mjs";
 
 const app = { isPackaged: true, getVersion: () => "1.4.9" };
-const release = (tag_name, flags = {}) => ({ tag_name, draft: false, prerelease: false, ...flags });
+const release = (tag) => Response.redirect(`https://github.com/fangjog/coc-ranked/releases/tag/${tag}`, 302);
 
 function portableUpdater(fetchImpl, options = {}) {
   return createUpdater({
@@ -14,24 +14,24 @@ function portableUpdater(fetchImpl, options = {}) {
   });
 }
 
-test("portable checks public release metadata and offers a newer numeric version without downloading", async () => {
+test("portable checks the public latest release link without following the redirect or downloading", async () => {
   const published = [];
   let requests = 0;
   let respond;
   const response = new Promise((resolve) => { respond = resolve; });
-  const updater = portableUpdater((url, { headers, redirect, signal }) => {
+  const updater = portableUpdater((url, { cache, credentials, redirect, signal }) => {
     requests += 1;
-    assert.equal(url, "https://api.github.com/repos/fangjog/coc-ranked/releases/latest");
-    assert.equal(headers.Accept, "application/vnd.github+json");
-    assert.equal(headers.Authorization, undefined);
-    assert.equal(redirect, "error");
+    assert.equal(url, "https://github.com/fangjog/coc-ranked/releases/latest");
+    assert.equal(cache, "no-store");
+    assert.equal(credentials, "omit");
+    assert.equal(redirect, "manual");
     assert.ok(signal instanceof AbortSignal);
     return response;
   }, { publish: (state) => published.push(state.status) });
 
   const pending = updater.checkForUpdates();
   assert.equal((await updater.checkForUpdates()).status, "checking");
-  respond(Response.json(release("v1.4.10")));
+  respond(release("v1.4.10"));
   assert.equal((await pending).availableVersion, "1.4.10");
   assert.equal((await updater.downloadUpdate()).status, "available");
   assert.equal((await updater.installUpdate()).status, "available");
@@ -39,16 +39,16 @@ test("portable checks public release metadata and offers a newer numeric version
   assert.equal(requests, 1);
 });
 
-test("portable handles equal or older releases, invalid metadata, and a retry after network failure", async () => {
+test("portable handles equal or older releases, invalid redirects, and a retry after network failure", async () => {
   const responses = [
-    Response.json(release("v1.4.9")),
-    Response.json(release("v1.4.8")),
-    Response.json(release("v1.4.10-rc.1")),
-    Response.json(release("v1.4.10", { prerelease: true })),
-    Response.json(release("v1.4.10", { draft: true })),
+    release("v1.4.9"),
+    release("v1.4.8"),
+    release("v1.4.10-rc.1"),
+    Response.redirect("https://github.com/another/repository/releases/tag/v1.4.10", 302),
+    Response.redirect("https://example.com/fangjog/coc-ranked/releases/tag/v1.4.10", 302),
     new Response(null, { status: 429 }),
     new DOMException("timeout", "TimeoutError"),
-    Response.json(release("v2.0.0")),
+    new Response(null, { status: 302, headers: { Location: "/fangjog/coc-ranked/releases/tag/v2.0.0" } }),
   ];
   const updater = portableUpdater(async () => {
     const next = responses.shift();

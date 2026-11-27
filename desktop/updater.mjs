@@ -1,5 +1,5 @@
 export const releasePage = "https://github.com/fangjog/coc-ranked/releases/latest";
-const latestReleaseApi = "https://api.github.com/repos/fangjog/coc-ranked/releases/latest";
+const releaseTagPath = "/fangjog/coc-ranked/releases/tag/v";
 const stableVersion = /^(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})$/;
 
 const messages = {
@@ -92,16 +92,20 @@ export function createUpdater({
     change("checking", { availableVersion: null, progress: null });
     try {
       if (mode === "portable") {
-        const response = await fetchImpl(latestReleaseApi, {
-          headers: { Accept: "application/vnd.github+json", "User-Agent": "COC-Ranked", "X-GitHub-Api-Version": "2026-03-10" },
-          redirect: "error",
+        const response = await fetchImpl(releasePage, {
+          cache: "no-store",
+          credentials: "omit",
+          redirect: "manual",
           signal: AbortSignal.timeout(10000),
         });
-        if (!response.ok) return fail("check");
-        const release = await response.json();
-        const version = typeof release?.tag_name === "string" && release.tag_name.startsWith("v") ? release.tag_name.slice(1) : "";
-        if (release?.draft !== false || release?.prerelease !== false
-          || !stableVersion.test(version) || !stableVersion.test(state.currentVersion)) return fail("check");
+        const location = response.headers.get("location");
+        await response.body?.cancel();
+        if (![301, 302, 303, 307, 308].includes(response.status) || !location) return fail("check");
+        const destination = new URL(location, releasePage);
+        if (destination.origin !== "https://github.com" || destination.username || destination.password
+          || !destination.pathname.startsWith(releaseTagPath)) return fail("check");
+        const version = destination.pathname.slice(releaseTagPath.length);
+        if (!stableVersion.test(version) || !stableVersion.test(state.currentVersion)) return fail("check");
         return isNewerVersion(version, state.currentVersion) ? change("available", {
           availableVersion: version, message: "发现新版本，可在 GitHub 发布页下载新的便携版。",
         }) : change("current");
