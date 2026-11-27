@@ -95,6 +95,7 @@
 }
 
 .legend-player-week-bar { grid-template-columns: minmax(0, 1fr); justify-items: start; }
+.legend-player .legend-player-week-cups { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 
 .legend-player-day-bar p { margin: 0; }
 .legend-player-directions { flex-wrap: wrap; justify-self: start; min-width: 0; max-width: 100%; }

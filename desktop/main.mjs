@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { getReport } from "../analytics.mjs";
 import { fetchLegendLeaderboard, fetchLegendLocations } from "../collector.mjs";
 import { workbookBytes } from "../files.mjs";
-import { cachedReport, collectData, collectTemporaryPlayer, developerPortal, getPublicIp, sampleReport } from "./service.mjs";
+import { cachedReport, collectData, collectGroupedPlayer, collectTemporaryPlayer, developerPortal, getPublicIp, sampleReport } from "./service.mjs";
 import { createAccountStore, importAccountsJson, validateDeveloperToken } from "./accounts.mjs";
 import { openDatabase } from "./database.mjs";
 import { createDefenseNoteStore } from "./defense-notes.mjs";
@@ -88,6 +88,7 @@ function createWindow(database, storageWarnings) {
   });
   const accountStore = createAccountStore(database, safeStorage);
   const defenseNotes = createDefenseNoteStore(database.db);
+  let displayedReport = null;
   async function savedDeveloperToken() {
     const token = await accountStore.getDeveloperToken();
     if (!token) throw new Error("请先保存 Supercell 开发者 API 令牌。");
@@ -117,6 +118,11 @@ function createWindow(database, storageWarnings) {
     if (!raw.battleViews) return payload;
     return { ...payload, raw: { ...raw, battleViews: await defenseNotes.withNotes(raw.battleViews) } };
   }
+  async function displayReport(payload) {
+    const result = payload ? await withDefenseNotes(payload) : null;
+    displayedReport = payload;
+    return result;
+  }
   bind(window, "coc:accounts", async () => {
     const accounts = await accountStore.list();
     return storageWarnings.length ? { ...accounts, storageWarnings } : accounts;
@@ -138,7 +144,7 @@ function createWindow(database, storageWarnings) {
     }
   });
   bind(window, "coc:save-defense-note", defenseNotes.save);
-  bind(window, "coc:sample", () => withDefenseNotes(sampleReport()));
+  bind(window, "coc:sample", () => displayReport(sampleReport()));
   bind(window, "coc:collect", async (input) => {
     const token = validateDeveloperToken(input?.token) || await savedDeveloperToken();
     const result = await collectData({ playerTag: input?.playerTag, token }, { snapshots: database.snapshots });
@@ -149,18 +155,27 @@ function createWindow(database, storageWarnings) {
     } catch (error) {
       console.warn(`Could not save the latest report: ${error?.message}`);
     }
-    return { ...(await withDefenseNotes(result)), fetchedAt };
+    return displayReport({ ...result, fetchedAt });
   });
   bind(window, "coc:cached-report", async (tag) => {
     const playerTag = savedReportTag(tag);
     const saved = playerTag ? cachedReport(database.reports.load(playerTag)) : null;
-    return saved && withDefenseNotes(saved);
+    return displayReport(saved);
   });
   bind(window, "coc:legend-leaderboard", async (input) =>
     fetchLegendLeaderboard({ token: await savedDeveloperToken(), location: input?.location }));
   bind(window, "coc:legend-locations", async () => fetchLegendLocations({ token: await savedDeveloperToken() }));
-  bind(window, "coc:temporary-player", async (input) =>
-    collectTemporaryPlayer({ token: await savedDeveloperToken(), playerTag: input?.playerTag }));
+  bind(window, "coc:temporary-player", async (input) => {
+    const group = input?.group;
+    if (!group) return collectTemporaryPlayer({ token: await savedDeveloperToken(), playerTag: input?.playerTag });
+    const raw = displayedReport?.raw;
+    const fetchedAt = displayedReport?.fetchedAt;
+    if (raw?.source !== "api" || raw.groupTag !== group.groupTag || raw.seasonId !== group.seasonId
+      || raw.week !== group.week || fetchedAt !== group.fetchedAt) {
+      throw new Error("正在查看的小组战报已切换，请返回排位排名重新打开。");
+    }
+    return collectGroupedPlayer({ raw, fetchedAt, playerTag: input.playerTag, snapshots: database.snapshots });
+  });
   bind(window, "coc:workbook", async (raw) => {
     const report = getReport(raw);
     const noted = raw.battleViews ? { ...raw, battleViews: await defenseNotes.withNotes(raw.battleViews) } : raw;

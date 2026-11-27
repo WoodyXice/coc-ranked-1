@@ -51,7 +51,7 @@ function sumDailyTrophies(rows, loss = false) {
 }
 
 function PlayerProfile({ result, daily }) {
-  const { battleViews, profile, leagueTier } = result;
+  const { battleViews, profile, leagueTier, groupReport } = result;
   const rank = daily ? battleViews.currentLegendRank : battleViews.standing?.rank;
   const trophies = daily ? battleViews.currentLegendTrophies : profile?.trophies;
   return (
@@ -66,22 +66,25 @@ function PlayerProfile({ result, daily }) {
         </p>
       </div>
       <dl>
-        {(daily || Number.isSafeInteger(rank) && rank > 0) && <div>
-          <dt>{daily ? "当前全球排名" : "本周小组排名"}</dt>
+        {(daily || groupReport || Number.isSafeInteger(rank) && rank > 0) && <div>
+          <dt>{daily ? "当前全球排名" : groupReport ? "小组排名" : "本周小组排名"}</dt>
           <dd>{Number.isSafeInteger(rank) && rank > 0 ? `第 ${scoreText(rank)} 名` : "—"}</dd>
         </div>}
-        <div><dt>{daily ? "当前传奇杯" : "当前奖杯"}</dt><dd>{scoreText(trophies)}</dd></div>
+        {!groupReport && <div><dt>{daily ? "当前传奇杯" : "当前奖杯"}</dt><dd>{scoreText(trophies)}</dd></div>}
       </dl>
     </header>
   );
 }
 
-function BattleDirections({ battles, kind, setKind, logId, daily = false }) {
+function BattleDirections({ battles, kind, setKind, logId, daily = false, groupReport }) {
   return (
     <div className="metric-control legend-player-directions" role="group" aria-label="对战方向">
       {Object.entries(directions).map(([direction, label]) => {
         const count = battles[direction]?.length ?? 0;
-        const total = daily ? `${count === 0 ? "已查到 " : ""}${count}/${dailyLimit}` : `已查到 ${count} 场`;
+        const groupCount = battles.standing?.[direction === "attacks" ? "attackCount" : "defenseCount"];
+        const total = daily ? `${count === 0 ? "已查到 " : ""}${count}/${dailyLimit}`
+          : groupReport ? `榜单 ${Number.isFinite(groupCount) ? `${scoreText(groupCount)} 场` : "—"} · 明细 ${scoreText(count)} 场`
+            : `已查到 ${count} 场`;
         return (
           <button key={direction} type="button" aria-pressed={kind === direction} aria-controls={logId}
             onClick={() => setKind(direction)}>
@@ -93,9 +96,9 @@ function BattleDirections({ battles, kind, setKind, logId, daily = false }) {
   );
 }
 
-function LookupTime({ fetchedAt }) {
+function LookupTime({ fetchedAt, label = "查询时间" }) {
   const time = formatTime(fetchedAt);
-  return time === "—" ? null : <p>查询时间 <time dateTime={fetchedAt}>{time}</time></p>;
+  return time === "—" ? null : <p>{label} <time dateTime={fetchedAt}>{time}</time></p>;
 }
 
 function PlayerDay({ result, onLookupPlayer }) {
@@ -136,15 +139,18 @@ function PlayerDay({ result, onLookupPlayer }) {
 }
 
 function PlayerWeek({ result, onLookupPlayer }) {
-  const { battleViews, profile, leagueTier, weekStart, fetchedAt } = result;
+  const { battleViews, profile, leagueTier, weekStart, fetchedAt, groupReport } = result;
   const { standing, attacks, defenses } = battleViews;
   const [kind, setKind] = useState(attacks?.length || !defenses?.length ? "attacks" : "defenses");
   const logId = useId();
-  const hasBattles = Boolean(attacks?.length || defenses?.length);
-  const attackTrophies = attacks?.length ? standing?.attackTrophies : null;
-  const defenseTrophies = defenses?.length ? standing?.defenseTrophies : null;
-  const totalTrophies = Number.isFinite(attackTrophies) && Number.isFinite(defenseTrophies)
-    ? attackTrophies + defenseTrophies : null;
+  const showReport = Boolean(groupReport || attacks?.length || defenses?.length);
+  const attackTrophies = groupReport || attacks?.length ? standing?.attackTrophies : null;
+  const defenseTrophies = groupReport || defenses?.length ? standing?.defenseTrophies : null;
+  const totalTrophies = groupReport ? standing?.trophies
+    : Number.isFinite(attackTrophies) && Number.isFinite(defenseTrophies) ? attackTrophies + defenseTrophies : null;
+  const week = groupReport?.week ?? weekStart;
+  const groupTag = groupReport?.groupTag ?? profile?.currentGroupTag;
+  const trophyScope = groupReport ? "小组" : "已查到的";
   const noBattles = leagueTier?.id === 105000000 ? "该村庄尚未进入排位联赛。"
     : battleViews.logAvailable === false ? "官方 API 暂无该村庄的公开对战日志。"
       : `${profile?.currentGroupTag ? "" : "官方 API 未返回本周排位小组。"}本周已查到进攻 0 场、防守 0 场。`;
@@ -153,21 +159,23 @@ function PlayerWeek({ result, onLookupPlayer }) {
     <>
       <PlayerProfile result={result} />
       <div className="legend-player-day-bar legend-player-week-bar query-card">
-        {hasBattles && <BattleDirections battles={battleViews} kind={kind} setKind={setKind} logId={logId} />}
-        {(weekStart || profile?.currentGroupTag) && <p>{[weekStart && `${weekStart} 周`, profile?.currentGroupTag && `小组 ${profile.currentGroupTag}`].filter(Boolean).join(" · ")}</p>}
-        {battleViews.logAvailable !== false && <p>杯数和场次按官方 API 返回的近期记录统计。</p>}
-        <LookupTime fetchedAt={fetchedAt} />
+        {showReport && <BattleDirections battles={battleViews} kind={kind} setKind={setKind} logId={logId} groupReport={groupReport} />}
+        {(week || groupTag) && <p>{[week && `${week} 周`, groupTag && `小组 ${groupTag}`].filter(Boolean).join(" · ")}</p>}
+        {groupReport ? <p>杯数和场次来自同一份小组排位榜。明细显示战报收录的对战。</p>
+          : battleViews.logAvailable !== false && <p>杯数和场次按官方 API 返回的近期记录统计。</p>}
+        <LookupTime fetchedAt={fetchedAt} label={groupReport ? "小组战报时间" : undefined} />
       </div>
-      {hasBattles ? (
+      {showReport ? (
         <>
-          <dl className="battle-summary" aria-label="本周杯数">
-            <div><dt>本周进攻得杯</dt><dd><Trophy value={attackTrophies} /></dd></div>
-            <div><dt>本周防守得杯</dt><dd><Trophy value={defenseTrophies} /></dd></div>
-            <div><dt>本周总得杯</dt><dd><Trophy value={totalTrophies} /></dd></div>
+          <dl className="battle-summary legend-player-week-cups" aria-label={groupReport ? "小组排位杯数" : "已查到的杯数"}>
+            <div><dt>{trophyScope}进攻得杯</dt><dd><Trophy value={attackTrophies} /></dd></div>
+            <div><dt>{trophyScope}防守得杯</dt><dd><Trophy value={defenseTrophies} /></dd></div>
+            <div><dt>{groupReport ? "小组总杯数" : "已查到的得杯合计"}</dt><dd><Trophy value={totalTrophies} change={!groupReport} /></dd></div>
           </dl>
           <div id={logId}>
-            <BattleLog key={kind} kind={kind} battleViews={battleViews} isSample={false}
-              periodLabel="本周" showStanding={false} onLookupPlayer={onLookupPlayer} />
+            {groupReport && !battleViews[kind]?.length ? <div className="empty-card"><p>这份小组战报未收录该方向的对战明细。</p></div>
+              : <BattleLog key={kind} kind={kind} battleViews={battleViews} isSample={false}
+                periodLabel={groupReport ? "小组" : "近期"} showStanding={false} onLookupPlayer={onLookupPlayer} />}
           </div>
         </>
       ) : <div className="empty-card"><p>{noBattles}</p></div>}
@@ -180,11 +188,13 @@ export function useTemporaryPlayerLookup({ enabled, tokenRevision }) {
   const [request, setRequest] = useState(null);
   const [reply, setReply] = useState(null);
   const [validation, setValidation] = useState("");
-  const currentReply = enabled && reply?.request === request && reply.tokenRevision === tokenRevision ? reply : null;
-  const waiting = Boolean(enabled && request && !currentReply);
+  const requestEnabled = Boolean(request && (request.group || enabled));
+  const revision = request?.group ? null : tokenRevision;
+  const currentReply = requestEnabled && reply?.request === request && reply.revision === revision ? reply : null;
+  const waiting = requestEnabled && !currentReply;
 
   useEffect(() => {
-    if (!enabled || !request) return;
+    if (!requestEnabled) return;
     let active = true;
 
     async function lookup() {
@@ -194,17 +204,17 @@ export function useTemporaryPlayerLookup({ enabled, tokenRevision }) {
         }
         const result = await window.cocApp.fetchTemporaryPlayer(request);
         if (!result?.battleViews) throw new Error("本次查询未返回村庄战报，请重试。");
-        if (active) setReply({ request, tokenRevision, result });
+        if (active) setReply({ request, revision, result });
       } catch (error) {
         const message = String(error?.message || "查询失败，请重试。")
           .replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "");
-        if (active) setReply({ request, tokenRevision, error: message });
+        if (active) setReply({ request, revision, error: message });
       }
     }
 
     void Promise.resolve().then(() => { if (active) return lookup(); });
     return () => { active = false; };
-  }, [enabled, request, tokenRevision]);
+  }, [requestEnabled, request, revision]);
 
   function editTag(value) {
     setTag(tagWithoutPrefix(value));
@@ -215,8 +225,8 @@ export function useTemporaryPlayerLookup({ enabled, tokenRevision }) {
     }
   }
 
-  function query(value) {
-    if (!enabled) return false;
+  function query(value, group) {
+    if (!enabled && !group) return false;
     const playerTag = normalizeTag(value);
     if (!playerTag) {
       setValidation("请输入有效的玩家标签，例如 2PP8QG。");
@@ -225,7 +235,7 @@ export function useTemporaryPlayerLookup({ enabled, tokenRevision }) {
     setValidation("");
     setTag(tagWithoutPrefix(playerTag));
     setReply(null);
-    setRequest({ playerTag });
+    setRequest(group ? { playerTag, group } : { playerTag });
     return true;
   }
 
@@ -261,12 +271,14 @@ export function TemporaryPlayerSearch({ lookup, disabled, onLookupPlayer }) {
 export default function TemporaryPlayer({ lookup, onLookupPlayer }) {
   const headingId = useId();
   const { result, waiting, error } = lookup;
-  const PlayerReport = result?.period === "retained" || result?.leagueTier?.id === 105000036 ? PlayerDay : PlayerWeek;
+  const groupReport = result?.groupReport;
+  const PlayerReport = !groupReport && (result?.period === "retained" || result?.leagueTier?.id === 105000036) ? PlayerDay : PlayerWeek;
 
   return (
     <section className="legend-player" aria-labelledby={headingId}>
       <h2 id={headingId}>临时村庄战报</h2>
-      {result && <PlayerReport result={result} key={result.battleViews.playerTag} onLookupPlayer={onLookupPlayer} />}
+      {result && <PlayerReport result={result}
+        key={[result.battleViews.playerTag, groupReport?.groupTag, groupReport?.week].join(":")} onLookupPlayer={onLookupPlayer} />}
       {!result && !waiting && !error && <div className="empty-card">
         <p>在上方输入玩家标签，或点击榜单和战报中的玩家名称。</p>
       </div>}

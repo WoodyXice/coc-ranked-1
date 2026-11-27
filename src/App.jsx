@@ -235,6 +235,10 @@ export default function App() {
   const tabs = temporaryResult || isTemporaryTab ? [...baseTabs, temporaryTab] : baseTabs;
 
   const report = payload?.report;
+  const raw = payload?.raw;
+  const groupContext = raw?.source === "api" && raw.groupTag && raw.seasonId != null && raw.week && payload.fetchedAt
+    ? { groupTag: raw.groupTag, seasonId: raw.seasonId, week: raw.week, fetchedAt: payload.fetchedAt }
+    : null;
   const battleViews = payload?.raw?.battleViews;
   const battleAccountName = accounts.accounts.find(({ tag }) => tag === battleViews?.playerTag)?.name;
   const isStandaloneTab = isTemporaryTab || legendTabs.includes(tab);
@@ -421,8 +425,8 @@ export default function App() {
     setTab(next);
   }
 
-  function openTemporaryPlayer(playerTag) {
-    if (temporaryLookup.query(playerTag)) showLookupWhenReady.current = true;
+  function openTemporaryPlayer(playerTag, group) {
+    if (temporaryLookup.query(playerTag, group)) showLookupWhenReady.current = true;
   }
 
   function openLegendLeaderboard() {
@@ -487,7 +491,7 @@ export default function App() {
               attacks={payload.raw?.attacks ?? report.attacks} classifiedAttacks={report.attacks}
               groupTag={report.groupTag} week={report.week} leagueTier={payload.raw?.leagueTier} isSample={report.source === "sample"}
               onOpenLegend={openLegendLeaderboard} focus={standingFocus}
-              onLookupPlayer={canLookupPlayer && !busy && report.source === "api" ? openTemporaryPlayer : undefined} />}
+              onLookupPlayer={groupContext && !busy ? (playerTag) => openTemporaryPlayer(playerTag, groupContext) : undefined} />}
             {report && tab === "equipment" && <EquipmentFilter key={report.groupTag + report.week}
               attacks={payload.raw?.attacks ?? []} classifiedAttacks={report.attacks} standings={payload.raw?.standings ?? []}
               groupTag={report.groupTag} week={report.week} isSample={report.source === "sample"}
@@ -498,7 +502,7 @@ export default function App() {
               scope={tab === "legend-global" ? "global" : "regional"} hasDeveloperToken={accounts.hasDeveloperToken}
               accountLoading={accountLoading} selectedTag={accounts.selectedTag} selectedStanding={selectedStanding}
               onLookupPlayer={openTemporaryPlayer} />}
-            {isTemporaryTab && <TemporaryPlayer lookup={temporaryLookup} onLookupPlayer={openTemporaryPlayer} />}
+            {isTemporaryTab && <TemporaryPlayer lookup={temporaryLookup} onLookupPlayer={canLookupPlayer ? openTemporaryPlayer : undefined} />}
             {!report && !isStandaloneTab && <section className="empty-card empty-results" aria-label="暂无战报">
               <p>{busy ? "查询结果会显示在这里。" : accounts.selectedTag && accounts.hasDeveloperToken
                 ? "点击「查询本周排位」获取当前村庄的战报。" : "添加村庄并设置开发者 API 令牌，即可查询本周排位。"}</p>

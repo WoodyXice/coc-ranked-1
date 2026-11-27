@@ -1,6 +1,6 @@
 import { isIPv4 } from "node:net";
 import { getReport, sampleData } from "../analytics.mjs";
-import { decodeArmyShareCode, fetchRankedReport, fetchTemporaryPlayer } from "../collector.mjs";
+import { buildGroupedPlayerReport, decodeArmyShareCode, fetchRankedReport, fetchTemporaryPlayer } from "../collector.mjs";
 
 const hour = 3_600_000;
 export const developerPortal = "https://developer.clashofclans.com/#/new-key";
@@ -59,6 +59,12 @@ function buildReport(raw) {
 
 export async function collectTemporaryPlayer(input, options) {
   const result = await fetchTemporaryPlayer(input, options);
+  return { ...result, battleViews: classifyBattleViews(result.battleViews) };
+}
+
+export async function collectGroupedPlayer(input) {
+  const result = await buildGroupedPlayerReport(input);
+  if (!result) throw new Error("这份小组战报未找到该玩家，请更新本周排位后再试。");
   return { ...result, battleViews: classifyBattleViews(result.battleViews) };
 }
 

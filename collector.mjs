@@ -615,9 +615,9 @@ function indexBattleViews(items, owner, indexes) {
   }
 }
 
-function nearest(target, entries) {
+function nearest(target, entries, window = matchWindow) {
   let best;
-  let bestDistance = matchWindow + 1;
+  let bestDistance = window + 1;
   for (const entry of entries) {
     const distance = Math.abs(target - entry.epoch);
     if (distance === bestDistance) {
@@ -676,12 +676,12 @@ function joinBattleDetails(battles, views) {
   }
 }
 
-function reuseGroupBattleDetails(battles, groupAttacks) {
+function reuseGroupBattleDetails(battles, groupAttacks, window = matchWindow) {
   const group = groupByPair(groupAttacks);
   for (const [key, bucket] of groupByPair(battles)) {
     for (const entry of bucket) {
-      const match = nearest(entry.epoch, group.get(key) ?? []);
-      if (!match || nearest(match.epoch, bucket) !== entry) continue;
+      const match = nearest(entry.epoch, group.get(key) ?? [], window);
+      if (!match || nearest(match.epoch, bucket, window) !== entry) continue;
       Object.assign(entry.battle, mergeBattleDetails(entry.battle, match.battle));
     }
   }
@@ -798,7 +798,7 @@ function buildBattleViews(member, playerAttacks, playerDefenses, attackTelemetry
         : (isDefense && battle.battleType === 'LEGEND' ? -battle.trophies : battle.trophies),
       armyShareCode: battle.armyShareCode,
       armySource: battle.armySource ?? '',
-      army: decodeArmyShareCode(battle.armyShareCode),
+      army: decodeArmyShareCode(battle.armyShareCode) ?? battle.army ?? null,
       ...(battle.battleType ? { battleType: battle.battleType } : {}),
     }));
   }
@@ -813,6 +813,101 @@ function buildBattleViews(member, playerAttacks, playerDefenses, attackTelemetry
       attacks: { ...attackTelemetry, recorded: attacks.length, withArmy: attacks.filter((row) => row.armyShareCode).length },
       defenses: { ...defenseTelemetry, recorded: defenses.length, withArmy: defenses.filter((row) => row.armyShareCode).length },
     },
+  };
+}
+
+function capturedGroupRows(rows, ownerField, memberTag, start, end) {
+  return (Array.isArray(rows) ? rows : []).flatMap((row) => {
+    if (normalizeTag(row?.[ownerField]) !== memberTag || typeof row.id !== 'string' || !row.id
+        || (row.battleType && battleMode(row.battleType) !== 'RANKED')) return [];
+    const epoch = timestamp(row.timestamp);
+    const playerTag = normalizeTag(row.playerTag);
+    const opponentTag = normalizeTag(row.opponentTag);
+    const score = battleScore({ stars: row.stars, destructionPercentage: row.destruction });
+    if (!Number.isFinite(epoch) || epoch < start || epoch >= end || !playerTag || !opponentTag || !score) return [];
+    return [{
+      ...row, playerTag, opponentTag, timestamp: new Date(epoch).toISOString(),
+      trophies: rankedBattleTrophies(row.trophies),
+      previousIds: Array.isArray(row.previousIds) ? row.previousIds : undefined,
+    }];
+  });
+}
+
+function storedMemberRows(battleViews, member, defense, start, end) {
+  if (normalizeTag(battleViews?.playerTag) !== member.playerTag) return [];
+  const rows = defense ? battleViews.defenses : battleViews.attacks;
+  const oriented = (Array.isArray(rows) ? rows : []).map((row) => defense ? {
+    ...row,
+    playerTag: row?.opponentTag,
+    playerName: row?.opponentName,
+    opponentTag: member.playerTag,
+    opponentName: member.playerName,
+  } : { ...row, playerTag: member.playerTag, playerName: member.playerName });
+  return capturedGroupRows(oriented, defense ? 'opponentTag' : 'playerTag', member.playerTag, start, end);
+}
+
+export async function buildGroupedPlayerReport({ raw, snapshots, playerTag: rawTag, fetchedAt } = {}) {
+  const playerTag = normalizeTag(rawTag);
+  const groupTag = normalizeTag(raw?.groupTag);
+  const seasonId = Number(raw?.seasonId);
+  const week = raw?.week;
+  if (raw?.source !== 'api' || !playerTag || !groupTag || !Number.isSafeInteger(seasonId)
+      || seasonId < 1e9 || seasonId >= 1e10 || week !== weekMonday(seasonId * 1000)) return null;
+  const start = Date.parse(`${week}T05:00:00Z`);
+  const captureTime = timestamp(fetchedAt);
+  if (!Number.isFinite(captureTime) || captureTime < start) return null;
+  const end = Math.min(start + 7 * day, captureTime + 1);
+  const standing = Array.isArray(raw.standings)
+    ? raw.standings.find((row) => normalizeTag(row?.playerTag) === playerTag)
+    : null;
+  if (!standing) return null;
+
+  let snapshot;
+  let snapshotUnavailable = false;
+  if (snapshots) {
+    try {
+      snapshot = await snapshots.read({ groupTag, seasonId, week });
+    } catch {
+      snapshotUnavailable = true;
+    }
+  }
+  const playerName = standing.playerName || playerTag;
+  const member = { playerTag, playerName };
+  const expectedAttacks = nonnegativeInteger(standing.attackCount);
+  const expectedDefenses = nonnegativeInteger(standing.defenseCount);
+  const ownAttacks = storedMemberRows(raw.battleViews, member, false, start, end);
+  const ownDefenses = mergeBattles(storedMemberRows(raw.battleViews, member, true, start, end), []).rows;
+  const reportAttacks = capturedGroupRows(raw.attacks, 'playerTag', playerTag, start, end);
+  const archivedAttacks = capturedGroupRows(snapshot?.attacks, 'playerTag', playerTag, start, end);
+  const lastDefense = timestamp(standing.lastDefenseAt);
+  const defenseEnd = Number.isFinite(lastDefense) && lastDefense >= start
+    ? Math.min(end, Math.round(lastDefense / 1000) * 1000 + 500)
+    : end;
+  const archivedDefenses = capturedGroupRows(snapshot?.defenses, 'opponentTag', playerTag, start, defenseEnd);
+
+  // The report identifies which attacks were captured alongside the standings.
+  // For older reports without a group attack array, the same-season archive is the fallback.
+  const attacks = mergeBattles(Array.isArray(raw.attacks) ? reportAttacks : archivedAttacks, ownAttacks).rows;
+  const defenses = ownDefenses.length === expectedDefenses
+    ? ownDefenses
+    : mergeBattles(ownDefenses, archivedDefenses).rows;
+  reuseGroupBattleDetails(attacks, archivedAttacks, 500);
+  reuseGroupBattleDetails(defenses, archivedDefenses, 500);
+  const opposingAttacks = capturedGroupRows(raw.attacks, 'opponentTag', playerTag, start, defenseEnd);
+  reuseGroupBattleDetails(defenses, opposingAttacks, 500);
+  const battleViews = buildBattleViews(
+    member, attacks, defenses,
+    { expected: expectedAttacks, logFailures: Number(snapshotUnavailable && !Array.isArray(raw.attacks)) },
+    { expected: expectedDefenses, logFailures: Number(snapshotUnavailable) },
+  );
+  return {
+    battleViews: { ...battleViews, standing, defenseTrophyMode: 'earned' },
+    profile: { ...member, townHallLevel: null, trophies: null, clanName: '', clanTag: '', currentGroupTag: groupTag },
+    leagueTier: raw.leagueTier ?? null,
+    weekStart: week,
+    period: 'week',
+    fetchedAt,
+    groupReport: { groupTag, week },
   };
 }
 
