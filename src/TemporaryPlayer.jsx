@@ -246,7 +246,7 @@ export function TemporaryPlayerSearch({ lookup, disabled, onLookupPlayer }) {
         临时查村庄
         <span className="legend-tag-field">
           <span className="legend-tag-prefix" aria-hidden="true">#</span>
-          <input value={tag} onChange={(event) => editTag(event.target.value)} placeholder="2PP8QG"
+          <input id="temporary-village-tag" value={tag} onChange={(event) => editTag(event.target.value)} placeholder="2PP8QG"
             autoComplete="off" spellCheck={false} aria-invalid={Boolean(validation)}
             aria-describedby={message ? feedbackId : undefined} />
         </span>

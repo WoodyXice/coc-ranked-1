@@ -228,8 +228,9 @@ export default function App() {
   const reportRef = useRef(null);
   const working = useRef(false);
   const showLookupWhenReady = useRef(false);
-  const temporaryLookup = useTemporaryPlayerLookup({ enabled: accounts.hasDeveloperToken && !accountLoading, tokenRevision });
-  const temporaryResult = temporaryLookup.result;
+  const canLookupPlayer = accounts.hasDeveloperToken && !accountLoading;
+  const temporaryLookup = useTemporaryPlayerLookup({ enabled: canLookupPlayer, tokenRevision });
+  const { result: temporaryResult, error: temporaryError } = temporaryLookup;
   const isTemporaryTab = tab === temporaryTab;
   const tabs = temporaryResult || isTemporaryTab ? [...baseTabs, temporaryTab] : baseTabs;
 
@@ -273,11 +274,15 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!temporaryResult || !showLookupWhenReady.current) return;
+    if (!showLookupWhenReady.current || (!temporaryResult && !temporaryError)) return;
     showLookupWhenReady.current = false;
+    if (temporaryError) {
+      document.getElementById("temporary-village-tag")?.focus();
+      return;
+    }
     setTab(temporaryTab);
     document.getElementById("tab-" + temporaryTab)?.focus();
-  }, [temporaryResult]);
+  }, [temporaryResult, temporaryError]);
 
   async function run(message, action, secrets) {
     if (working.current) return false;
@@ -452,7 +457,7 @@ export default function App() {
       <AccountPanel accounts={accounts} busy={accountLoading || !!busy} hasReport={!!payload?.fetchedAt} onSelect={selectAccount}
         onSaveAccount={saveAccount} onRemoveAccount={removeAccount} onSaveDeveloperToken={saveDeveloperToken}
         onQuery={collect} onSample={loadSample}>
-        <TemporaryPlayerSearch lookup={temporaryLookup} disabled={accountLoading || !!busy || !accounts.hasDeveloperToken}
+        <TemporaryPlayerSearch lookup={temporaryLookup} disabled={!!busy || !canLookupPlayer}
           onLookupPlayer={openTemporaryPlayer} />
       </AccountPanel>
       <div className="app-feedback">
@@ -481,7 +486,8 @@ export default function App() {
             {report && tab === "standings" && <Standings key={report.groupTag + report.week} rows={payload.raw?.standings ?? []} battleViews={battleViews}
               attacks={payload.raw?.attacks ?? report.attacks} classifiedAttacks={report.attacks}
               groupTag={report.groupTag} week={report.week} leagueTier={payload.raw?.leagueTier} isSample={report.source === "sample"}
-              onOpenLegend={openLegendLeaderboard} focus={standingFocus} />}
+              onOpenLegend={openLegendLeaderboard} focus={standingFocus}
+              onLookupPlayer={canLookupPlayer && !busy && report.source === "api" ? openTemporaryPlayer : undefined} />}
             {report && tab === "equipment" && <EquipmentFilter key={report.groupTag + report.week}
               attacks={payload.raw?.attacks ?? []} classifiedAttacks={report.attacks} standings={payload.raw?.standings ?? []}
               groupTag={report.groupTag} week={report.week} isSample={report.source === "sample"}

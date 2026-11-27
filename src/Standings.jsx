@@ -201,7 +201,7 @@ function MyResult({ results }) {
 }
 
 export default function Standings({ rows, battleViews, groupTag, week, leagueTier, isSample,
-  attacks = emptyAttacks, classifiedAttacks = emptyAttacks, onOpenLegend, focus = null }) {
+  attacks = emptyAttacks, classifiedAttacks = emptyAttacks, onOpenLegend, onLookupPlayer, focus = null }) {
   const [sort, setSort] = useState(initialSort);
   const [openPanel, setOpenPanel] = useState(null);
   const [compact, setCompact] = useState(false);
@@ -308,6 +308,7 @@ export default function Standings({ rows, battleViews, groupTag, week, leagueTie
               const lineupExpanded = history.length > 0 && open === "lineup";
               const panelId = `${panelPrefix}-${row.playerTag.replace(/^#/, "")}`;
               const name = row.playerName || row.playerTag;
+              const lookupName = name === row.playerTag ? name : `${name} ${row.playerTag}`;
               const results = mine.get(row.playerTag) ?? [];
               const myResult = selected === row.playerTag ? "本人" : results.length ? <MyResult results={results} /> : "—";
               const topHit = showDefenseRank && results.length > 0 && row.defenseRank !== null && row.defenseRank <= DEFENSE_TOP_N;
@@ -318,7 +319,10 @@ export default function Standings({ rows, battleViews, groupTag, week, leagueTie
                   <tr className={rowClass || undefined} id={`${panelPrefix}-row-${row.playerTag.replace(/^#/, "")}`}>
                     <td className={coreClass.rank}>{scoreText(row.rank)}</td>
                     <th scope="row" className={coreClass.player}>
-                      <span className="standings-player-name" title={name}>{name}</span>
+                      {row.playerTag && onLookupPlayer ? <button type="button" className="standings-player-name battle-opponent-lookup"
+                        aria-label={`查看 ${lookupName} 的攻防战报`} title={name}
+                        onClick={() => onLookupPlayer(row.playerTag)}>{name}</button>
+                        : <span className="standings-player-name" title={name}>{name}</span>}
                       {row.playerName && <small>{row.playerTag}</small>}
                       {(compact || history.length > 0) && <div className="standings-row-actions">
                         {compact && <button type="button" className="standings-detail-toggle" aria-label={`${name} 数据详情`}
