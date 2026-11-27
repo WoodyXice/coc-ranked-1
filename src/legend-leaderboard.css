@@ -7,8 +7,13 @@
 .legend-board-header { justify-content: space-between; }
 .legend-board-header > div { min-width: 0; }
 .legend-board-heading { margin-bottom: 6px; }
-.legend-board-heading h2 { margin: 0; }
+.legend-board-heading h2, .legend-board .legend-view-control { margin: 0; }
 .legend-board-heading img { flex: 0 0 auto; object-fit: contain; }
+.legend-board .legend-board-meta { color: var(--muted); font-size: 13px; }
+.legend-board-meta > * { display: inline-block; }
+.legend-board-meta > * + *::before { content: "·"; margin-inline: 6px; }
+.legend-board-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.legend-board-tools .standings-compact-sort { display: none; }
 .legend-board-controls label, .legend-board-search { display: flex; align-items: center; gap: 7px; color: var(--soft); font-size: 14px; }
 .legend-board-controls label { min-width: 0; }
 .legend-board-controls select, .legend-board-search input {
@@ -22,7 +27,7 @@
   color: inherit;
   font: inherit;
 }
-.legend-board-search { flex-wrap: wrap; margin-bottom: 12px; }
+.legend-board-search { flex-wrap: wrap; min-width: 0; margin-bottom: 10px; }
 .legend-board-search input { width: min(260px, 100%); }
 .legend-board-search span { color: var(--muted); }
 
@@ -43,7 +48,7 @@
 .legend-board-message { margin: 0 0 10px; color: var(--soft); font-size: 14px; }
 .legend-board-error { color: #ffb09f; }
 .legend-board-message, .legend-board-header p { overflow-wrap: anywhere; }
-.legend-metrics-source { margin: 0 0 12px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.legend-metric-coverage { color: var(--muted); font-size: 13px; }
 
 .legend-table-card {
   overflow: clip;
@@ -60,14 +65,13 @@
   font-variant-numeric: tabular-nums;
   line-height: 1.4;
 }
-.legend-rank-column { width: 68px; }
-.legend-clan-column { width: 25%; }
-.legend-town-hall-column { width: 72px; }
-.legend-trophy-column { width: 92px; }
-.legend-global-table .legend-clan-column { width: 18%; }
-.legend-strategy-column { width: 110px; }
-.legend-three-star-column { width: 76px; }
-.legend-daily-attack-column, .legend-daily-net-column { width: 99px; }
+.legend-rank-column { width: 66px; }
+.legend-clan-column { width: 18%; }
+.legend-town-hall-column { width: 82px; }
+.legend-trophy-column { width: 95px; }
+.legend-strategy-column { width: 11%; }
+.legend-three-star-column { width: 80px; }
+.legend-daily-attack-column, .legend-daily-net-column { width: 104px; }
 .legend-table thead {
   position: sticky;
   top: 0;
@@ -75,13 +79,15 @@
   background: var(--surface);
   box-shadow: 0 1px var(--line);
 }
-.legend-table th, .legend-table td { padding: 9px 12px; border-bottom: 1px solid var(--line); text-align: left; }
-.legend-table th:first-child, .legend-table td:first-child,
-.legend-table th:nth-child(n+4), .legend-table td:nth-child(n+4) { text-align: right; }
-.legend-table th.legend-clan-heading, .legend-table td.legend-clan-name,
+.legend-table th, .legend-table td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: right; }
+.legend-table th.legend-clan-heading, .legend-table td.legend-clan-name, .legend-player-table th:nth-child(2),
 .legend-table th.legend-strategy-value, .legend-table td.legend-strategy-value { text-align: left; }
 .legend-table thead th { color: var(--muted); font-size: 14px; font-weight: 500; white-space: nowrap; }
-.legend-table tr:last-child > td, .legend-table tbody tr:last-child > th { border-bottom: 0; }
+.legend-table thead th { padding-block: 3px; }
+.legend-table .sort-button { padding-inline: 0; border: 0; font: inherit; color: inherit; }
+.legend-table .sort-button:hover:enabled { background: transparent; color: var(--blue); }
+.legend-table .sort-indicator { margin-left: 2px; }
+.legend-table tbody tr:last-child > * { border-bottom: 0; }
 .legend-table tbody th { font-weight: 500; }
 .legend-table tbody small { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .legend-player-button, .legend-player-name, .legend-clan-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -105,9 +111,27 @@
 .legend-metric-cell.legend-strategy-value { overflow: hidden; text-overflow: ellipsis; }
 .legend-metric-sample { margin-inline-start: 4px; color: var(--muted); font-size: 11px; white-space: nowrap; }
 .legend-compact-metrics { display: none; }
+.legend-table tbody .legend-compact-clan { display: none; }
+
+.legend-style-name-column { width: 16%; }
+.legend-style-rate-column, .legend-style-count-column { width: 11%; }
+.legend-strategy-table tr > :first-child, .legend-strategy-table tr > :last-child { text-align: left; }
+.legend-strategy-table th[scope="row"] { overflow-wrap: anywhere; }
+.legend-style-leaders ol {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px 14px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.legend-style-leaders li { display: flex; gap: 7px; min-width: 0; align-items: baseline; }
+.legend-style-leaders li > div { min-width: 0; }
+.legend-style-place { color: var(--muted); font-size: 12px; }
 
 @media (max-width: 980px) {
-  .legend-global-table .legend-metric-column, .legend-global-table .legend-metric-cell { display: none; }
+  .legend-player-table .legend-metric-column, .legend-player-table .legend-metric-cell { display: none; }
+  .legend-board-tools .standings-compact-sort { display: flex; }
   .legend-compact-metrics {
     display: flex;
     flex-wrap: wrap;
@@ -123,16 +147,24 @@
 @media (max-width: 650px) {
   .legend-table th, .legend-table td { padding-inline: 7px; }
   .legend-rank-column { width: 52px; }
-  .legend-clan-column { width: 23%; }
-  .legend-town-hall-column { width: 58px; }
-  .legend-trophy-column { width: 80px; }
+  .legend-trophy-column { width: 84px; }
+  .legend-clan-column, .legend-town-hall-column, .legend-clan-heading, .legend-clan-name, .legend-town-hall { display: none; }
+  .legend-table tbody .legend-compact-clan:not(:empty) { display: block; }
+  .legend-strategy-table, .legend-strategy-table thead, .legend-strategy-table tbody { display: block; }
+  .legend-strategy-table colgroup, .legend-strategy-table thead th:last-child { display: none; }
+  .legend-strategy-table tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(80px, 1fr) minmax(84px, 1fr); }
+  .legend-strategy-table tbody tr > * { border-bottom: 0; }
+  .legend-strategy-table tbody tr + tr { border-top: 1px solid var(--line); }
+  .legend-strategy-table .legend-style-leaders { grid-column: 1 / -1; padding-top: 0; }
+  .legend-style-leaders::before { content: "流派前三"; display: block; margin-bottom: 4px; color: var(--muted); font-size: 12px; }
 }
 
 @media (max-width: 420px) {
   .legend-table th, .legend-table td { padding-inline: 5px; }
-  .legend-rank-column { width: 40px; }
-  .legend-clan-column { width: 20%; }
-  .legend-town-hall-column { width: 50px; }
-  .legend-trophy-column { width: 70px; }
+  .legend-rank-column { width: 48px; }
+  .legend-trophy-column { width: 78px; }
   .legend-table thead th { font-size: 13px; }
+  .legend-style-leaders ol { grid-template-columns: 1fr; }
+  .legend-style-leaders li > div { display: flex; align-items: baseline; gap: 8px; }
+  .legend-style-leaders small { white-space: nowrap; }
 }

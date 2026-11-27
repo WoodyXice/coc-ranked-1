@@ -4,7 +4,10 @@ import ExcelJS from "exceljs";
 import { getReport } from "../analytics.mjs";
 import { decodeArmyShareCode } from "../collector.mjs";
 import { workbookBytes } from "../files.mjs";
-import { armySets, attacksWithEquipment, defenseRanks, equipmentUsage, legendPlayerMetrics, myAttacksByOpponent, playerStrategyStats } from "../insights.mjs";
+import {
+  armySets, attacksWithEquipment, defenseRanks, equipmentUsage, legendPlayerMetrics,
+  legendStrategyLeaderboard, myAttacksByOpponent, playerStrategyStats, sortLegendPlayers,
+} from "../insights.mjs";
 
 function strategyOf(code) {
   return getReport({ source: "api", attacks: [{ id: "x", armyShareCode: code }] }).attacks[0].strategy;
@@ -90,6 +93,10 @@ test("Legend board metrics use up to sixteen attacks across the two latest leagu
   ];
   assert.deepEqual(legendPlayerMetrics({ attacks, defenses }, now), {
     strategy: "龙流", strategyCount: 14,
+    strategies: [
+      { strategy: "龙流", scoredCount: 14, threeStarCount: 8 },
+      { strategy: "天女蓝胖", scoredCount: 2, threeStarCount: 0 },
+    ],
     attackCount: 16, threeStarRate: 0.5,
     averageDailyAttack: 240, attackDays: 2,
     averageDailyNet: 40, completedDays: 2,
@@ -108,12 +115,14 @@ test("incomplete defenses do not discard a complete attack day from the attack a
   const defenses = [...legendRows("2026-11-27", -20, { length: 7 }), ...legendRows("2026-11-26", -30)];
   assert.deepEqual(legendPlayerMetrics({ attacks, defenses }, now), {
     strategy: "龙流", strategyCount: 16,
+    strategies: [{ strategy: "龙流", scoredCount: 16, threeStarCount: 8 }],
     attackCount: 16, threeStarRate: 0.5,
     averageDailyAttack: 240, attackDays: 2,
     averageDailyNet: -80, completedDays: 1,
   });
   assert.deepEqual(legendPlayerMetrics({ attacks: [{ ...attacks[0], trophyDelta: null }, ...attacks.slice(1)], defenses }, now), {
     strategy: "龙流", strategyCount: 16,
+    strategies: [{ strategy: "龙流", scoredCount: 16, threeStarCount: 8 }],
     attackCount: 16, threeStarRate: 0.5,
     averageDailyAttack: 160, attackDays: 1,
     averageDailyNet: -80, completedDays: 1,
@@ -123,7 +132,7 @@ test("incomplete defenses do not discard a complete attack day from the attack a
 test("Legend board metrics distinguish missing samples, zero scores, and tied named strategies", () => {
   const now = new Date("2026-11-27T18:00:00Z");
   const none = {
-    strategy: null, strategyCount: 0, attackCount: 0, threeStarRate: null,
+    strategy: null, strategyCount: 0, strategies: [], attackCount: 0, threeStarRate: null,
     averageDailyAttack: null, attackDays: 0, averageDailyNet: null, completedDays: 0,
   };
   assert.deepEqual(legendPlayerMetrics({}, now), none);
@@ -142,6 +151,57 @@ test("Legend board metrics distinguish missing samples, zero scores, and tied na
   assert.equal(eitherOrder.strategyCount, 1);
   assert.deepEqual(legendPlayerMetrics({ attacks: [...mixed].reverse(), defenses }, now), eitherOrder);
   assert.equal(legendPlayerMetrics({ attacks, defenses: [...defenses, { ...defenses[0] }] }, now).averageDailyNet, null);
+});
+
+test("Legend strategy board pools scored attacks per named strategy within the selected roster", () => {
+  const now = new Date("2026-11-27T18:00:00Z");
+  const playerMetrics = (scores) => legendPlayerMetrics({
+    attacks: scores.map(([strategy, stars], index) => ({
+      battleType: "LEGEND", timestamp: new Date(now.getTime() - index * 60_000).toISOString(), strategy, stars,
+    })),
+  }, now);
+  const entries = new Map([
+    ["#A", playerMetrics([["龙流", 3], ["天女蓝胖", 2], ["天女蓝胖", 2], ["其他", 3], ["未识别", 3]])],
+    ["#B", playerMetrics([["龙流", 3], ["龙流", 3], ["龙流", null], ["巨矛投手", null], ["天女蓝胖", 3]])],
+    ["#C", playerMetrics([["龙流", 3], ["龙流", 3]])],
+    ["#D", playerMetrics([["龙流", 1], ["龙流", 1], ["龙流", 1], ["龙流", 1], ["龙流", 1]])],
+    ["#OTHER", playerMetrics([["巨矛投手", 3]])],
+    ["#ERROR", null],
+  ]);
+  const rows = ["#A", "#B", "#C", "#D", "#ERROR", "#PENDING"].map((playerTag, i) =>
+    ({ playerTag, playerName: `玩家 ${i + 1}`, rank: i + 1 }));
+  const board = legendStrategyLeaderboard(rows.toReversed(), entries);
+  assert.deepEqual(board.map(({ strategy, scoredCount, threeStarCount, threeStarRate, playerCount }) =>
+    [strategy, scoredCount, threeStarCount, threeStarRate, playerCount]), [
+    ["龙流", 10, 5, 0.5, 4], ["天女蓝胖", 3, 1, 1 / 3, 2],
+  ]);
+  // Equal rates prefer the larger sample, then the official board rank.
+  assert.deepEqual(board[0].topPlayers, [
+    { playerTag: "#B", playerName: "玩家 2", rank: 2, scoredCount: 2, threeStarCount: 2, threeStarRate: 1 },
+    { playerTag: "#C", playerName: "玩家 3", rank: 3, scoredCount: 2, threeStarCount: 2, threeStarRate: 1 },
+    { playerTag: "#A", playerName: "玩家 1", rank: 1, scoredCount: 1, threeStarCount: 1, threeStarRate: 1 },
+  ]);
+  assert.deepEqual(board[1].topPlayers.map((p) => p.playerTag), ["#B", "#A"]);
+  assert.deepEqual(legendStrategyLeaderboard([rows.at(-1)], entries), []);
+});
+
+test("Legend player sorting preserves official ranks and keeps missing or pending values last in both directions", () => {
+  const rows = ["#A", "#B", "#C", "#D", "#E"].map((playerTag, i) =>
+    ({ playerTag, rank: i + 1, trophies: [9, 102, 11, 250, 7][i], clanName: ["", "Alpha", "Beta", "", ""][i] }));
+  const metrics = new Map([
+    ["#A", { threeStarRate: 0.125, averageDailyNet: -5 }],
+    ["#B", { threeStarRate: 0, averageDailyNet: 0 }],
+    ["#C", { threeStarRate: 0.125, averageDailyNet: 10 }],
+    ["#D", null],
+  ]);
+  const tags = (key, direction) => sortLegendPlayers(rows, metrics, key, direction).map((row) => row.playerTag);
+  assert.deepEqual(tags("threeStarRate", "desc"), ["#A", "#C", "#B", "#D", "#E"]);
+  assert.deepEqual(tags("threeStarRate", "asc"), ["#B", "#A", "#C", "#D", "#E"]);
+  assert.deepEqual(tags("averageDailyNet", "asc"), ["#A", "#B", "#C", "#D", "#E"]);
+  assert.deepEqual(tags("trophies", "desc"), ["#D", "#B", "#C", "#A", "#E"]);
+  assert.deepEqual(tags("clanName", "desc"), ["#C", "#B", "#A", "#D", "#E"]);
+  assert.deepEqual(tags("rank", "asc"), ["#A", "#B", "#C", "#D", "#E"]);
+  assert.deepEqual(rows.map((row) => row.rank), [1, 2, 3, 4, 5]);
 });
 
 test("equipment usage groups gear under its hero and computes rates", () => {

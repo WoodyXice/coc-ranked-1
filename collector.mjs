@@ -1179,6 +1179,12 @@ function officialLocationId(value) {
   return Number.isSafeInteger(id) && id > 0 && id <= 2_147_483_647 ? id : null;
 }
 
+export function legendBoardLocation(value = 'global') {
+  const location = value === 'global' ? value : officialLocationId(value);
+  if (location === null) throw clientError(400, '请选择有效的传奇排行榜地区。');
+  return location;
+}
+
 function leaderboardRow(entry) {
   const rank = nonnegativeInteger(entry?.rank);
   const playerTag = normalizeTag(entry?.tag);
@@ -1202,8 +1208,7 @@ export async function fetchLegendLeaderboard(
   { token, location: inputLocation = 'global' } = {},
   { fetchImpl = globalThis.fetch, requestIntervalMs = 100 } = {},
 ) {
-  const location = inputLocation === 'global' ? inputLocation : officialLocationId(inputLocation);
-  if (location === null) throw clientError(400, '请选择有效的传奇排行榜地区。');
+  const location = legendBoardLocation(inputLocation);
   const request = apiRequest(requiredApiToken(token), fetchImpl, requestIntervalMs);
   const data = await request(`/locations/${location}/rankings/players?limit=200`).catch((error) => {
     if (error.status === 404) throw clientError(404, '官方 API 暂未提供此地区的排行榜。');

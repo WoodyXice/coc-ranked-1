@@ -1,11 +1,29 @@
-import { useEffect, useId, useState, useSyncExternalStore } from "react";
-import { scoreText } from "./Standings.jsx";
+import { useEffect, useId, useMemo, useState, useSyncExternalStore } from "react";
+import { compareRows, legendStrategyLeaderboard, sortLegendPlayers } from "../insights.mjs";
+import { CompactSort, scoreText, SortHeader } from "./Standings.jsx";
 import { formatTime } from "./battle-time.mjs";
 import { useLegendPlayerMetrics } from "./legend-player-metrics.jsx";
 import { createLegendRequestCache } from "./legend-request-cache.mjs";
 import "./legend-leaderboard.css";
 
 const emptyRows = [];
+const playerColumns = [
+  { key: "rank", label: "名次", ascendingFirst: true },
+  { key: "playerName", label: "村庄", ascendingFirst: true },
+  { key: "strategy", label: "常用流派", metric: true, ascendingFirst: true, className: "legend-metric-cell legend-strategy-value" },
+  { key: "threeStarRate", label: "三星率", metric: true, className: "legend-metric-cell", title: "近两个联赛日的三星场次 ÷ 有效进攻场次" },
+  { key: "averageDailyAttack", label: "日均进攻杯", metric: true, className: "legend-metric-cell", title: "近两个联赛日，仅计有完整 8 场进攻杯数的日期" },
+  { key: "averageDailyNet", label: "日均净杯", metric: true, className: "legend-metric-cell", title: "近两个联赛日，仅计进攻和防守各有完整 8 场杯数的日期" },
+  { key: "clanName", label: "部落", ascendingFirst: true, className: "legend-clan-heading" },
+  { key: "townHallLevel", label: "大本营", className: "legend-town-hall" },
+  { key: "trophies", label: "当前杯数" },
+];
+
+const strategyColumns = [
+  { key: "strategy", label: "流派", ascendingFirst: true },
+  { key: "threeStarRate", label: "三星率", title: "该流派的三星场次 ÷ 有效进攻场次" },
+  { key: "playerCount", label: "使用人数" },
+];
 
 async function loadLocations() {
   const locations = await window.cocApp.fetchLegendLocations();
@@ -34,10 +52,6 @@ function regionName(location) {
   return location?.countryCode === "CN" ? "中国（国际服地区）" : location?.name;
 }
 
-function rankCompare(left, right) {
-  return (left.rank ?? Number.MAX_SAFE_INTEGER) - (right.rank ?? Number.MAX_SAFE_INTEGER);
-}
-
 function RankCell({ rank, previousRank }) {
   const knownPrevious = Number.isSafeInteger(previousRank) && previousRank > 0;
   return <td title={knownPrevious ? `上次排名 ${scoreText(previousRank)}` : undefined}>{scoreText(rank)}</td>;
@@ -45,6 +59,13 @@ function RankCell({ rank, previousRank }) {
 
 const threeStarPercent = new Intl.NumberFormat("zh-CN", { style: "percent", maximumFractionDigits: 1 });
 const dailyNetScore = new Intl.NumberFormat("zh-CN", { signDisplay: "exceptZero", maximumFractionDigits: 1 });
+
+function PlayerLink({ player, onLookupPlayer }) {
+  const name = player.playerName || player.playerTag || "未知村庄";
+  if (!player.playerTag || !onLookupPlayer) return <span className="legend-player-name" title={name}>{name}</span>;
+  return <button className="legend-player-button" type="button" title={`${name} ${player.playerTag}`}
+    aria-label={`查询村庄 ${name} ${player.playerTag}`} onClick={() => onLookupPlayer(player.playerTag)}>{name}</button>;
+}
 
 function LegendMetrics({ result, compact = false }) {
   const stats = result?.metrics;
@@ -91,12 +112,83 @@ function LegendMetrics({ result, compact = false }) {
     key={metric.label} title={metric.title}>{metricValue(metric)}</td>);
 }
 
+function PlayerTable({ label, rows, statuses, sort, onSort, observeRow, selectedTag, onLookupPlayer }) {
+  return <div className="legend-table-card">
+    <table className="legend-table legend-player-table" aria-label={label}>
+      <colgroup>
+        <col className="legend-rank-column" /><col />
+        <col className="legend-metric-column legend-strategy-column" />
+        <col className="legend-metric-column legend-three-star-column" />
+        <col className="legend-metric-column legend-daily-attack-column" />
+        <col className="legend-metric-column legend-daily-net-column" />
+        <col className="legend-clan-column" /><col className="legend-town-hall-column" /><col className="legend-trophy-column" />
+      </colgroup>
+      <thead><tr>{playerColumns.map((column) =>
+        <SortHeader key={column.key} column={column} sort={sort} onSort={onSort} />)}</tr></thead>
+      <tbody>{rows.map((row) => {
+        const own = row.playerTag === selectedTag;
+        const metrics = statuses.get(row.playerTag);
+        const clan = row.clanName || row.clanTag;
+        return <tr key={row.playerTag || row.rank} className={own ? "legend-own-row" : undefined}
+          data-player-tag={row.playerTag} ref={observeRow}>
+          <RankCell rank={row.rank} previousRank={row.previousRank} />
+          <th scope="row">
+            <PlayerLink player={row} onLookupPlayer={onLookupPlayer} />
+            <small>{[row.playerTag, own && "当前村庄"].filter(Boolean).join(" · ")}</small>
+            <small className="legend-compact-clan">{[clan, row.townHallLevel && `${row.townHallLevel} 本`].filter(Boolean).join(" · ")}</small>
+            <LegendMetrics result={metrics} compact />
+          </th>
+          <LegendMetrics result={metrics} />
+          <td className="legend-clan-name" title={clan}>{clan || "—"}</td>
+          <td className="legend-town-hall">{scoreText(row.townHallLevel)}</td>
+          <td className="legend-trophy-score">{scoreText(row.trophies)}</td>
+        </tr>;
+      })}</tbody>
+    </table>
+  </div>;
+}
+
+function StrategyTable({ label, strategies, sort, onSort, onLookupPlayer }) {
+  const ranked = strategies.toSorted((a, b) => compareRows(a, b, sort.key, sort.ascending));
+  return <div className="legend-table-card">
+    <table className="legend-table legend-strategy-table" aria-label={label}>
+      <colgroup><col className="legend-style-name-column" /><col className="legend-style-rate-column" />
+        <col className="legend-style-count-column" /><col /></colgroup>
+      <thead><tr>{strategyColumns.map((column) =>
+        <SortHeader key={column.key} column={column} sort={sort} onSort={onSort} />)}
+        <th scope="col" title="按该流派三星率排名，同率时有效进攻场次多者优先">流派前三</th></tr></thead>
+      <tbody>{ranked.map((row) => <tr key={row.strategy}>
+        <th scope="row">{row.strategy}</th>
+        <td><strong>{threeStarPercent.format(row.threeStarRate)}</strong>
+          <small title="三星场次 / 有效进攻场次">{row.threeStarCount}/{row.scoredCount} 场</small>
+        </td>
+        <td>{scoreText(row.playerCount)}</td>
+        <td className="legend-style-leaders">
+          <ol aria-label={row.strategy + "前三名"}>{row.topPlayers.map((player, index) =>
+            <li key={player.playerTag}>
+              <span className="legend-style-place" aria-hidden="true">{index + 1}</span>
+              <div>
+                <PlayerLink player={player} onLookupPlayer={onLookupPlayer} />
+                <small title="个人使用该流派的三星率与三星 / 有效进攻场次">
+                  {threeStarPercent.format(player.threeStarRate)} · {player.threeStarCount}/{player.scoredCount} 场
+                </small>
+              </div>
+            </li>)}</ol>
+        </td>
+      </tr>)}</tbody>
+    </table>
+  </div>;
+}
+
 export default function LegendLeaderboard({ scope, active = true, hasDeveloperToken, accountLoading, selectedTag, selectedStanding, onLookupPlayer }) {
   const regional = scope === "regional";
   const headingId = useId();
   const regionId = useId();
   const searchId = useId();
   const [search, setSearch] = useState("");
+  const [view, setView] = useState("players");
+  const [playerSort, setPlayerSort] = useState({ key: "rank", ascending: true });
+  const [strategySort, setStrategySort] = useState({ key: "threeStarRate", ascending: false });
   const [chosenRegionId, chooseRegion] = useState(null);
   const enabled = hasDeveloperToken && !accountLoading;
   const [locations, refreshLocations] = useLegendRequest(regional && enabled ? "locations" : null, active, loadLocations);
@@ -109,20 +201,32 @@ export default function LegendLeaderboard({ scope, active = true, hasDeveloperTo
   const activeQuery = regional && !region ? locations : board;
   const waiting = enabled && (activeQuery.status === "idle" || activeQuery.status === "loading");
   const rows = board.data?.rows ?? emptyRows;
-  const query = search.trim().toLowerCase();
-  const matchingRows = query ? rows.filter((row) => row.playerName.toLowerCase().includes(query)
-    || row.playerTag.toLowerCase().includes(query)) : rows;
+  const query = regional ? search.trim().toLowerCase() : "";
+  const strategyView = view === "strategies";
+  const loadAll = strategyView || playerColumns.some((column) => column.key === playerSort.key && column.metric);
   const hasTier = board.data?.hasTierData === true;
-  const { statuses: playerMetrics, observeRow: observeMetricRow } = useLegendPlayerMetrics(matchingRows, {
-    active: active && enabled && !regional,
+  const { statuses, observeRow } = useLegendPlayerMetrics(rows, {
+    active: active && enabled, location, loadAll,
     refreshKey: board.data?.fetchedAt,
   });
+  const metricsByTag = useMemo(() => new Map([...statuses].filter(([, entry]) => entry.metrics)
+    .map(([tag, entry]) => [tag, entry.metrics])), [statuses]);
+  const players = useMemo(() => {
+    if (strategyView) return emptyRows;
+    const matches = query ? rows.filter(({ playerName, playerTag }) => playerName?.toLowerCase().includes(query)
+      || playerTag?.toLowerCase().includes(query)) : rows;
+    return sortLegendPlayers(matches, metricsByTag, playerSort.key, playerSort.ascending ? "asc" : "desc");
+  }, [rows, metricsByTag, query, playerSort, strategyView]);
+  const strategies = useMemo(() => strategyView ? legendStrategyLeaderboard(rows, metricsByTag) : emptyRows,
+    [rows, metricsByTag, strategyView]);
+  const unavailable = statuses.size - metricsByTag.size;
+  const metricsPending = statuses.size < rows.length;
   const ownInTable = selectedTag && rows.some((row) => row.playerTag === selectedTag);
   const profileRank = Number.isSafeInteger(selectedStanding?.rank) && selectedStanding.rank > 0 ? selectedStanding.rank : null;
   const profileTrophies = selectedStanding?.trophies;
   const showProfile = !regional && selectedTag && !ownInTable && (profileRank !== null || Number.isFinite(profileTrophies));
   const range = regional ? "地区" : "全球";
-  const heading = board.data?.hasTierData === false ? "官方杯数榜（接口未返回段位）" : hasTier ? `传奇 I ${range}榜` : `${range}排行榜`;
+  const heading = board.data?.hasTierData === false ? `官方${range}杯数榜` : hasTier ? `传奇 I ${range}榜` : `${range}排行榜`;
 
   function refresh() {
     if (regional && !region) refreshLocations();
@@ -137,12 +241,17 @@ export default function LegendLeaderboard({ scope, active = true, hasDeveloperTo
             <h2 id={headingId}>{heading}</h2>
             {hasTier && <img src="./league-icons/105000036.png" alt="" width="30" height="30"
               title="徽章来源 ClashKing Assets，素材归 Supercell 所有" />}
+            {rows.length > 0 && <div className="metric-control legend-view-control" role="group" aria-label={`${range}榜视图`}>
+              <button type="button" aria-pressed={!strategyView} onClick={() => setView("players")}>玩家排名</button>
+              <button type="button" aria-pressed={strategyView} onClick={() => setView("strategies")}>流派排行</button>
+            </div>}
           </div>
-          {board.data && <p>{[
-            regional ? regionName(region) : "全球",
-            `已获取 ${scoreText(rows.length)} 名玩家`,
-            board.data.fetchedAt && `获取时间 ${formatTime(board.data.fetchedAt)}（北京时间）`,
-          ].filter(Boolean).join(" · ")}</p>}
+          {board.data && <p className="legend-board-meta">
+            <span>{scoreText(rows.length)} 名玩家</span>
+            <span title="今日和上一个联赛日，北京时间每日 13:00 换日">近两个联赛日</span>
+            {board.data.fetchedAt && <time dateTime={board.data.fetchedAt}>更新于 {formatTime(board.data.fetchedAt)}（北京时间）</time>}
+            {board.data.hasTierData === false && <span>接口未返回段位</span>}
+          </p>}
         </div>
         <div className="legend-board-controls">
           {regional && countries.length > 0 && <label htmlFor={regionId}>地区
@@ -164,63 +273,30 @@ export default function LegendLeaderboard({ scope, active = true, hasDeveloperTo
       {activeQuery.status === "error" && rows.length > 0 && <p className="legend-board-message legend-board-error" role="alert">
         刷新失败，保留上次结果。{activeQuery.error}
       </p>}
-      {rows.length > 0 && <div className="legend-board-search">
-        <label htmlFor={searchId}>榜内搜索</label>
-        <input id={searchId} type="search" value={search} onChange={(event) => setSearch(event.target.value)}
-          placeholder="玩家名或 Tag" autoComplete="off" />
-        {query && <span role="status">找到 {scoreText(matchingRows.length)} 名玩家</span>}
+      {rows.length > 0 && !strategyView && <div className="legend-board-tools">
+        {regional && <div className="legend-board-search">
+          <label htmlFor={searchId}>榜内搜索</label>
+          <input id={searchId} type="search" value={search} onChange={(event) => setSearch(event.target.value)}
+            placeholder="玩家名或 Tag" autoComplete="off" />
+          {query && <span role="status">找到 {scoreText(players.length)} 名玩家</span>}
+        </div>}
+        <CompactSort columns={playerColumns} sort={playerSort} onSort={setPlayerSort} />
       </div>}
-      {!regional && matchingRows.length > 0 && <p className="legend-metrics-source">
-        统计今天和上一个联赛日（北京时间 13:00 换日）。日均进攻杯取进攻满 8 场的日期，日均净杯取攻防各满 8 场的日期。
+      {loadAll && (metricsPending || unavailable > 0) && <p className="legend-board-message legend-metric-coverage" role="status">
+        {metricsPending && "正在读取战报 · "}已取得 {metricsByTag.size}/{rows.length} 人
+        {unavailable > 0 && ` · ${unavailable} 人暂缺`}
       </p>}
-      {matchingRows.length ? (
-        <div className="legend-table-card">
-          <table className={`legend-table${regional ? "" : " legend-global-table"}`} aria-label={`${range}排名表`}>
-            <colgroup><col className="legend-rank-column" /><col />
-              {!regional && <>
-                <col className="legend-metric-column legend-strategy-column" />
-                <col className="legend-metric-column legend-three-star-column" />
-                <col className="legend-metric-column legend-daily-attack-column" />
-                <col className="legend-metric-column legend-daily-net-column" />
-              </>}
-              <col className="legend-clan-column" />
-              <col className="legend-town-hall-column" /><col className="legend-trophy-column" /></colgroup>
-            <thead><tr><th scope="col">名次</th><th scope="col">村庄</th>
-              {!regional && <>
-                <th scope="col" className="legend-metric-cell legend-strategy-value">常用流派</th>
-                <th scope="col" className="legend-metric-cell">三星率</th>
-                <th scope="col" className="legend-metric-cell">日均进攻杯</th>
-                <th scope="col" className="legend-metric-cell">日均净杯</th>
-              </>}
-              <th scope="col" className="legend-clan-heading">部落</th>
-              <th scope="col">大本营</th><th scope="col">当前杯数</th></tr></thead>
-            <tbody>{[...matchingRows].sort(rankCompare).map((row) => {
-              const own = row.playerTag === selectedTag;
-              const name = row.playerName || row.playerTag || "未知村庄";
-              const metrics = playerMetrics.get(row.playerTag);
-              return (
-                <tr key={row.playerTag || row.rank} className={own ? "legend-own-row" : undefined}
-                  data-player-tag={row.playerTag} ref={regional ? undefined : observeMetricRow}>
-                  <RankCell rank={row.rank} previousRank={row.previousRank} />
-                  <th scope="row">
-                    {row.playerTag && onLookupPlayer ? <button className="legend-player-button" type="button" title={name}
-                      aria-label={`查询村庄 ${name} ${row.playerTag}`} onClick={() => onLookupPlayer(row.playerTag)}>{name}</button>
-                      : <span className="legend-player-name" title={name}>{name}</span>}
-                    <small>{[row.playerTag, own && "当前村庄"].filter(Boolean).join(" · ")}</small>
-                    {!regional && <LegendMetrics result={metrics} compact />}
-                  </th>
-                  {!regional && <LegendMetrics result={metrics} />}
-                  <td className="legend-clan-name" title={row.clanName || row.clanTag}>{row.clanName || row.clanTag || "—"}</td>
-                  <td>{scoreText(row.townHallLevel)}</td>
-                  <td className="legend-trophy-score">{scoreText(row.trophies)}</td>
-                </tr>
-              );
-            })}</tbody>
-          </table>
-        </div>
+      {rows.length > 0 && strategyView ? (
+        strategies.length ? <StrategyTable label={`${range}流派排行`} strategies={strategies}
+          sort={strategySort} onSort={setStrategySort} onLookupPlayer={onLookupPlayer} />
+          : <div className="empty-card" role="status"><p>{metricsPending ? "正在汇总各流派的进攻记录…"
+            : "近两个联赛日暂无已识别流派的有效进攻记录。"}</p></div>
+      ) : players.length ? (
+        <PlayerTable label={`${range}排名表`} rows={players} statuses={statuses} observeRow={observeRow}
+          selectedTag={selectedTag} sort={playerSort} onSort={setPlayerSort} onLookupPlayer={onLookupPlayer} />
       ) : (
         <div className="empty-card" role={activeQuery.status === "error" ? "alert" : "status"}>
-          <p>{rows.length ? "榜内没有匹配的玩家。可以在顶部「临时查村庄」按 Tag 查询。"
+          <p>{rows.length ? "榜内没有匹配的玩家。"
             : accountLoading ? "正在读取本机设置…" : !enabled ? "在「管理令牌」保存开发者 API 令牌，即可查询榜单。"
             : activeQuery.status === "error" ? activeQuery.error
             : waiting ? regional && !region ? "正在查询可用地区…" : "正在查询榜单…"

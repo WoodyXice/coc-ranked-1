@@ -1,16 +1,39 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { legendDayNumber, nextLegendDayStart } from "../insights.mjs";
 
 const cacheLifetime = 10 * 60 * 1000;
 const retryDelay = 60 * 1000;
 const batchSize = 20;
 
-export function useLegendPlayerMetrics(rows, { active, refreshKey }) {
-  const [status, setStatus] = useState(new Map());
+export function useLegendPlayerMetrics(rows, { active, refreshKey, location, loadAll }) {
+  const [boards, setBoards] = useState(() => new Map());
   const [nearby, setNearby] = useState(new Set());
   const observer = useRef(null);
   const observed = useRef(new Set());
-  const pending = useRef(false);
-  const deferred = useRef(new Map());
+  const pending = useRef(new Set());
+  const [day, setDay] = useState(() => legendDayNumber(Date.now()));
+  useEffect(() => {
+    if (!active) return;
+    const now = Date.now();
+    setDay(legendDayNumber(now));
+    const timer = setTimeout(() => setDay(legendDayNumber(Date.now())), nextLegendDayStart(now) - now);
+    return () => clearTimeout(timer);
+  }, [active, day]);
+
+  // Hold the freshness cutoff for one pass, including slow batches in a large leaderboard.
+  const asOf = useMemo(() => Date.now(), [active, location, refreshKey, loadAll, nearby, day]);
+  const statuses = useMemo(() => {
+    const entries = boards.get(location);
+    const fresh = new Map();
+    const leagueDay = legendDayNumber(asOf);
+    for (const { playerTag } of rows) {
+      const entry = entries?.get(playerTag);
+      if (!entry || entry.expiresAt <= asOf || entry.day !== leagueDay
+        || (entry.metrics === null && entry.refreshKey !== refreshKey)) continue;
+      fresh.set(playerTag, entry);
+    }
+    return fresh;
+  }, [boards, location, rows, refreshKey, asOf]);
 
   const observeRow = useCallback((node) => {
     if (!node) return;
@@ -29,7 +52,7 @@ export function useLegendPlayerMetrics(rows, { active, refreshKey }) {
   }, []);
 
   useEffect(() => {
-    if (!active || typeof IntersectionObserver !== "function") return;
+    if (!active || loadAll || typeof IntersectionObserver !== "function") return;
     let observing = true;
     const intersection = new IntersectionObserver((entries) => {
       if (!observing) return;
@@ -53,52 +76,47 @@ export function useLegendPlayerMetrics(rows, { active, refreshKey }) {
       intersection.disconnect();
       setNearby((previous) => previous.size ? new Set() : previous);
     };
-  }, [active]);
+  }, [active, loadAll]);
 
   useEffect(() => {
     const api = window.cocApp;
-    if (!active || pending.current || typeof api?.fetchLegendPlayerMetrics !== "function") return;
+    if (!active || location == null || pending.current.has(location) || typeof api?.fetchLegendPlayerMetrics !== "function") return;
 
     const nearTags = new Set([...nearby].map((node) => node.dataset.playerTag));
-    const candidates = typeof IntersectionObserver === "function"
-      ? rows.filter(({ playerTag }) => nearTags.has(playerTag)) : rows.slice(0, batchSize);
-    const now = Date.now();
-    const tags = [];
-    for (const { playerTag } of candidates) {
-      if (!playerTag) continue;
-      const wait = deferred.current.get(playerTag);
-      if (wait && wait.key === refreshKey && now < wait.until) continue;
-      const cached = status.get(playerTag);
-      if (cached && now - cached.checkedAt < (cached.metrics === null ? retryDelay : cacheLifetime)) continue;
-      tags.push(playerTag);
-      if (tags.length === batchSize) break;
-    }
+    const candidates = loadAll || typeof IntersectionObserver !== "function"
+      ? rows : rows.filter(({ playerTag }) => nearTags.has(playerTag));
+    const tags = candidates.map(({ playerTag }) => playerTag)
+      .filter((tag) => tag && !statuses.has(tag)).slice(0, batchSize);
     if (!tags.length) return;
-    pending.current = true;
+    pending.current.add(location);
+    const requestDay = legendDayNumber(Date.now());
 
-    function finish(entries) {
+    function finish(results) {
       const byTag = new Map();
-      for (const entry of Array.isArray(entries) ? entries : []) {
+      for (const entry of Array.isArray(results) ? results : []) {
         if (entry?.playerTag) byTag.set(entry.playerTag, entry.metrics);
       }
       const checkedAt = Date.now();
-      for (const tag of tags) {
-        if (byTag.has(tag)) deferred.current.delete(tag);
-        else deferred.current.set(tag, { key: refreshKey, until: checkedAt + retryDelay });
-      }
-      pending.current = false;
-      setStatus((previous) => {
+      pending.current.delete(location);
+      setBoards((previous) => {
         const next = new Map(previous);
-        for (const tag of tags) {
-          if (byTag.has(tag)) next.set(tag, { checkedAt, metrics: byTag.get(tag) ?? null });
+        const entries = new Map(next.get(location));
+        for (const [tag, entry] of entries) {
+          if (entry.expiresAt <= asOf) entries.delete(tag);
         }
+        for (const tag of tags) {
+          const metrics = byTag.get(tag) ?? null;
+          entries.set(tag, { metrics, checkedAt, refreshKey, day: requestDay,
+            expiresAt: checkedAt + (metrics === null ? retryDelay : cacheLifetime) });
+        }
+        next.set(location, entries);
         return next;
       });
     }
 
-    void Promise.resolve().then(() => api.fetchLegendPlayerMetrics({ playerTags: tags }))
+    void Promise.resolve().then(() => api.fetchLegendPlayerMetrics({ location, playerTags: tags }))
       .then((result) => finish(result?.entries), () => finish(null));
-  }, [active, nearby, refreshKey, rows, status]);
+  }, [active, loadAll, location, nearby, refreshKey, rows, statuses, asOf]);
 
-  return { statuses: status, observeRow };
+  return { statuses, observeRow };
 }

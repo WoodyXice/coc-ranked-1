@@ -1,3 +1,5 @@
+import { legendBoardLocation } from "../collector.mjs";
+import { legendDayNumber } from "../insights.mjs";
 import { createLegendMetricsCollector } from "./service.mjs";
 
 const lifetime = 10 * 60_000;
@@ -18,14 +20,23 @@ export function createLegendMetricsService({ readHistory, makeCollector = create
     }
   }
 
-  function setRows(token, rows) {
+  function isListed(state, playerTag) {
+    for (const tags of state.boards.values()) {
+      if (tags.has(playerTag)) return true;
+    }
+    return false;
+  }
+
+  function setRows(token, rows, inputLocation) {
+    const location = legendBoardLocation(inputLocation);
     if (session?.token !== token) {
       reset();
-      session = { token, collect: makeCollector(token), tags: new Set(), cache: new Map(), pending: new Map(), queue: [], running: 0 };
+      session = { token, collect: makeCollector(token), boards: new Map(), cache: new Map(), pending: new Map(), queue: [], running: 0 };
     }
-    session.tags = new Set(rows.map(({ playerTag }) => playerTag));
-    for (const tag of session.cache.keys()) {
-      if (!session.tags.has(tag)) session.cache.delete(tag);
+    const previous = session.boards.get(location);
+    session.boards.set(location, new Set(rows.map(({ playerTag }) => playerTag)));
+    for (const tag of previous ?? []) {
+      if (!isListed(session, tag)) session.cache.delete(tag);
     }
   }
 
@@ -43,8 +54,9 @@ export function createLegendMetricsService({ readHistory, makeCollector = create
       // One unavailable battle log must not hide the other players' results.
     }
 
-    if (state === session && state.tags.has(playerTag)) {
-      state.cache.set(playerTag, { metrics, expiresAt: now() + (metrics == null ? failureLifetime : lifetime) });
+    if (state === session && isListed(state, playerTag)) {
+      const checkedAt = now();
+      state.cache.set(playerTag, { metrics, day: legendDayNumber(checkedAt), expiresAt: checkedAt + (metrics == null ? failureLifetime : lifetime) });
     }
     state.pending.delete(playerTag);
     state.running -= 1;
@@ -55,7 +67,7 @@ export function createLegendMetricsService({ readHistory, makeCollector = create
   function drain(state) {
     while (state.running < concurrentLimit && state.queue.length > 0) {
       const task = state.queue.shift();
-      if (!state.tags.has(task.playerTag)) {
+      if (!isListed(state, task.playerTag)) {
         state.pending.delete(task.playerTag);
         task.resolve(null);
         continue;
@@ -67,7 +79,8 @@ export function createLegendMetricsService({ readHistory, makeCollector = create
 
   function lookup(state, playerTag) {
     const cached = state.cache.get(playerTag);
-    if (cached && cached.expiresAt > now()) return cached.metrics;
+    const time = now();
+    if (cached && cached.expiresAt > time && cached.day === legendDayNumber(time)) return cached.metrics;
     const pending = state.pending.get(playerTag);
     if (pending) return pending;
     const task = new Promise((resolve) => { state.queue.push({ playerTag, resolve }); });
@@ -76,12 +89,17 @@ export function createLegendMetricsService({ readHistory, makeCollector = create
     return task;
   }
 
-  async function fetchBatch(token, playerTags) {
+  async function fetchBatch(token, playerTags, inputLocation) {
     const state = session;
     if (!state || state.token !== token || !Array.isArray(playerTags)) return { entries: [] };
-    const tags = [...new Set(playerTags.slice(0, batchLimit))].filter((tag) => state.tags.has(tag));
+    const location = legendBoardLocation(inputLocation);
+    const board = state.boards.get(location);
+    if (!board) return { entries: [] };
+    const tags = [...new Set(playerTags.slice(0, batchLimit))].filter((tag) => board.has(tag));
     const entries = await Promise.all(tags.map(async (playerTag) => ({ playerTag, metrics: await lookup(state, playerTag) })));
-    return { entries };
+    if (state !== session) return { entries: [] };
+    const current = state.boards.get(location);
+    return { entries: entries.filter(({ playerTag }) => current.has(playerTag)) };
   }
 
   return { setRows, reset, fetchBatch };

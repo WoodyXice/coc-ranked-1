@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ArmyLineup, { ArmyAttribution, hasLineup } from "./ArmyLineup.jsx";
 import { formatDuration, formatShortTime, formatTime } from "./battle-time.mjs";
-import { DEFENSE_TOP_N, attackEquipmentIds, defenseRanks, myAttacksByOpponent } from "../insights.mjs";
+import { DEFENSE_TOP_N, attackEquipmentIds, compareRows, defenseRanks, myAttacksByOpponent } from "../insights.mjs";
 
 const number = new Intl.NumberFormat("zh-CN");
 const signed = new Intl.NumberFormat("zh-CN", { signDisplay: "exceptZero" });
@@ -82,18 +82,7 @@ export function StandingSummary({ battleViews, standing, showPlayer = true }) {
   );
 }
 
-export function compareRows(a, b, key, ascending) {
-  const first = a[key];
-  const second = b[key];
-  if (typeof first === "string" && typeof second === "string" && first && second) {
-    return ascending ? first.localeCompare(second, "zh-CN") : second.localeCompare(first, "zh-CN");
-  }
-  if (typeof first === "string" && first) return -1;
-  if (typeof second === "string" && second) return 1;
-  if (!Number.isFinite(first)) return Number.isFinite(second) ? 1 : 0;
-  if (!Number.isFinite(second)) return -1;
-  return ascending ? first - second : second - first;
-}
+export { compareRows };
 
 export function SortHeader({ column: { key, label, title, ascendingFirst = false, className }, sort, onSort }) {
   const active = sort.key === key;
@@ -175,7 +164,7 @@ const detailColumns = [
     value: (row) => <DirectionTiming timestamp={row.lastDefenseAt} average={row.defenseDurationAverage} count={row.defenseDurationCount} /> },
 ];
 
-function CompactSort({ columns, sort, onSort }) {
+export function CompactSort({ columns, sort, onSort }) {
   return (
     <label className="standings-compact-sort">
       <span>排序方式</span>
