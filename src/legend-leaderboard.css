@@ -5,10 +5,12 @@
   gap: 8px 12px;
 }
 .legend-board-header { justify-content: space-between; }
+.legend-board-header > div { min-width: 0; }
 .legend-board-heading { margin-bottom: 6px; }
 .legend-board-heading h2 { margin: 0; }
 .legend-board-heading img { flex: 0 0 auto; object-fit: contain; }
 .legend-board-controls label, .legend-board-search { display: flex; align-items: center; gap: 7px; color: var(--soft); font-size: 14px; }
+.legend-board-controls label { min-width: 0; }
 .legend-board-controls select, .legend-board-search input {
   min-width: 0;
   max-width: min(260px, 64vw);
@@ -40,19 +42,16 @@
 .legend-player-summary dd { margin: 0; font-weight: 700; }
 .legend-board-message { margin: 0 0 10px; color: var(--soft); font-size: 14px; }
 .legend-board-error { color: #ffb09f; }
+.legend-board-message, .legend-board-header p { overflow-wrap: anywhere; }
 
 .legend-table-card {
-  max-width: 100%;
-  max-height: min(67vh, 720px);
-  overflow: auto;
+  overflow: clip;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface);
 }
-.legend-table-card:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
 .legend-table {
   width: 100%;
-  min-width: 440px;
   table-layout: fixed;
   border-collapse: separate;
   border-spacing: 0;
@@ -64,14 +63,20 @@
 .legend-clan-column { width: 25%; }
 .legend-town-hall-column { width: 72px; }
 .legend-trophy-column { width: 92px; }
-.legend-table thead { position: sticky; top: 0; z-index: 1; background: var(--surface); }
+.legend-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface);
+  box-shadow: 0 1px var(--line);
+}
 .legend-table th, .legend-table td { padding: 9px 12px; border-bottom: 1px solid var(--line); text-align: left; }
 .legend-table th:first-child, .legend-table td:first-child,
 .legend-table th:nth-child(n+4), .legend-table td:nth-child(n+4) { text-align: right; }
 .legend-table thead th { color: var(--muted); font-size: 14px; font-weight: 500; white-space: nowrap; }
 .legend-table tr:last-child > td, .legend-table tbody tr:last-child > th { border-bottom: 0; }
 .legend-table tbody th { font-weight: 500; }
-.legend-table tbody small { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; }
+.legend-table tbody small { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .legend-player-button, .legend-player-name, .legend-clan-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .legend-player-button, .legend-player-name { display: block; max-width: 100%; }
 .legend-player-button {
@@ -83,6 +88,7 @@
   color: var(--blue);
   font-size: inherit;
   text-align: left;
+  scroll-margin-top: 3rem;
 }
 .legend-player-button:hover:enabled { background: none; color: #c3ddff; text-decoration: underline; }
 .legend-trophy-score { font-weight: 700; }
@@ -92,6 +98,16 @@
 @media (max-width: 650px) {
   .legend-table th, .legend-table td { padding-inline: 7px; }
   .legend-rank-column { width: 52px; }
+  .legend-clan-column { width: 23%; }
   .legend-town-hall-column { width: 58px; }
   .legend-trophy-column { width: 80px; }
+}
+
+@media (max-width: 420px) {
+  .legend-table th, .legend-table td { padding-inline: 5px; }
+  .legend-rank-column { width: 40px; }
+  .legend-clan-column { width: 20%; }
+  .legend-town-hall-column { width: 50px; }
+  .legend-trophy-column { width: 70px; }
+  .legend-table thead th { font-size: 13px; }
 }

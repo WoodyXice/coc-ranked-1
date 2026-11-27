@@ -134,8 +134,8 @@ export default function LegendLeaderboard({ scope, hasDeveloperToken, accountLoa
         {query && <span role="status">找到 {scoreText(matchingRows.length)} 名玩家</span>}
       </div>}
       {matchingRows.length ? (
-        <div className="legend-table-card" role="region" tabIndex={0} aria-label={`${range}排名表`}>
-          <table className="legend-table">
+        <div className="legend-table-card">
+          <table className="legend-table" aria-label={`${range}排名表`}>
             <colgroup><col className="legend-rank-column" /><col /><col className="legend-clan-column" />
               <col className="legend-town-hall-column" /><col className="legend-trophy-column" /></colgroup>
             <thead><tr><th scope="col">名次</th><th scope="col">村庄</th><th scope="col">部落</th>
