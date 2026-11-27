@@ -1,5 +1,6 @@
 import { useEffect, useId, useState } from "react";
 import BattleLog from "./BattleLog.jsx";
+import PlayerStrategyStats from "./PlayerStrategyStats.jsx";
 import { formatTime } from "./battle-time.mjs";
 import { LeagueBadge, scoreText, Trophy } from "./Standings.jsx";
 import "./temporary-player.css";
@@ -22,20 +23,11 @@ function legendDay(value) {
   return Number.isFinite(epoch) ? new Date(epoch - dayResetOffset).toISOString().slice(0, 10) : "";
 }
 
-function groupByDay(battleViews, today) {
-  const days = new Map([[today, { attacks: [], defenses: [] }]]);
-  for (const kind of Object.keys(directions)) {
-    for (const row of battleViews[kind] ?? []) {
-      const day = legendDay(row.battleTimestamp || row.timestamp);
-      if (!day || day > today) continue;
-      if (!days.has(day)) days.set(day, { attacks: [], defenses: [] });
-      days.get(day)[kind].push(row);
-    }
-  }
-  return days;
+function previousDay(day, offset) {
+  return new Date(Date.parse(`${day}T00:00:00Z`) - offset * 86_400_000).toISOString().slice(0, 10);
 }
 
-function sumDailyTrophies(rows, loss = false) {
+function sumRecordedTrophies(rows, loss = false) {
   if (!rows.length) return null;
   let total = 0;
   for (const row of rows) {
@@ -84,7 +76,7 @@ function BattleDirections({ battles, kind, setKind, logId, daily = false, groupR
         const groupCount = battles.standing?.[direction === "attacks" ? "attackCount" : "defenseCount"];
         const total = daily ? `${count === 0 ? "已查到 " : ""}${count}/${dailyLimit}`
           : groupReport ? `榜单 ${Number.isFinite(groupCount) ? `${scoreText(groupCount)} 场` : "—"} · 明细 ${scoreText(count)} 场`
-            : `已查到 ${count} 场`;
+            : `已收录 ${count} 场`;
         return (
           <button key={direction} type="button" aria-pressed={kind === direction} aria-controls={logId}
             onClick={() => setKind(direction)}>
@@ -101,84 +93,134 @@ function LookupTime({ fetchedAt, label = "查询时间" }) {
   return time === "—" ? null : <p>{label} <time dateTime={fetchedAt}>{time}</time></p>;
 }
 
-function PlayerDay({ result, onLookupPlayer }) {
-  const [selectedDay, setSelectedDay] = useState("");
-  const [kind, setKind] = useState("attacks");
+function HistoryCoverage({ recentCoverage, history, historySaved }) {
+  return (
+    <dl className="history-coverage" aria-label="战报覆盖范围">
+      {Object.entries(directions).map(([kind, label]) => {
+        const recent = recentCoverage?.[kind];
+        return <div key={kind}>
+          <dt>{label}</dt>
+          <dd>{recent ? `本次返回 ${scoreText(recent.count)} 场` : "本次近期日志不可用"}
+            {recent?.oldestAt && <> · 最早 <time dateTime={recent.oldestAt}>{formatTime(recent.oldestAt)}</time></>}
+          </dd>
+          <dd>{historySaved ? "本机已收录" : "本次可查看"} {scoreText(history[kind]?.length ?? 0)} 场</dd>
+        </div>;
+      })}
+    </dl>
+  );
+}
+
+function PlayerHistory({ result, onLookupPlayer }) {
+  const { battleViews, history = battleViews, fetchedAt, weekStart, recentCoverage, historySaved } = result;
+  const defaultMode = result.period === "retained" ? "LEGEND" : "RANKED";
+  const [mode, setMode] = useState(defaultMode);
+  const [selectedRange, setSelectedRange] = useState("");
+  const [kind, setKind] = useState(battleViews.attacks?.length || !battleViews.defenses?.length ? "attacks" : "defenses");
   const logId = useId();
-  const { battleViews, fetchedAt } = result;
   const today = legendDay(Date.now());
-  const battlesByDay = groupByDay(battleViews, today);
-  const days = [...battlesByDay.keys()].sort().reverse();
-  const day = battlesByDay.has(selectedDay) ? selectedDay : today;
-  const battles = battlesByDay.get(day);
-  const attackTrophies = sumDailyTrophies(battles.attacks);
-  const defenseTrophies = sumDailyTrophies(battles.defenses, true);
+  const recentDays = [today, previousDay(today, 1), previousDay(today, 2)];
+  const dateLabels = ["当前", "昨天", "前天"];
+  const modes = new Set([defaultMode]);
+  const days = new Set(recentDays);
+  const archived = { attacks: [], defenses: [] };
+  for (const direction of Object.keys(directions)) {
+    for (const row of history[direction] ?? []) {
+      const day = legendDay(row.battleTimestamp || row.timestamp);
+      if (!day || day > today) continue;
+      const rowMode = row.battleType || defaultMode;
+      modes.add(rowMode);
+      if (rowMode !== mode) continue;
+      days.add(day);
+      archived[direction].push({ row, day });
+    }
+  }
+  const legend = mode === "LEGEND";
+  const fallbackRange = legend ? today : "week";
+  const range = selectedRange === "week" || selectedRange === "all" || days.has(selectedRange) ? selectedRange : fallbackRange;
+  const singleDay = days.has(range);
+  const battles = Object.fromEntries(Object.entries(archived).map(([direction, entries]) => [direction,
+    entries.filter(({ day }) => range === "all" || (range === "week" ? day >= weekStart : day === range)).map(({ row }) => row),
+  ]));
+  const attackTrophies = sumRecordedTrophies(battles.attacks);
+  const defenseTrophies = sumRecordedTrophies(battles.defenses, legend);
   const netTrophies = attackTrophies === null || defenseTrophies === null ? null : attackTrophies + defenseTrophies;
+  const scope = singleDay ? "当日" : "已收录";
+  const strategyRanges = [
+    { key: "recent", label: "本次近期", attacks: (result.recentAttacks ?? []).filter((row) => row.battleType === mode) },
+    { key: "week", label: "本周", attacks: archived.attacks.filter(({ day }) => day >= weekStart).map(({ row }) => row) },
+    { key: "all", label: "全部已收录", attacks: archived.attacks.map(({ row }) => row) },
+  ];
 
   return (
     <>
-      <PlayerProfile result={result} daily />
-      <div className="legend-player-day-bar query-card">
-        <label>
-          联赛日
-          <select value={day} onChange={(event) => setSelectedDay(event.target.value)}>
-            {days.map((date) => <option key={date} value={date}>{date}{date === today ? "（当前）" : ""}</option>)}
-          </select>
-        </label>
-        <BattleDirections battles={battles} kind={kind} setKind={setKind} logId={logId} daily />
-        <p>北京时间 13:00 换日。杯数和场次按官方 API 返回的近期记录统计。</p>
+      <PlayerProfile result={result} daily={defaultMode === "LEGEND"} />
+      <PlayerStrategyStats ranges={strategyRanges} />
+      <div className="legend-player-day-bar legend-player-week-bar query-card">
+        <div className="history-controls">
+          {modes.size > 1 && <label>对战类型
+            <select value={mode} onChange={(event) => setMode(event.target.value)}>
+              {[...modes].map((item) => <option key={item} value={item}>{item === "LEGEND" ? "传奇 I" : "周排位"}</option>)}
+            </select>
+          </label>}
+          <label>联赛日
+            <select value={range} onChange={(event) => setSelectedRange(event.target.value)}>
+              {[...days].sort().reverse().map((date) => {
+                const index = recentDays.indexOf(date);
+                return <option key={date} value={date}>{date}{index >= 0 ? `（${dateLabels[index]}）` : ""}</option>;
+              })}
+              <option value="week">本周</option>
+              <option value="all">全部已收录</option>
+            </select>
+          </label>
+          <BattleDirections battles={battles} kind={kind} setKind={setKind} logId={logId} daily={legend && singleDay} />
+        </div>
+        <HistoryCoverage recentCoverage={recentCoverage} history={history} historySaved={historySaved} />
+        <p>北京时间 13:00 换日。日期和杯数按已收录的战报统计。</p>
         <LookupTime fetchedAt={fetchedAt} />
       </div>
+      <dl className="battle-summary legend-player-week-cups" aria-label={`${scope}杯数`}>
+        <div><dt>{scope}进攻得杯</dt><dd><Trophy value={attackTrophies} /></dd></div>
+        <div><dt>{scope}{legend ? "防守扣杯" : "防守得杯"}</dt><dd><Trophy value={defenseTrophies} /></dd></div>
+        <div><dt>{scope}{legend ? "净杯" : "得杯合计"}</dt><dd><Trophy value={netTrophies} /></dd></div>
+      </dl>
       <div id={logId}>
-        <BattleLog key={`${day}-${kind}`} kind={kind} battleViews={{ ...battleViews, ...battles }}
-          isSample={false} periodLabel="当日" showStanding={false} onLookupPlayer={onLookupPlayer}
-          dailyTrophies={{ attack: attackTrophies, defense: defenseTrophies, net: netTrophies }} />
+        {battles[kind].length ? <BattleLog key={`${mode}-${range}-${kind}`} kind={kind}
+          battleViews={{ ...battleViews, ...battles, defenseTrophyMode: legend ? "lost" : "earned" }}
+          isSample={false} periodLabel={singleDay ? "当日" : range === "week" ? "本周" : "历史"}
+          showStanding={false} onLookupPlayer={onLookupPlayer} />
+          : <div className="empty-card"><p>这段时间暂无已收录的{directions[kind]}记录。</p></div>}
       </div>
     </>
   );
 }
 
 function PlayerWeek({ result, onLookupPlayer }) {
-  const { battleViews, profile, leagueTier, weekStart, fetchedAt, groupReport } = result;
-  const { standing, attacks, defenses } = battleViews;
+  const { battleViews, fetchedAt, groupReport } = result;
+  const { standing, attacks = [], defenses = [] } = battleViews;
   const [kind, setKind] = useState(attacks?.length || !defenses?.length ? "attacks" : "defenses");
   const logId = useId();
-  const showReport = Boolean(groupReport || attacks?.length || defenses?.length);
-  const attackTrophies = groupReport || attacks?.length ? standing?.attackTrophies : null;
-  const defenseTrophies = groupReport || defenses?.length ? standing?.defenseTrophies : null;
-  const totalTrophies = groupReport ? standing?.trophies
-    : Number.isFinite(attackTrophies) && Number.isFinite(defenseTrophies) ? attackTrophies + defenseTrophies : null;
-  const week = groupReport?.week ?? weekStart;
-  const groupTag = groupReport?.groupTag ?? profile?.currentGroupTag;
-  const trophyScope = groupReport ? "小组" : "已查到的";
-  const noBattles = leagueTier?.id === 105000000 ? "该村庄尚未进入排位联赛。"
-    : battleViews.logAvailable === false ? "官方 API 暂无该村庄的公开对战日志。"
-      : `${profile?.currentGroupTag ? "" : "官方 API 未返回本周排位小组。"}本周已查到进攻 0 场、防守 0 场。`;
+  const { week, groupTag } = groupReport;
 
   return (
     <>
       <PlayerProfile result={result} />
+      <PlayerStrategyStats ranges={[{ key: "week", label: "本周小组", attacks }]} />
       <div className="legend-player-day-bar legend-player-week-bar query-card">
-        {showReport && <BattleDirections battles={battleViews} kind={kind} setKind={setKind} logId={logId} groupReport={groupReport} />}
+        <BattleDirections battles={battleViews} kind={kind} setKind={setKind} logId={logId} groupReport={groupReport} />
         {(week || groupTag) && <p>{[week && `${week} 周`, groupTag && `小组 ${groupTag}`].filter(Boolean).join(" · ")}</p>}
-        {groupReport ? <p>杯数和场次来自同一份小组排位榜。明细显示战报收录的对战。</p>
-          : battleViews.logAvailable !== false && <p>杯数和场次按官方 API 返回的近期记录统计。</p>}
-        <LookupTime fetchedAt={fetchedAt} label={groupReport ? "小组战报时间" : undefined} />
+        <p>杯数和场次来自同一份小组排位榜。明细显示战报收录的对战。</p>
+        <LookupTime fetchedAt={fetchedAt} label="小组战报时间" />
       </div>
-      {showReport ? (
-        <>
-          <dl className="battle-summary legend-player-week-cups" aria-label={groupReport ? "小组排位杯数" : "已查到的杯数"}>
-            <div><dt>{trophyScope}进攻得杯</dt><dd><Trophy value={attackTrophies} /></dd></div>
-            <div><dt>{trophyScope}防守得杯</dt><dd><Trophy value={defenseTrophies} /></dd></div>
-            <div><dt>{groupReport ? "小组总杯数" : "已查到的得杯合计"}</dt><dd><Trophy value={totalTrophies} change={!groupReport} /></dd></div>
-          </dl>
-          <div id={logId}>
-            {groupReport && !battleViews[kind]?.length ? <div className="empty-card"><p>这份小组战报未收录该方向的对战明细。</p></div>
-              : <BattleLog key={kind} kind={kind} battleViews={battleViews} isSample={false}
-                periodLabel={groupReport ? "小组" : "近期"} showStanding={false} onLookupPlayer={onLookupPlayer} />}
-          </div>
-        </>
-      ) : <div className="empty-card"><p>{noBattles}</p></div>}
+      <dl className="battle-summary legend-player-week-cups" aria-label="小组排位杯数">
+        <div><dt>小组进攻得杯</dt><dd><Trophy value={standing?.attackTrophies} /></dd></div>
+        <div><dt>小组防守得杯</dt><dd><Trophy value={standing?.defenseTrophies} /></dd></div>
+        <div><dt>小组总杯数</dt><dd><Trophy value={standing?.trophies} change={false} /></dd></div>
+      </dl>
+      <div id={logId}>
+        {!battleViews[kind]?.length ? <div className="empty-card"><p>这份小组战报未收录该方向的对战明细。</p></div>
+          : <BattleLog key={kind} kind={kind} battleViews={battleViews} isSample={false}
+            periodLabel="小组" showStanding={false} onLookupPlayer={onLookupPlayer} />}
+      </div>
     </>
   );
 }
@@ -272,7 +314,7 @@ export default function TemporaryPlayer({ lookup, onLookupPlayer }) {
   const headingId = useId();
   const { result, waiting, error } = lookup;
   const groupReport = result?.groupReport;
-  const PlayerReport = !groupReport && (result?.period === "retained" || result?.leagueTier?.id === 105000036) ? PlayerDay : PlayerWeek;
+  const PlayerReport = groupReport ? PlayerWeek : PlayerHistory;
 
   return (
     <section className="legend-player" aria-labelledby={headingId}>

@@ -89,4 +89,21 @@ export const migrations = [
       `);
     },
   },
+  {
+    version: 3,
+    name: "player battle history",
+    up(db) {
+      db.exec(`
+        CREATE TABLE player_history (
+          player_tag TEXT NOT NULL,
+          direction TEXT NOT NULL CHECK (direction IN ('attacks', 'defenses')),
+          battle_type TEXT NOT NULL CHECK (battle_type IN ('RANKED', 'LEGEND')),
+          id TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          data TEXT NOT NULL,
+          PRIMARY KEY (player_tag, direction, battle_type, id)
+        );
+      `);
+    },
+  },
 ];

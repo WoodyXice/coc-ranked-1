@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { mergePlayerHistory } from "../collector.mjs";
 import { migrations as defaultMigrations } from "./migrations.mjs";
 
 // Runs fn inside one write transaction and rolls back if it throws.
@@ -105,6 +106,57 @@ function createReportStore(db) {
   };
 }
 
+function historyData(row) {
+  const {
+    id, previousIds, timestamp, battleTimestamp, durationSeconds, opponentTag, opponentName,
+    stars, destruction, trophies, trophyDelta, armyShareCode, armySource, army, battleType, trophySource,
+  } = row;
+  return JSON.stringify({
+    id, previousIds, timestamp, battleTimestamp, durationSeconds, opponentTag, opponentName,
+    stars, destruction, trophies, trophyDelta, armyShareCode, armySource, battleType, trophySource,
+    ...(!armyShareCode && army ? { army } : {}),
+  });
+}
+
+function createPlayerHistoryStore(db) {
+  const select = db.prepare("SELECT direction, battle_type, id, data FROM player_history WHERE player_tag = ?");
+  const upsert = db.prepare(`
+    INSERT INTO player_history (player_tag, direction, battle_type, id, updated_at, data) VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT (player_tag, direction, battle_type, id) DO UPDATE SET updated_at = excluded.updated_at, data = excluded.data
+  `);
+  const remove = db.prepare(
+    "DELETE FROM player_history WHERE player_tag = ? AND direction = ? AND battle_type = ? AND id = ?",
+  );
+  const key = (direction, battleType, id) => JSON.stringify([direction, battleType, id]);
+  return {
+    merge(playerTag, recent, fetchedAt = new Date().toISOString()) {
+      const tag = typeof playerTag === "string" ? playerTag.trim().toUpperCase().replace(/^#/, "") : "";
+      if (!/^[A-Z0-9]{2,20}$/.test(tag)) throw new Error("请输入有效的村庄标签。");
+      const player = "#" + tag;
+      return transaction(db, () => {
+        const archived = { attacks: [], defenses: [] };
+        const stored = new Map();
+        for (const entry of select.all(player)) {
+          stored.set(key(entry.direction, entry.battle_type, entry.id), entry);
+          archived[entry.direction].push(JSON.parse(entry.data));
+        }
+        const merged = mergePlayerHistory(recent, archived);
+        for (const [direction, rows] of Object.entries(merged)) {
+          for (const row of rows) {
+            const id = key(direction, row.battleType, row.id);
+            const current = stored.get(id);
+            const data = historyData(row);
+            if (current?.data !== data) upsert.run(player, direction, row.battleType, row.id, fetchedAt, data);
+            stored.delete(id);
+          }
+        }
+        for (const { direction, battle_type: mode, id } of stored.values()) remove.run(player, direction, mode, id);
+        return merged;
+      });
+    },
+  };
+}
+
 function backupFile(file, version) {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   return `${file}.backup-v${version}-${stamp}.db`;
@@ -157,6 +209,7 @@ export function openDatabase(file, { migrations } = {}) {
       schemaVersion: migration.to,
       snapshots: createSnapshotStore(db),
       reports: createReportStore(db),
+      ...(migration.to >= 3 ? { playerHistory: createPlayerHistoryStore(db) } : {}),
       getMeta: (key) => getMeta.get(key)?.value,
       setMeta: (key, value) => setMeta.run(key, String(value)),
       close() {

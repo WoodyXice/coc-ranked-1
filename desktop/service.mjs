@@ -57,9 +57,38 @@ function buildReport(raw) {
   return { raw: classified, report: getReport(classified) };
 }
 
-export async function collectTemporaryPlayer(input, options) {
-  const result = await fetchTemporaryPlayer(input, options);
-  return { ...result, battleViews: classifyBattleViews(result.battleViews) };
+export async function collectTemporaryPlayer(input, { playerHistory, ...requestOptions } = {}) {
+  const result = await fetchTemporaryPlayer(input, requestOptions);
+  const recent = result.history;
+  const coverage = (rows) => ({
+    count: rows.length,
+    oldestAt: rows.reduce((oldest, row) => {
+      const time = row.battleTimestamp || row.timestamp;
+      return time && (!oldest || time < oldest) ? time : oldest;
+    }, null),
+  });
+  let history = recent;
+  let historySaved = false;
+  if (playerHistory) {
+    try {
+      history = playerHistory.merge(result.battleViews.playerTag, recent, result.fetchedAt);
+      historySaved = true;
+    } catch {
+      console.warn("Could not save the player battle history.");
+    }
+  }
+  return {
+    ...result,
+    battleViews: classifyBattleViews(result.battleViews),
+    history: classifyBattleViews(history),
+    recentAttacks: withStrategies(recent.attacks).map(({ battleType, strategy, stars, destruction }) => ({
+      battleType, strategy, stars, destruction,
+    })),
+    recentCoverage: result.battleViews.logAvailable === false ? null : {
+      attacks: coverage(recent.attacks), defenses: coverage(recent.defenses),
+    },
+    historySaved,
+  };
 }
 
 export async function collectGroupedPlayer(input) {

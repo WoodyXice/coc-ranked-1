@@ -1,4 +1,6 @@
 export const releasePage = "https://github.com/fangjog/coc-ranked/releases/latest";
+const latestReleaseApi = "https://api.github.com/repos/fangjog/coc-ranked/releases/latest";
+const stableVersion = /^(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})$/;
 
 const messages = {
   idle: "可检查 GitHub 发布的新版本。",
@@ -24,15 +26,23 @@ async function loadElectronUpdater() {
   return updaterPackage.autoUpdater;
 }
 
+function isNewerVersion(candidate, current) {
+  const next = candidate.split(".").map(Number);
+  const installed = current.split(".").map(Number);
+  const firstDifference = next.findIndex((part, index) => part !== installed[index]);
+  return firstDifference >= 0 && next[firstDifference] > installed[firstDifference];
+}
+
 export function createUpdater({
   app,
   publish,
   platform = process.platform,
   portable = Boolean(process.env.PORTABLE_EXECUTABLE_FILE),
   loadUpdater = loadElectronUpdater,
+  fetchImpl = globalThis.fetch,
 }) {
   const mode = !app.isPackaged ? "development" : platform !== "win32" ? "unsupported" : portable ? "portable" : "installed";
-  const status = mode === "installed" ? "idle" : mode === "development" ? "development" : "unsupported";
+  const status = mode === "installed" || mode === "portable" ? "idle" : mode === "development" ? "development" : "unsupported";
   let state = Object.freeze({
     mode, status, currentVersion: app.getVersion(), availableVersion: null, progress: null,
     failedOperation: null, message: messages[mode] || messages[status],
@@ -78,9 +88,24 @@ export function createUpdater({
   }
 
   async function checkForUpdates() {
-    if (mode !== "installed" || !["idle", "current", "available", "error"].includes(state.status)) return state;
+    if ((mode !== "installed" && mode !== "portable") || !["idle", "current", "available", "error"].includes(state.status)) return state;
     change("checking", { availableVersion: null, progress: null });
     try {
+      if (mode === "portable") {
+        const response = await fetchImpl(latestReleaseApi, {
+          headers: { Accept: "application/vnd.github+json", "User-Agent": "COC-Ranked", "X-GitHub-Api-Version": "2026-03-10" },
+          redirect: "error",
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!response.ok) return fail("check");
+        const release = await response.json();
+        const version = typeof release?.tag_name === "string" && release.tag_name.startsWith("v") ? release.tag_name.slice(1) : "";
+        if (release?.draft !== false || release?.prerelease !== false
+          || !stableVersion.test(version) || !stableVersion.test(state.currentVersion)) return fail("check");
+        return isNewerVersion(version, state.currentVersion) ? change("available", {
+          availableVersion: version, message: "发现新版本，可在 GitHub 发布页下载新的便携版。",
+        }) : change("current");
+      }
       const result = await (await getUpdater()).checkForUpdates();
       if (!result) return fail("check");
       if (!result.isUpdateAvailable) return change("current");
@@ -93,6 +118,7 @@ export function createUpdater({
   }
 
   async function downloadUpdate() {
+    if (mode !== "installed") return state;
     const retry = state.status === "error" && state.failedOperation === "download";
     if (state.status !== "available" && !retry) return state;
     change("downloading", { progress: 0 });
@@ -105,6 +131,7 @@ export function createUpdater({
   }
 
   async function installUpdate() {
+    if (mode !== "installed") return state;
     const retry = state.status === "error" && state.failedOperation === "install";
     if (state.status !== "downloaded" && !retry) return state;
     change("installing", { progress: null });

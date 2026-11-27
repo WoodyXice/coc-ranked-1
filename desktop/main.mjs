@@ -167,7 +167,9 @@ function createWindow(database, storageWarnings) {
   bind(window, "coc:legend-locations", async () => fetchLegendLocations({ token: await savedDeveloperToken() }));
   bind(window, "coc:temporary-player", async (input) => {
     const group = input?.group;
-    if (!group) return collectTemporaryPlayer({ token: await savedDeveloperToken(), playerTag: input?.playerTag });
+    if (!group) return collectTemporaryPlayer({ token: await savedDeveloperToken(), playerTag: input?.playerTag }, {
+      playerHistory: database.playerHistory,
+    });
     const raw = displayedReport?.raw;
     const fetchedAt = displayedReport?.fetchedAt;
     if (raw?.source !== "api" || raw.groupTag !== group.groupTag || raw.seasonId !== group.seasonId

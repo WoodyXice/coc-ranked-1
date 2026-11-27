@@ -60,6 +60,35 @@ export function weekWinRate(standing) {
   return Number.isInteger(wins) && Number.isInteger(losses) && wins + losses > 0 ? wins / (wins + losses) : null;
 }
 
+export function playerStrategyStats(attacks = []) {
+  const groups = new Map();
+  for (const attack of attacks) {
+    if (!attack || typeof attack !== "object" || Array.isArray(attack)) continue;
+    const label = typeof attack.strategy === "string" ? attack.strategy.trim() : "";
+    const strategy = label && !/^(?:未分类|未识别(?:流派)?|未知|unknown|unclassified)$/i.test(label) ? label : null;
+    const stats = groups.get(strategy) ?? {
+      strategy, count: 0, scoredCount: 0, threeStarCount: 0, destructionCount: 0, destructionTotal: 0,
+    };
+    stats.count += 1;
+    if (Number.isInteger(attack.stars) && attack.stars >= 0 && attack.stars <= 3) {
+      stats.scoredCount += 1;
+      stats.threeStarCount += Number(attack.stars === 3);
+    }
+    if (Number.isFinite(attack.destruction) && attack.destruction >= 0 && attack.destruction <= 100) {
+      stats.destructionCount += 1;
+      stats.destructionTotal += attack.destruction;
+    }
+    groups.set(strategy, stats);
+  }
+  return [...groups.values()].map(({ destructionTotal, ...stats }) => ({
+    ...stats,
+    threeStarRate: stats.scoredCount ? stats.threeStarCount / stats.scoredCount : null,
+    averageDestruction: stats.destructionCount ? destructionTotal / stats.destructionCount : null,
+  })).sort((a, b) => b.count - a.count
+    || Number(a.strategy === null) - Number(b.strategy === null)
+    || (a.strategy ?? "").localeCompare(b.strategy ?? "", "zh-CN"));
+}
+
 function carriedTotal(item) {
   return item.players.reduce((sum, player) => sum + player.carried, 0);
 }

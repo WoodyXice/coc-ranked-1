@@ -1,0 +1,16 @@
+.update-notice {
+  width: min(390px, calc(100% - 32px));
+  max-height: calc(100% - 32px);
+  padding: 22px 24px;
+  border: 1px solid #454956;
+  border-radius: 12px;
+  background: var(--surface);
+  color: inherit;
+  box-shadow: 0 16px 50px #0008;
+}
+
+.update-notice::backdrop { background: #090a0bc4; }
+.update-notice h2 { margin: 0 0 10px; font-size: 24px; }
+.update-notice p { margin: 0; color: var(--soft); line-height: 1.5; overflow-wrap: anywhere; }
+.update-notice strong { color: #d6e6ff; font-variant-numeric: tabular-nums; }
+.update-notice .update-actions { justify-content: flex-end; margin-top: 20px; }

@@ -97,6 +97,14 @@
 .legend-player-week-bar { grid-template-columns: minmax(0, 1fr); justify-items: start; }
 .legend-player .legend-player-week-cups { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 
+.history-controls { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px 12px; min-width: 0; max-width: 100%; }
+.history-controls select { min-width: 118px; }
+.history-controls .legend-player-directions { margin-bottom: 0; }
+.history-coverage { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 5px 0 0; font-size: 13px; }
+.history-coverage > div { min-width: 0; padding-inline-start: 9px; border-inline-start: 2px solid #354b65; }
+.history-coverage dt { margin-bottom: 3px; color: var(--soft); font-weight: 600; }
+.history-coverage dd { margin: 0; color: var(--muted); line-height: 1.5; overflow-wrap: anywhere; }
+
 .legend-player-day-bar p { margin: 0; }
 .legend-player-directions { flex-wrap: wrap; justify-self: start; min-width: 0; max-width: 100%; }
 .legend-player-directions button { white-space: normal; }

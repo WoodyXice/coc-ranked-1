@@ -656,9 +656,11 @@ function mergeBattleDetails(recorded, candidate) {
   const army = betterArmy(candidate, recorded)
     ? { armyShareCode: candidate.armyShareCode, armySource: candidate.armySource }
     : {};
+  const decodedArmy = recorded.army ?? candidate.army;
   return {
     ...recorded,
     ...army,
+    ...(decodedArmy ? { army: decodedArmy } : {}),
     durationSeconds: recorded.durationSeconds ?? candidate.durationSeconds ?? null,
     battleTimestamp: recorded.battleTimestamp ?? candidate.battleTimestamp,
   };
@@ -687,15 +689,23 @@ function reuseGroupBattleDetails(battles, groupAttacks, window = matchWindow) {
   }
 }
 
+const trophySourceRank = { calculated: 1, api: 2, group: 3 };
+
+function trophyEvidence(battle) {
+  return Number.isFinite(battle.trophies) ? (trophySourceRank[battle.trophySource] ?? 0) : -1;
+}
+
 function mergeSameBattle(primary, other) {
   const previousIds = [...new Set([
     ...(primary.previousIds ?? []), other.id, ...(other.previousIds ?? []),
   ])].filter((id) => id !== primary.id);
+  const bestTrophies = trophyEvidence(other) > trophyEvidence(primary) ? other : primary;
   return {
     ...mergeBattleDetails(primary, other),
     playerName: primary.playerName || other.playerName,
     opponentName: primary.opponentName || other.opponentName,
-    trophies: primary.trophies ?? other.trophies ?? null,
+    trophies: bestTrophies.trophies ?? null,
+    trophySource: bestTrophies.trophySource,
     ...(previousIds.length ? { previousIds } : {}),
   };
 }
@@ -720,7 +730,8 @@ function mergeBattles(current, cached) {
     if (!whole || !precise) continue;
     const firstCups = whole.battle.trophies;
     const secondCups = precise.battle.trophies;
-    if (Number.isFinite(firstCups) && Number.isFinite(secondCups) && firstCups !== secondCups) continue;
+    if (Number.isFinite(firstCups) && Number.isFinite(secondCups) && firstCups !== secondCups
+        && trophyEvidence(whole.battle) === trophyEvidence(precise.battle)) continue;
     complete.set(precise.battle.id, mergeSameBattle(precise.battle, whole.battle));
     complete.delete(whole.battle.id);
   }
@@ -781,29 +792,33 @@ function newestFirst(a, b) {
   return b.timestamp.localeCompare(a.timestamp) || a.id.localeCompare(b.id);
 }
 
+function projectBattle(battle, isDefense, opponentTag, opponentName) {
+  return {
+    id: battle.id,
+    ...(battle.previousIds?.length ? { previousIds: battle.previousIds } : {}),
+    timestamp: battle.timestamp,
+    battleTimestamp: battle.battleTimestamp ?? null,
+    durationSeconds: battle.durationSeconds ?? null,
+    opponentTag,
+    opponentName: opponentName ?? '',
+    stars: battle.stars,
+    destruction: battle.destruction,
+    trophies: battle.trophies ?? null,
+    trophyDelta: battle.trophies == null ? null
+      : (isDefense && battle.battleType === 'LEGEND' && battle.trophies > 0 ? -battle.trophies : battle.trophies),
+    armyShareCode: battle.armyShareCode ?? '',
+    armySource: battle.armySource ?? '',
+    army: decodeArmyShareCode(battle.armyShareCode) ?? battle.army ?? null,
+    ...(battle.battleType ? { battleType: battle.battleType } : {}),
+    ...(battle.trophySource ? { trophySource: battle.trophySource } : {}),
+  };
+}
+
 function buildBattleViews(member, playerAttacks, playerDefenses, attackTelemetry, defenseTelemetry) {
-  function rows(battles, isDefense) {
-    return battles.sort(newestFirst).map((battle) => ({
-      id: battle.id,
-      ...(battle.previousIds?.length ? { previousIds: battle.previousIds } : {}),
-      timestamp: battle.timestamp,
-      battleTimestamp: battle.battleTimestamp ?? null,
-      durationSeconds: battle.durationSeconds ?? null,
-      opponentTag: isDefense ? battle.playerTag : battle.opponentTag,
-      opponentName: (isDefense ? battle.playerName : battle.opponentName) ?? '',
-      stars: battle.stars,
-      destruction: battle.destruction,
-      trophies: battle.trophies ?? null,
-      trophyDelta: battle.trophies == null ? null
-        : (isDefense && battle.battleType === 'LEGEND' ? -battle.trophies : battle.trophies),
-      armyShareCode: battle.armyShareCode,
-      armySource: battle.armySource ?? '',
-      army: decodeArmyShareCode(battle.armyShareCode) ?? battle.army ?? null,
-      ...(battle.battleType ? { battleType: battle.battleType } : {}),
-    }));
-  }
-  const attacks = rows(playerAttacks, false);
-  const defenses = rows(playerDefenses, true);
+  const attacks = playerAttacks.sort(newestFirst).map((battle) =>
+    projectBattle(battle, false, battle.opponentTag, battle.opponentName));
+  const defenses = playerDefenses.sort(newestFirst).map((battle) =>
+    projectBattle(battle, true, battle.playerTag, battle.playerName));
   return {
     playerTag: member.playerTag,
     playerName: member.playerName,
@@ -826,8 +841,9 @@ function capturedGroupRows(rows, ownerField, memberTag, start, end) {
     const score = battleScore({ stars: row.stars, destructionPercentage: row.destruction });
     if (!Number.isFinite(epoch) || epoch < start || epoch >= end || !playerTag || !opponentTag || !score) return [];
     return [{
-      ...row, playerTag, opponentTag, timestamp: new Date(epoch).toISOString(),
+      ...row, playerTag, opponentTag, timestamp: new Date(epoch).toISOString(), battleType: 'RANKED',
       trophies: rankedBattleTrophies(row.trophies),
+      trophySource: 'group',
       previousIds: Array.isArray(row.previousIds) ? row.previousIds : undefined,
     }];
   });
@@ -928,13 +944,15 @@ function recentPlayerBattles(logs, member, { start = -Infinity, end = Infinity, 
       continue;
     }
     if (battle.armyShareCode) battle.armySource = row.attack ? 'attack' : 'defense';
+    const trophySource = battle.trophies === null ? 'calculated' : 'api';
     if (battle.trophies === null) {
       const gained = attackerTrophies(battle.stars, battle.destruction);
       battle.trophies = !row.attack && mode === 'RANKED' ? 40 - gained : gained;
     }
-    const recorded = ledger[key].get(battle.id);
-    const current = { ...battle, battleType: mode, battleTimestamp: battle.timestamp };
-    ledger[key].set(battle.id, recorded ? mergeBattleDetails(current, recorded) : current);
+    const entryKey = `${mode}|${battle.id}`;
+    const recorded = ledger[key].get(entryKey);
+    const current = { ...battle, battleType: mode, battleTimestamp: battle.timestamp, trophySource };
+    ledger[key].set(entryKey, recorded ? mergeSameBattle(current, recorded) : current);
   }
 
   return { attackRows: [...ledger.attacks.values()], defenseRows: [...ledger.defenses.values()], malformed };
@@ -1238,6 +1256,46 @@ function currentCompetitiveMode(logs, start, now) {
   return latestMode;
 }
 
+function recentHistory(logs, member, epoch) {
+  const { attackRows, defenseRows } = recentPlayerBattles(logs, member, { end: epoch + 1 });
+  const deduplicate = (rows) => [...Map.groupBy(rows, (row) => row.battleType).values()]
+    .flatMap((matches) => mergeBattles(matches, []).rows);
+  const { attacks, defenses } = buildBattleViews(member, deduplicate(attackRows), deduplicate(defenseRows));
+  return { attacks, defenses };
+}
+
+export function mergePlayerHistory(recent, archived) {
+  function prepare(rows) {
+    return (Array.isArray(rows) ? rows : []).flatMap((row) => {
+      const battleType = battleMode(row?.battleType);
+      const opponentTag = normalizeTag(row?.opponentTag);
+      const epoch = timestamp(row?.timestamp || row?.battleTimestamp);
+      if ((battleType !== 'RANKED' && battleType !== 'LEGEND') || !opponentTag || !Number.isFinite(epoch)
+          || typeof row.id !== 'string' || !row.id
+          || !battleScore({ stars: row.stars, destructionPercentage: row.destruction })) return [];
+      return [{
+        ...row, battleType, opponentTag, timestamp: new Date(epoch).toISOString(),
+        trophies: rankedBattleTrophies(row.trophies ?? row.trophyDelta),
+        previousIds: Array.isArray(row.previousIds) ? row.previousIds : undefined,
+      }];
+    });
+  }
+
+  function merge(recentRows, archivedRows, defense) {
+    const current = Map.groupBy(prepare(recentRows), (row) => row.battleType);
+    const cached = Map.groupBy(prepare(archivedRows), (row) => row.battleType);
+    return ['RANKED', 'LEGEND']
+      .flatMap((mode) => mergeBattles(current.get(mode) ?? [], cached.get(mode) ?? []).rows)
+      .sort(newestFirst)
+      .map((row) => projectBattle(row, defense, row.opponentTag, row.opponentName));
+  }
+
+  return {
+    attacks: merge(recent?.attacks, archived?.attacks, false),
+    defenses: merge(recent?.defenses, archived?.defenses, true),
+  };
+}
+
 export async function fetchTemporaryPlayer(
   { token, playerTag: rawTag } = {},
   { fetchImpl = globalThis.fetch, requestIntervalMs = 100, now } = {},
@@ -1273,7 +1331,7 @@ export async function fetchTemporaryPlayer(
   const legendMode = confirmedLegend || (!leagueTier && !profile.currentGroupTag
     && currentCompetitiveMode(logs, start, epoch) === 'LEGEND');
   const window = legendMode
-    ? { battleType: 'LEGEND' }
+    ? { battleType: 'LEGEND', end: epoch + 1 }
     : { battleType: 'RANKED', start, end: Math.min(start + 7 * day, epoch + 1) };
   const { attackRows, defenseRows, malformed } = recentPlayerBattles(logs, profile, window);
   const attacks = mergeBattles(attackRows, []).rows;
@@ -1303,6 +1361,7 @@ export async function fetchTemporaryPlayer(
   }
   return {
     battleViews,
+    history: recentHistory(logs, profile, epoch),
     profile,
     leagueTier,
     weekStart,

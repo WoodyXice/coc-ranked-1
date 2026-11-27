@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fetchLegendLeaderboard, fetchLegendLocations, fetchTemporaryPlayer } from "../collector.mjs";
+import { fetchLegendLeaderboard, fetchLegendLocations, fetchTemporaryPlayer, mergePlayerHistory } from "../collector.mjs";
 
 const mockToken = "fixture-developer-token";
 const country = 32000056;
@@ -160,18 +160,20 @@ test("an arbitrary Legend I player gets strictly Legend logs across week reset w
   assert.equal(battleViews.defenses[0].trophyDelta, -26);
   assert.equal(battleViews.defenses[0].durationSeconds, 158);
   assert.equal(battleViews.telemetry.defenses.malformed, 1);
+  assert.deepEqual(data.history.attacks.map(({ battleType }) => battleType), ["RANKED", "LEGEND", "LEGEND"]);
   assert.deepEqual(calls.map(({ path }) => path), [playerPath, battleLogPath]);
 });
 
-test("temporary lookup for a weekly tier reads only this week's Ranked results and public profile", async () => {
+test("temporary lookup keeps the weekly summary and exposes history from both competitive modes", async () => {
   const { calls, options } = apiFixture({
     [playerPath]: { name: " Fixture weekly player ", townHallLevel: 18, trophies: 940, currentLeagueGroupTag: "#GROUP1",
       clan: { tag: "#CLAN1", name: " Fixture Clan " }, leagueTier: { id: 105000035 },
       legendStatistics: { currentSeason: { rank: 31, trophies: 5900 } } },
     [battleLogPath]: { items: [
-      battleLogRow("20261123T045959.999Z", { battleType: "ranked", armyShareCode: "u10x132" }),
+      battleLogRow("20261123T045900.000Z", { battleType: "ranked", armyShareCode: "u10x132" }),
       battleLogRow("20261123T050000.000Z", { battleType: "ranked", battleTime: 135, armyShareCode: "u9x80" }),
       battleLogRow("20261124T070000.000Z", { attack: false, battleType: "ranked", battleTime: 154, armyShareCode: "u6x147" }),
+      battleLogRow("20261124T070000.000Z", { attack: false, battleType: "legend", battleTime: 145, armyShareCode: "u10x132" }),
       battleLogRow("20261125T070000.000Z", { battleType: "legend", armyShareCode: "u10x132" }),
       battleLogRow("20261125T070200.000Z", { battleType: "homeVillage" }),
       battleLogRow("20261126T010000.000Z", { battleType: "ranked" }),
@@ -194,6 +196,13 @@ test("temporary lookup for a weekly tier reads only this week's Ranked results a
   assert.equal(battleViews.standing.attackCount, 1);
   assert.equal(battleViews.standing.defenseTrophies, 14);
   assert.equal(battleViews.standing.trophies, 40);
+  assert.deepEqual(result.history.attacks.map(({ battleType, timestamp }) => [battleType, timestamp]), [
+    ["LEGEND", "2026-11-25T07:00:00.000Z"],
+    ["RANKED", "2026-11-23T05:00:00.000Z"],
+    ["RANKED", "2026-11-23T04:59:00.000Z"],
+  ]);
+  assert.deepEqual(new Map(result.history.defenses.map(({ battleType, trophyDelta }) => [battleType, trophyDelta])),
+    new Map([["RANKED", 14], ["LEGEND", -26]]));
   assert.deepEqual(calls.map(({ path }) => path), [playerPath, battleLogPath]);
 });
 
@@ -218,6 +227,7 @@ test("an unknown tier requires recent current-week Legend evidence to use the re
   assert.equal(oldOnly.period, "week");
   assert.equal(oldOnly.battleViews.attacks.length, 0);
   assert.equal(oldOnly.battleViews.logAvailable, true);
+  assert.equal(oldOnly.history.attacks[0].battleType, "LEGEND");
 
   const activeWeekly = await lookup({}, [currentLegend, latestRanked]);
   assert.equal(activeWeekly.period, "week");
@@ -240,6 +250,7 @@ test("an unranked profile is still available when official logs are empty or una
   assert.equal(publicOnly.battleViews.logAvailable, false);
   assert.equal(publicOnly.battleViews.standing, null);
   assert.deepEqual(publicOnly.battleViews.attacks, []);
+  assert.deepEqual(publicOnly.history, { attacks: [], defenses: [] });
   assert.deepEqual(missing.calls.map(({ path }) => path), [playerPath, battleLogPath]);
 
   const empty = apiFixture({ [playerPath]: profile, [battleLogPath]: { items: [] } });
@@ -250,4 +261,38 @@ test("an unranked profile is still available when official logs are empty or una
 
   const unauthorized = apiFixture({ [playerPath]: profile, [battleLogPath]: new Response(null, { status: 403 }) });
   await assert.rejects(fetchTemporaryPlayer({ token: mockToken, playerTag }, unauthorized.options), { status: 403 });
+});
+
+test("stored player history keeps old battles and merges rounded copies within the same mode and direction", () => {
+  const base = { opponentTag: "#OPPONENT", stars: 2, destruction: 80 };
+  const day = "2026-11-24T07:00:00";
+  const recentDefense = {
+    ...base, id: "recent-precise", battleType: "RANKED", timestamp: day + ".163Z",
+    trophies: 14, trophyDelta: 14, trophySource: "calculated", durationSeconds: 154,
+  };
+  const archivedDefense = {
+    ...base, id: "archive-rounded", battleType: "RANKED", timestamp: day + ".000Z",
+    trophies: 15, trophySource: "group", armyShareCode: "u9x80", armySource: "attack",
+  };
+  const otherMode = {
+    ...recentDefense, battleType: "LEGEND", trophies: 26, trophyDelta: -26, trophySource: "api",
+  };
+  const pastAttack = {
+    ...base, id: "archive-previous-week", battleType: "RANKED", timestamp: "2026-11-22T09:00:00Z", trophies: 26,
+  };
+  const history = mergePlayerHistory(
+    { attacks: [], defenses: [recentDefense, otherMode] },
+    { attacks: [pastAttack], defenses: [archivedDefense] },
+  );
+  assert.deepEqual(history.attacks.map(({ id, trophyDelta }) => [id, trophyDelta]), [[pastAttack.id, 26]]);
+  assert.equal(history.defenses.length, 2);
+  const grouped = history.defenses.find(({ battleType }) => battleType === "RANKED");
+  assert.equal(grouped.id, recentDefense.id);
+  assert.equal(grouped.timestamp, recentDefense.timestamp);
+  assert.equal(grouped.trophyDelta, 15);
+  assert.equal(grouped.trophySource, "group");
+  assert.equal(grouped.durationSeconds, 154);
+  assert.equal(grouped.army.troops[0].name, "Super Bowler");
+  assert.deepEqual(grouped.previousIds, [archivedDefense.id]);
+  assert.equal(history.defenses.find(({ battleType }) => battleType === "LEGEND").trophyDelta, -26);
 });

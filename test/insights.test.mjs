@@ -4,7 +4,7 @@ import ExcelJS from "exceljs";
 import { getReport } from "../analytics.mjs";
 import { decodeArmyShareCode } from "../collector.mjs";
 import { workbookBytes } from "../files.mjs";
-import { armySets, attacksWithEquipment, defenseRanks, equipmentUsage, myAttacksByOpponent } from "../insights.mjs";
+import { armySets, attacksWithEquipment, defenseRanks, equipmentUsage, myAttacksByOpponent, playerStrategyStats } from "../insights.mjs";
 
 function strategyOf(code) {
   return getReport({ source: "api", attacks: [{ id: "x", armyShareCode: code }] }).attacks[0].strategy;
@@ -29,6 +29,34 @@ test("my attacks are grouped by opponent", () => {
     { opponentTag: "#A", stars: 2, destruction: 80, trophies: 20, timestamp: "2026-11-24T01:00:00Z" },
   ] });
   assert.deepEqual(mine.get("#A").map((r) => [r.stars, r.trophies]), [[2, 20], [3, 40]]);
+});
+
+test("player strategy metrics keep distinct unknowns and use each observed score denominator", () => {
+  const stats = playerStrategyStats([
+    { strategy: " 天女蓝胖 ", stars: 3, destruction: 100 },
+    { strategy: "天女蓝胖", stars: 2, destruction: null },
+    { strategy: "天女蓝胖", stars: null, destruction: 80 },
+    { strategy: "天女蓝胖", stars: 4, destruction: 101 },
+    { strategy: "其他", stars: 0, destruction: 0 },
+    { strategy: "其他蓝胖", stars: null, destruction: null },
+    { strategy: "未分类", stars: null, destruction: 50 },
+    { strategy: "", stars: 0 },
+    { stars: 3, destruction: 100 },
+    null,
+  ]);
+  assert.deepEqual(stats.map(({ strategy, count }) => [strategy, count]),
+    [["天女蓝胖", 4], [null, 3], ["其他", 1], ["其他蓝胖", 1]]);
+  assert.deepEqual(stats[0], {
+    strategy: "天女蓝胖", count: 4, scoredCount: 2, threeStarCount: 1, destructionCount: 2,
+    threeStarRate: 0.5, averageDestruction: 90,
+  });
+  assert.equal(stats[1].averageDestruction, 75);
+  assert.equal(stats[1].threeStarRate, 0.5);
+  assert.equal(stats[2].threeStarRate, 0);
+  assert.equal(stats[2].averageDestruction, 0);
+  assert.equal(stats[3].threeStarRate, null);
+  assert.equal(stats[3].averageDestruction, null);
+  assert.deepEqual(playerStrategyStats(), []);
 });
 
 test("equipment usage groups gear under its hero and computes rates", () => {
