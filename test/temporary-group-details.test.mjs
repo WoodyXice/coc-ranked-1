@@ -129,3 +129,61 @@ test("temporary group cache shares loads between opens, enforces the verified pl
   await assert.rejects(stale, /已切换/);
   await assert.rejects(service.fetch(other, token), /重新查询/);
 });
+
+test("a temporary group's ranking, gear and style chart share one load and their own valid sample sizes", async () => {
+  let requests = 0;
+  const rows = [
+    { playerTag: "#FIRST", rank: 1, attackCount: 2 },
+    { playerTag: scope.playerTag, rank: 2, attackCount: 1 },
+  ];
+  const lineup = { armyShareCode: "u8x8", playerTag: "#FIRST", stars: 3, destruction: 100 };
+  const service = createTemporaryGroupService({ now: () => now, collect: async () => {
+    requests++;
+    return { ...scope, rows, partial: true, attacks: [
+      { ...lineup, id: "complete" },
+      { ...lineup, id: "no-stars", stars: null, destruction: null },
+      { id: "no-army", playerTag: scope.playerTag, stars: 2, destruction: 85 },
+    ] };
+  } });
+  service.remember({ battleViews: { playerTag: scope.playerTag }, weeklyLeaderboard: { ...scope, rows } });
+  const board = await service.fetch(scope, token);
+  assert.deepEqual(board.rows, rows);
+  assert.equal(board.attacks.length, 2);
+  assert.ok(board.attacks.every(battle => battle.army.troops.length && battle.strategy === "龙流"));
+  const summary = board.metaReport;
+  assert.equal(summary.groupTag, scope.groupTag);
+  assert.equal(summary.week, scope.week);
+  assert.equal(summary.total, 2);
+  assert.equal(summary.telemetry.expectedAttacks, 3);
+  assert.deepEqual(summary.rows.map(r => [r.name, r.count, r.scoredCount, r.threeStarCount, r.threeStarRate]),
+    [["龙流", 2, 1, 1, 1]]);
+  assert.equal((await service.fetch(scope, token)).metaReport, summary);
+  assert.equal(requests, 1);
+});
+
+test("returning to a verified village can first expand its group after visiting another village", async () => {
+  const other = { ...scope, playerTag: "#OTHER", groupTag: "#GROUP2" };
+  const calls = [];
+  const service = createTemporaryGroupService({ now: () => now, collect: async ({ playerTag, groupTag }) => {
+    calls.push(groupTag);
+    return { rows: [{ playerTag }], attacks: [], partial: false };
+  } });
+  function visit(input, members = [input.playerTag]) {
+    service.remember({ battleViews: { playerTag: input.playerTag },
+      weeklyLeaderboard: { ...input, rows: members.map(playerTag => ({ playerTag })) } });
+  }
+  visit(scope);
+  visit(other);
+  await service.fetch(other, token);
+  await service.fetch(scope, token);
+  await service.fetch(other, token);
+  await service.fetch(scope, token);
+  assert.deepEqual(calls, [other.groupTag, scope.groupTag]);
+  // A verified membership cannot be reused after a move or an updated roster that excludes it.
+  visit({ ...scope, groupTag: "#MOVED" });
+  await assert.rejects(service.fetch(scope, token), /重新查询/);
+  visit({ ...other, playerTag: "#NEW" });
+  await assert.rejects(service.fetch(other, token), /重新查询/);
+  service.remember({ battleViews: { playerTag: "#NEW" }, weeklyLeaderboard: null });
+  await assert.rejects(service.fetch({ ...other, playerTag: "#NEW" }, token), /重新查询/);
+});

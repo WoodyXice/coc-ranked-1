@@ -1,0 +1,28 @@
+.saved-villages { min-width: 0; }
+.saved-villages-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 20px; }
+.saved-villages-header h2, .saved-villages-header h3 { margin: 0; }
+.saved-villages-header h2 { font-size: 24px; }
+.saved-villages-header h3 { font-size: 18px; }
+.saved-villages .account-editor { margin-bottom: 14px; }
+.village-list { margin: 12px 0 0; padding: 0; list-style: none; }
+.village-list li { display: flex; align-items: center; gap: 10px 16px; min-width: 0; padding: 7px 0; border-top: 1px solid var(--line); }
+.village-list .village-open {
+  display: flex; gap: 5px 12px; flex-wrap: wrap; align-items: center; flex: 1 1 auto;
+  min-width: 0; padding: 4px 6px; text-align: start; white-space: normal;
+  color: inherit; border-color: transparent; background: transparent;
+}
+.village-list .village-open:hover:enabled { background: color-mix(in srgb, var(--blue) 9%, transparent); border-color: transparent; }
+.village-identity { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.village-identity strong { color: var(--blue); }
+.village-list small, .village-list time, .current-village-label { font-size: 12px; color: var(--muted); }
+.current-village-label { padding: 2px 7px; border: 1px solid var(--line); border-radius: 4px; color: var(--soft); }
+.village-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.village-list .village-actions button, .village-list .village-save { min-height: 34px; }
+.village-empty { margin: 18px 0 0; color: var(--muted); }
+.saved-history { margin-top: 24px; }
+@media (max-width: 560px) {
+  .saved-villages-header .account-actions { gap: 5px; }
+  .village-list li { flex-wrap: wrap; gap: 4px 8px; }
+  .village-actions { margin-left: auto; }
+  .village-list time { margin-left: auto; }
+}

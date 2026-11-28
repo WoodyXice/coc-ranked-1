@@ -41,6 +41,22 @@ test("leaderboard requests share an in-flight fetch per location, and manual ref
   assert.deepEqual(calls, [["global", false], [32000000, false], ["global", true]]);
 });
 
+test("both leaderboard freshness windows stop at the league-day boundary and respect the source capture time", async () => {
+  let now = Date.parse("2026-11-28T04:59:59Z");
+  let loads = 0;
+  const cache = createLegendRequestCache(() => {
+    loads++;
+    return { fetchedAt: new Date(now - 1000).toISOString() };
+  }, () => now);
+  await cache.request("global");
+  assert.equal(cache.read("global").fetchedAt, now - 1000);
+  assert.equal(cache.request("global"), null);
+  now += 2000;
+  await cache.request("global");
+  assert.equal(loads, 2);
+  assert.equal(cache.request("global"), null);
+});
+
 test("a failed refresh retains the old leaderboard and retries after an expired tab return", async () => {
   let now = 0;
   let failure = false;

@@ -89,6 +89,20 @@ export function playerStrategyStats(attacks = []) {
     || (a.strategy ?? "").localeCompare(b.strategy ?? "", "zh-CN"));
 }
 
+export function playerStrategySamples(attacks, strategy) {
+  const battles = (attacks ?? []).filter(battle => typeof battle?.strategy === "string" && battle.strategy.trim() === strategy
+    && Number.isInteger(battle.stars) && battle.stars >= 0 && battle.stars <= 3);
+  const time = battle => Date.parse(battle.battleTimestamp || battle.timestamp) || 0;
+  const destruction = battle => Number.isFinite(battle.destruction) && battle.destruction >= 0 && battle.destruction <= 100
+    ? battle.destruction : -1;
+  const recent = (a, b) => time(b) - time(a);
+  return {
+    triple: battles.filter(battle => battle.stars === 3).sort(recent)[0],
+    near: battles.filter(battle => battle.stars < 3).sort((a, b) =>
+      b.stars - a.stars || destruction(b) - destruction(a) || recent(a, b))[0],
+  };
+}
+
 const leagueDayMs = 86_400_000;
 const legendResetOffsetMs = 5 * 3_600_000;
 const legendDailyLimit = 8;
@@ -99,6 +113,12 @@ export function legendDayNumber(epoch) {
 
 export function nextLegendDayStart(epoch) {
   return (legendDayNumber(epoch) + 1) * leagueDayMs + legendResetOffsetMs;
+}
+
+export function freshLegendSnapshot(capturedAt, now = Date.now()) {
+  const epoch = typeof capturedAt === "number" ? capturedAt : Date.parse(capturedAt);
+  return Number.isFinite(epoch) && epoch <= now && now - epoch < 10 * 60_000
+    && legendDayNumber(epoch) === legendDayNumber(now);
 }
 
 function battleInstant(battle) {

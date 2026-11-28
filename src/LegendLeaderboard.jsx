@@ -1,9 +1,10 @@
 import { useEffect, useId, useMemo, useState, useSyncExternalStore } from "react";
-import { compareRows, legendStrategyLeaderboard, sortLegendPlayers } from "../insights.mjs";
+import { compareRows, legendStrategyLeaderboard, nextLegendDayStart, sortLegendPlayers } from "../insights.mjs";
 import { CompactSort, scoreText, SortHeader } from "./Standings.jsx";
 import { formatTime } from "./battle-time.mjs";
 import { useLegendPlayerMetrics } from "./legend-player-metrics.jsx";
 import { createLegendRequestCache } from "./legend-request-cache.mjs";
+import RankedOverview from "./RankedOverview.jsx";
 import "./legend-leaderboard.css";
 
 const emptyRows = [];
@@ -37,13 +38,22 @@ async function loadLeaderboard(location, force) {
   return board;
 }
 
-function useLegendRequest(key, active, load) {
+function useLegendRequest(key, active, load, section) {
   const [cache] = useState(() => createLegendRequestCache(load));
   const state = useSyncExternalStore(cache.subscribe, () => cache.read(key));
 
   useEffect(() => {
-    if (active) void cache.request(key);
-  }, [active, cache, key]);
+    if (!active || key === null) return;
+    void cache.request(key);
+    if (key === "locations") return;
+    let timer;
+    function scheduleRollover() {
+      const now = Date.now();
+      timer = setTimeout(() => { void cache.request(key); scheduleRollover(); }, nextLegendDayStart(now) - now);
+    }
+    scheduleRollover();
+    return () => clearTimeout(timer);
+  }, [active, cache, key, section]);
 
   return [state, () => { if (active) void cache.request(key, true); }];
 }
@@ -180,7 +190,8 @@ function StrategyTable({ label, strategies, sort, onSort, onLookupPlayer }) {
   </div>;
 }
 
-export default function LegendLeaderboard({ scope, active = true, hasDeveloperToken, accountLoading, selectedTag, selectedStanding, onLookupPlayer }) {
+export default function LegendLeaderboard({ scope, active = true, overview = false, hasDeveloperToken, accountLoading,
+  selectedTag, selectedStanding, onLookupPlayer, onOpenGlobal, onOpenVillages }) {
   const regional = scope === "regional";
   const headingId = useId();
   const regionId = useId();
@@ -197,13 +208,13 @@ export default function LegendLeaderboard({ scope, active = true, hasDeveloperTo
     ?? countries.find(({ countryCode }) => countryCode === "CN")
     ?? countries[0];
   const location = !enabled ? null : regional ? region?.id ?? null : "global";
-  const [board, refreshBoard] = useLegendRequest(location, active, loadLeaderboard);
+  const [board, refreshBoard] = useLegendRequest(location, active, loadLeaderboard, overview);
   const activeQuery = regional && !region ? locations : board;
   const waiting = enabled && (activeQuery.status === "idle" || activeQuery.status === "loading");
   const rows = board.data?.rows ?? emptyRows;
   const query = regional ? search.trim().toLowerCase() : "";
   const strategyView = view === "strategies";
-  const loadAll = strategyView || playerColumns.some((column) => column.key === playerSort.key && column.metric);
+  const loadAll = overview || strategyView || playerColumns.some((column) => column.key === playerSort.key && column.metric);
   const hasTier = board.data?.hasTierData === true;
   const { statuses, observeRow } = useLegendPlayerMetrics(rows, {
     active: active && enabled, location, loadAll,
@@ -212,13 +223,13 @@ export default function LegendLeaderboard({ scope, active = true, hasDeveloperTo
   const metricsByTag = useMemo(() => new Map([...statuses].filter(([, entry]) => entry.metrics)
     .map(([tag, entry]) => [tag, entry.metrics])), [statuses]);
   const players = useMemo(() => {
-    if (strategyView) return emptyRows;
+    if (overview || strategyView) return emptyRows;
     const matches = query ? rows.filter(({ playerName, playerTag }) => playerName?.toLowerCase().includes(query)
       || playerTag?.toLowerCase().includes(query)) : rows;
     return sortLegendPlayers(matches, metricsByTag, playerSort.key, playerSort.ascending ? "asc" : "desc");
-  }, [rows, metricsByTag, query, playerSort, strategyView]);
-  const strategies = useMemo(() => strategyView ? legendStrategyLeaderboard(rows, metricsByTag) : emptyRows,
-    [rows, metricsByTag, strategyView]);
+  }, [rows, metricsByTag, query, playerSort, strategyView, overview]);
+  const strategies = useMemo(() => overview || strategyView ? legendStrategyLeaderboard(rows, metricsByTag) : emptyRows,
+    [rows, metricsByTag, strategyView, overview]);
   const unavailable = statuses.size - metricsByTag.size;
   const metricsPending = statuses.size < rows.length;
   const ownInTable = selectedTag && rows.some((row) => row.playerTag === selectedTag);
@@ -232,6 +243,12 @@ export default function LegendLeaderboard({ scope, active = true, hasDeveloperTo
     if (regional && !region) refreshLocations();
     else refreshBoard();
   }
+
+  if (overview) return <RankedOverview rows={rows} strategies={strategies} metricsByTag={metricsByTag}
+    board={board} waiting={waiting} pending={metricsPending} unavailable={unavailable}
+    accountLoading={accountLoading} enabled={enabled} onRefresh={refresh}
+    onOpenVillages={onOpenVillages} onLookupPlayer={onLookupPlayer}
+    onOpenStrategies={() => { setView("strategies"); onOpenGlobal?.(); }} />;
 
   return (
     <section className="legend-board" aria-labelledby={headingId}>

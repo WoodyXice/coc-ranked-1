@@ -1,0 +1,92 @@
+.page.workspace {
+  width: min(1480px, calc(100% - clamp(24px, 5vw, 80px)));
+  margin: 0 auto 32px;
+}
+.workspace-header, .workspace-tools, .workspace-nav, .drill-header, .village-heading {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.workspace-header {
+  gap: clamp(12px, 2.2vw, 34px);
+  min-height: 72px;
+  padding-block: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.workspace-header h1 { font-size: 21px; letter-spacing: -.045em; margin: 0; white-space: nowrap; }
+.workspace-nav { gap: 4px; }
+.workspace-nav button { color: var(--soft); border: 0; background: transparent; }
+.workspace-nav button[aria-current="page"] { color: #104b64; background: #dbeaf0; font-weight: 700; }
+.workspace-tools { gap: 14px; margin-left: auto; }
+.workspace-tools .legend-player-search, .drill-header .legend-player-search { width: clamp(160px, 19vw, 270px); margin: 0; }
+.workspace-content { margin-top: 20px; }
+.workspace-content [hidden], .report-dialog [hidden] { display: none !important; }
+.report-dialog {
+  width: min(1480px, calc(100% - clamp(22px, 5vw, 85px)));
+  height: min(92dvh, 1150px);
+  max-height: calc(100dvh - 16px);
+  max-width: calc(100% - 12px);
+  padding: 0;
+  border: 1px solid #bbced8;
+  border-radius: 14px;
+  background: var(--page);
+  color: #14293a;
+  overflow: visible;
+  box-shadow: 0 20px 75px #1b344345;
+}
+.report-dialog[open] { display: flex; flex-direction: column; }
+.report-dialog::backdrop { background: #20364548; }
+:root:has(.report-dialog[open]) { overflow: hidden; }
+.drill-header {
+  border-bottom: 1px solid var(--line);
+  gap: 10px;
+  padding: 12px clamp(12px, 2vw, 26px);
+  border-radius: 14px 14px 0 0;
+  background: var(--surface);
+}
+.drill-header .legend-player-search { margin-left: auto; }
+.drill-current { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 600; }
+.close-report { font-size: 21px; line-height: 1; padding-inline: 8px; }
+.drill-layer { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: clamp(14px, 2.4vw, 30px); scrollbar-gutter: stable; }
+.report-dialog > .app-feedback { padding-inline: 18px; }
+.village-heading { justify-content: space-between; gap: 8px 20px; flex-wrap: wrap; margin-bottom: 16px; }
+.village-heading h2 { margin: 0; font-size: 25px; overflow-wrap: anywhere; }
+.village-meta { color: var(--muted); font-size: 13px; }
+.village-tabs { padding-block: 2px 12px; border-bottom: 1px solid var(--line); }
+.village-content { margin-top: 18px; }
+.drill-layer .legend-player { margin-top: 0; }
+.battle-log { container-type: inline-size; }
+.battle-mobile-sort, .battle-field-label { display: none; }
+@container (max-width: 720px) {
+  .battle-mobile-sort { display: block; }
+  .battle-log .personal-battle-table { display: block; }
+  .personal-battle-table colgroup, .personal-battle-table thead { display: none; }
+  .personal-battle-table tbody { display: block; }
+  .personal-battle-table tbody tr { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 5px; padding-block: 12px; }
+  .personal-battle-table tbody tr + tr { border-top: 1px solid var(--line); }
+  .battle-log .personal-battle-table tbody tr > * {
+    border: 0; padding: 0; min-width: 0; max-width: none; text-align: start; white-space: normal;
+  }
+  .personal-battle-table th[scope="row"], .personal-battle-table td:nth-child(2) { grid-column: span 2; }
+  .personal-battle-table .battle-field-label { display: block; font-weight: 400; font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+  .personal-battle-table .battle-army-cell { grid-column: 1/-1; }
+  .personal-battle-table .battle-army { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .personal-battle-table .battle-army-strategy { font-size: 13px; }
+}
+@media (max-width: 800px) {
+  .workspace-header { flex-wrap: wrap; gap: 8px 12px; }
+  .workspace-nav { order: 2; width: 100%; gap: 2px; }
+  .workspace-tools { gap: 6px; }
+}
+@media (max-width: 500px) {
+  .workspace-header h1 { font-size: 17px; }
+  .workspace-tools .legend-player-search { width: clamp(104px, 30vw, 150px); }
+  .workspace-tools .update-trigger { flex-wrap: nowrap; font-size: 12px; padding: 6px; }
+  .workspace-content { margin-top: 14px; }
+  .workspace-nav button { padding-inline: 9px; }
+  .drill-header { gap: 5px; padding-inline: 8px; }
+  .drill-current { display: none; }
+  .drill-layer { padding: 12px 8px; scrollbar-gutter: auto; }
+  .village-tabs { gap: 1px; }
+  .village-tabs button { padding-inline: 6px; }
+}

@@ -1,6 +1,8 @@
 import { useEffect, useId, useRef, useState } from "react";
 import BattleLog from "./BattleLog.jsx";
 import PlayerStrategyStats from "./PlayerStrategyStats.jsx";
+import GroupReport from "./GroupReport.jsx";
+import EquipmentFilter from "./EquipmentFilter.jsx";
 import { formatTime } from "./battle-time.mjs";
 import Standings, { LeagueBadge, scoreText, Trophy } from "./Standings.jsx";
 import "./temporary-player.css";
@@ -57,6 +59,8 @@ function PlayerProfile({ result, onOpenLegend, onLookupPlayer }) {
   const [rankingOpen, setRankingOpen] = useState(false);
   const [details, setDetails] = useState(null);
   const [detailStatus, setDetailStatus] = useState("idle");
+  const [groupView, setGroupView] = useState("standings");
+  const [equipmentFocus, setEquipmentFocus] = useState(null);
   const rankingId = useId();
   const legend = isLegendReport(result);
   const board = details ?? weeklyLeaderboard;
@@ -69,7 +73,8 @@ function PlayerProfile({ result, onOpenLegend, onLookupPlayer }) {
   const unavailable = !legend && !groupReport && !hasWeeklyRanking;
   async function loadGroupDetails(force = false) {
     const fetchDetails = window.cocApp?.fetchTemporaryGroupDetails;
-    if (typeof fetchDetails !== "function" || detailStatus === "loading") return;
+    if (detailStatus === "loading") return;
+    if (typeof fetchDetails !== "function") { setDetailStatus("error"); return; }
     const { groupTag, seasonId, week } = weeklyLeaderboard;
     const playerTag = battleViews.playerTag;
     setDetailStatus("loading");
@@ -118,14 +123,27 @@ function PlayerProfile({ result, onOpenLegend, onLookupPlayer }) {
       </header>
       {hasWeeklyRanking && <div id={rankingId} className="temporary-weekly-ranking" hidden={!rankingOpen}>
         {rankingOpen && <>
-          <div className="temporary-ranking-controls">
-            <span role="status">{groupLoadMessages[detailStatus] ?? (onLookupPlayer ? "点击玩家名称可查看攻防明细。" : "")}</span>
+          <div className="metric-control group-view-tabs" role="group" aria-label="本周小组战报">
+            {Object.entries({ standings: "小组排名", equipment: "装备筛选", meta: "小组流派" }).map(([id, label]) =>
+              <button key={id} type="button" aria-pressed={groupView === id}
+                onClick={() => { setGroupView(id); setEquipmentFocus(null); }}>{label}</button>)}
+          </div>
+          {groupLoadMessages[detailStatus] && <div className="temporary-ranking-controls">
+            <span role="status">{groupLoadMessages[detailStatus]}</span>
             {(detailStatus === "error" || detailStatus === "partial") &&
               <button type="button" onClick={() => { void loadGroupDetails(true); }}>重新加载组员战报</button>}
-          </div>
-          <Standings rows={board.rows} battleViews={board.battleViews ?? { playerTag: battleViews.playerTag }}
+          </div>}
+          {groupView === "standings" && <Standings rows={board.rows} battleViews={board.battleViews ?? { playerTag: battleViews.playerTag }}
             leagueTier={board.leagueTier ?? leagueTier} groupTag={board.groupTag} week={board.week}
-            attacks={board.attacks} onLookupPlayer={onLookupPlayer} showOwnResults={false} requireFullDefenseRanks />
+            attacks={board.attacks} onLookupPlayer={onLookupPlayer} focus={equipmentFocus}
+            showOwnResults={false} requireFullDefenseRanks />}
+          {groupView === "equipment" && details && <EquipmentFilter attacks={details.attacks} standings={details.rows}
+            groupTag={details.groupTag} week={details.week} onOpenPlayer={(playerTag, equipment) => {
+              setEquipmentFocus({ playerTag, equipment });
+              setGroupView("standings");
+            }} />}
+          {groupView === "meta" && details?.metaReport && <GroupReport report={details.metaReport} battleViews={details.battleViews} />}
+          {groupView === "meta" && details && !details.metaReport && <div className="empty-card">暂无小组流派数据</div>}
         </>}
       </div>}
     </>
@@ -346,7 +364,7 @@ export function useTemporaryPlayerLookup({ enabled, tokenRevision }) {
   function editTag(value) {
     setTag(tagWithoutPrefix(value));
     setValidation("");
-    if (request && normalizeTag(value) !== request.playerTag) {
+    if ((waiting || currentReply?.error) && normalizeTag(value) !== request?.playerTag) {
       setRequest(null);
       setReply(null);
     }
@@ -366,25 +384,37 @@ export function useTemporaryPlayerLookup({ enabled, tokenRevision }) {
     return true;
   }
 
-  return { tag, editTag, query, waiting, validation, history, error: currentReply?.error, result: currentReply?.result };
+  function dismiss() {
+    setRequest(null);
+    setReply(null);
+    setValidation("");
+  }
+  return { tag, editTag, query, dismiss, waiting, validation, history, error: currentReply?.error, result: currentReply?.result };
 }
 
-export function TemporaryPlayerSearch({ lookup, disabled, onLookupPlayer }) {
+export function TemporaryPlayerSearch({ lookup, accounts, disabled, onLookupPlayer, onSelectSaved, onManageVillages }) {
   const feedbackId = useId();
   const historyId = useId();
   const field = useRef(null);
   const input = useRef(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [filtering, setFiltering] = useState(false);
   const { tag, editTag, waiting, validation, error, history = [] } = lookup;
   const message = validation || error;
-  const unavailable = disabled || waiting;
-  const showHistory = historyOpen && !waiting;
-  const visibleHistory = expanded ? history : history.slice(0, 5);
+  const live = accounts?.hasDeveloperToken ?? true;
+  const query = filtering ? tag.trim().toUpperCase() : "";
+  const showHistory = historyOpen && !disabled && !waiting;
+  const matches = (name, playerTag) => !query || [name, playerTag].some(value => value?.toUpperCase().includes(query));
+  const saved = (accounts?.accounts ?? []).filter(({ name, tag: key }) => matches(name, key));
+  const matchingHistory = history.filter(({ playerName, playerTag }) => matches(playerName, playerTag));
+  const visibleHistory = expanded ? matchingHistory : matchingHistory.slice(0, 5);
+  const visibleSaved = saved.filter(({ tag: key }) => !visibleHistory.some(({ playerTag }) => playerTag === key));
 
   function closeHistory() {
     setHistoryOpen(false);
     setExpanded(false);
+    setFiltering(false);
   }
 
   useEffect(() => {
@@ -396,62 +426,89 @@ export function TemporaryPlayerSearch({ lookup, disabled, onLookupPlayer }) {
     return () => document.removeEventListener("pointerdown", dismissOutside);
   }, [showHistory]);
 
-  function submit(value) {
+  function submit(value, savedTag) {
     closeHistory();
-    if (!unavailable) onLookupPlayer(value);
+    if (disabled || waiting) return;
+    if (savedTag && onSelectSaved) onSelectSaved(savedTag);
+    else if (live) onLookupPlayer(value);
+    else onManageVillages?.();
   }
 
-  function openHistory() {
-    if (!waiting) setHistoryOpen(true);
+  function submitInput() {
+    const exactName = (value) => value?.trim().toUpperCase() === tag.trim().toUpperCase();
+    if (tag.trim()) {
+      const savedMatch = saved.find(a => exactName(a.name) || a.tag === normalizeTag(tag));
+      if (savedMatch && (!live || exactName(savedMatch.name))) return submit(savedMatch.tag, savedMatch.tag);
+      const recent = matchingHistory.find(entry => exactName(entry.playerName));
+      if (recent) return submit(recent.playerTag);
+    }
+    submit(tag);
   }
 
   return (
-    <form className="legend-player-search" onSubmit={(event) => {
-      event.preventDefault();
-      submit(tag);
-    }}>
-      <div className="legend-lookup-field" ref={field}
+    <form className="legend-player-search" role="search" aria-label="查询村庄" ref={field}
+        onSubmit={(event) => { event.preventDefault(); submitInput(); }}
         onBlur={(event) => {
-          if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) closeHistory();
+          if (!event.currentTarget.contains(event.relatedTarget)) closeHistory();
         }}
         onKeyDown={(event) => {
-          if (event.key !== "Escape" || !showHistory) return;
-          event.preventDefault();
-          input.current?.focus();
-          closeHistory();
+          if (!showHistory) return;
+          if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            input.current?.focus();
+            closeHistory();
+          } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            const choices = [input.current, ...field.current.querySelectorAll(".legend-query-history button:enabled")];
+            const index = choices.indexOf(event.target);
+            if (index < 0) return;
+            event.preventDefault();
+            choices[(index + (event.key === "ArrowDown" ? 1 : choices.length - 1)) % choices.length].focus();
+          }
         }}>
-        <label>
-          临时查村庄
-          <span className="legend-tag-field">
+          <label className="legend-tag-field">
             <span className="legend-tag-prefix" aria-hidden="true">#</span>
-            <input id="temporary-village-tag" ref={input} value={tag} onChange={(event) => editTag(event.target.value)} placeholder="2PP8QG"
-              onFocus={openHistory} onClick={openHistory}
+            <input id="temporary-village-tag" ref={input} value={tag}
+              onChange={(event) => { editTag(event.target.value); setFiltering(true); setExpanded(false); setHistoryOpen(true); }}
+              placeholder="搜索村庄" aria-label="搜索村庄名称或玩家标签" maxLength={64} disabled={disabled}
+              onFocus={(event) => { setHistoryOpen(true); event.target.select(); }} onClick={() => setHistoryOpen(true)}
               autoComplete="off" spellCheck={false} aria-invalid={Boolean(validation)}
               aria-describedby={message ? feedbackId : undefined} aria-controls={showHistory ? historyId : undefined} />
-          </span>
-        </label>
-        {showHistory && <section className="legend-query-history" id={historyId} aria-label="查询历史">
-          <p className="legend-query-history-heading">查询历史</p>
-          {history.length > 0 ? <ul className="legend-query-history-list" id={`${historyId}-entries`}>
+          </label>
+          <button className="village-submit" type="submit" aria-label="查询村庄" disabled={disabled || waiting}>
+            <span className="village-search-icon" aria-hidden="true" /></button>
+      {(showHistory || waiting || message) && <div className="lookup-popover">
+        {waiting && <p className="lookup-status" role="status">正在查询…</p>}
+        {message && <p id={feedbackId} className="lookup-status legend-lookup-error" role="alert">{message}</p>}
+        {showHistory && <section className="legend-query-history" id={historyId} aria-label="村庄搜索结果">
+          {visibleHistory.length > 0 && <><p className="legend-query-history-heading">最近查询</p>
+          <ul className="legend-query-history-list" id={`${historyId}-entries`}>
             {visibleHistory.map(({ playerTag, playerName }) => <li key={playerTag}>
-              <button type="button" disabled={unavailable} onClick={() => {
-                input.current?.focus({ preventScroll: true });
-                submit(playerTag);
-              }}>
+              <button type="button" disabled={!live && !saved.some(a => a.tag === playerTag)}
+                onClick={() => submit(playerTag, !live && playerTag)}>
                 {playerName && playerName !== playerTag && <span className="legend-query-history-name" title={playerName}>{playerName}</span>}
                 <span className="legend-query-history-tag">{playerTag}</span>
               </button>
             </li>)}
-          </ul> : <p className="legend-query-history-empty">暂无查询记录</p>}
-          {history.length > 5 && <div className="legend-query-history-footer">
+          </ul></>}
+          {matchingHistory.length > 5 && <div className="legend-query-history-footer">
             <button type="button" className="text-button" aria-expanded={expanded} aria-controls={`${historyId}-entries`}
               onClick={() => setExpanded(!expanded)}>{expanded ? "收起" : "展开更多"}</button>
           </div>}
+          {visibleSaved.length > 0 && <><p className="legend-query-history-heading">常用村庄</p>
+            <ul className="legend-query-history-list">{visibleSaved.map(a => <li key={a.tag}>
+              <button type="button" onClick={() => submit(a.tag, a.tag)}>
+                {a.name && a.name !== a.tag && <span className="legend-query-history-name">{a.name}</span>}
+                <span className="legend-query-history-tag">{a.tag}</span>
+              </button>
+            </li>)}</ul></>}
+          {!live && <button className="lookup-settings" type="button" onClick={() => { closeHistory(); onManageVillages?.(); }}>设置 API 令牌</button>}
+          {live && !visibleSaved.length && !visibleHistory.length && (!query
+            ? <p className="legend-query-history-empty">暂无查询记录</p>
+            : normalizeTag(tag) ? <button className="lookup-settings" type="button" onClick={() => submit(tag)}>查询 {normalizeTag(tag)}</button>
+              : <p className="legend-query-history-empty">无匹配村庄</p>)}
         </section>}
-      </div>
-      <button type="submit" disabled={unavailable}>临时查询</button>
-      {waiting && <p className="editor-help" role="status">正在查询村庄战报…</p>}
-      {message && <p id={feedbackId} className="editor-help legend-lookup-error" role="alert">{message}</p>}
+      </div>}
     </form>
   );
 }
@@ -464,13 +521,13 @@ export default function TemporaryPlayer({ lookup, onLookupPlayer, onOpenLegend }
 
   return (
     <section className="legend-player" aria-labelledby={headingId}>
-      <h2 id={headingId}>临时村庄战报</h2>
+      <h2 id={headingId}>村庄战报</h2>
       {result && <PlayerReport result={result}
         key={[result.battleViews.playerTag, groupReport?.groupTag ?? result.weeklyLeaderboard?.groupTag,
           groupReport?.week ?? result.weeklyLeaderboard?.week, result.weeklyLeaderboard?.seasonId].join(":")}
         onLookupPlayer={onLookupPlayer} onOpenLegend={onOpenLegend} />}
       {!result && !waiting && !error && <div className="empty-card">
-        <p>在上方输入玩家标签，或点击榜单和战报中的玩家名称。</p>
+        <p>暂无战报</p>
       </div>}
     </section>
   );

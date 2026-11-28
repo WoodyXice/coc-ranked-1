@@ -71,19 +71,19 @@ export default function EquipmentFilter({ attacks = emptyRows, classifiedAttacks
   }
 
   return (
-    <section className="standings" aria-labelledby="equipment-title">
+    <section className="standings" aria-labelledby={panelPrefix + "-title"}>
       <header className="report-header">
-        <h2 id="equipment-title">本周装备携带</h2>
+        <h2 id={panelPrefix + "-title"}>本周装备携带</h2>
         <p>{[groupTag && `小组 ${groupTag}`, week && `${week} 周`, "只统计已获取阵容的组内进攻"].filter(Boolean).join(" · ")}</p>
       </header>
       {!usage.length ? (
         <div className="empty-card"><p>{personalOnly ? "传奇 I 没有周排位小组，无法统计组内装备。"
-          : isSample ? "示例未包含组内阵容。查询村庄后可按装备筛选。" : "本次没有取得带英雄装备的组内进攻阵容。"}</p></div>
+          : isSample ? "示例未包含组内阵容。" : "本次没有取得带英雄装备的组内进攻阵容。"}</p></div>
       ) : (
         <>
           <div className="gear-picker battle-card" role="group" aria-label="按英雄选择装备">
             <div className="gear-picker-status">
-              <span>已选 {selectedHeroes.size} / {MAX_FILTER_HEROES} 位英雄 · 同一场进攻须同时携带所选装备</span>
+              <span>已选 {selectedHeroes.size} / {MAX_FILTER_HEROES} 位英雄</span>
               {activeIds.length > 0 && <button type="button" onClick={() => setSelectedIds([])}>清空</button>}
             </div>
             {heroes.map((hero) => (
@@ -107,9 +107,7 @@ export default function EquipmentFilter({ attacks = emptyRows, classifiedAttacks
               </div>
             ))}
           </div>
-          {!activeIds.length ? (
-            <div className="empty-card"><p>选择装备后，这里列出本周进攻时同时携带这些装备的玩家。</p></div>
-          ) : (
+          {activeIds.length > 0 && (
             <div className="battle-card">
               <p className="gear-result-summary">{label}：{number.format(players.length)} 人，共 {number.format(matching.length)} 场</p>
               {players.length === 0 ? <p className="battle-note">本周没有同时携带这些装备的进攻。</p> : (
@@ -138,7 +136,8 @@ export default function EquipmentFilter({ attacks = emptyRows, classifiedAttacks
                             : <span className="standings-player-name" title={name}>{name}</span>}
                           {player.playerName && <small>{player.playerTag}</small>}
                           {sets.length > 0 && <button type="button" className="lineup-button group-lineup-button" aria-expanded={expanded}
-                            aria-controls={expanded ? panelId : undefined} title="展开使用阵容"
+                            aria-controls={expanded ? panelId : undefined}
+                            title="己方与援军的兵种、法术、攻城机器按种类和数量归组，英雄、战宠、装备取最近一场"
                             onClick={() => { setExpandedPlayer(expanded ? null : player.playerTag); }}>
                             <span className="lineup-button-label">{number.format(sets.length)} 套阵容</span>
                           </button>}
@@ -171,7 +170,6 @@ export default function EquipmentFilter({ attacks = emptyRows, classifiedAttacks
                   })}</tbody>
                 </table>
               )}
-              {players.length > 0 && <p className="battle-note">点击「阵容」查看组合。己方与城堡的兵种、法术和攻城机器种类及数量一致的场次归为一套，英雄、战宠和装备取该套最近一场。点击玩家名称可在排位排名中高亮匹配场次。</p>}
             </div>
           )}
           <ArmyAttribution />

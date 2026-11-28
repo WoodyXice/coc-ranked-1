@@ -15,12 +15,12 @@
   white-space: nowrap;
   padding-block: 3px;
   scrollbar-width: thin;
-  scrollbar-color: #596574 #21242a;
+  scrollbar-color: #8096a4 #eaf0f4;
   overscroll-behavior-inline: contain;
 }
 
 .lineup-strip:focus-visible {
-  outline: 2px solid #8ebff8;
+  outline: 2px solid var(--blue);
   outline-offset: 2px;
   border-radius: 3px;
 }
@@ -33,13 +33,13 @@
 }
 
 .lineup-group + .lineup-group {
-  border-inline-start: 1px solid #424951;
+  border-inline-start: 1px solid var(--control-line);
   margin-inline-start: 6px;
   padding-inline-start: 6px;
 }
 
 .lineup-hero + .lineup-hero {
-  border-inline-start: 1px solid #373e45;
+  border-inline-start: 1px solid var(--line);
   padding-inline-start: 3px;
 }
 
@@ -51,10 +51,10 @@
   inline-size: var(--lineup-icon-size);
   block-size: var(--lineup-icon-size);
   box-sizing: border-box;
-  border: 1px solid #506587;
+  border: 1px solid #95afbd;
   border-radius: 4px;
-  background: #344460;
-  color: #edf2ff;
+  background: #e1ecf4;
+  color: var(--ink);
   font-size: 10px;
   font-weight: 700;
   line-height: 1;
@@ -72,22 +72,22 @@
   inset-inline-end: -1px;
   inset-block-end: -1px;
   border-radius: 3px 0 3px 0;
-  background: #11151d;
+  background: #17364a;
   color: #fff;
   padding-inline: 2px;
   font-size: 9px;
   line-height: 1.2;
 }
 
-.lineup-unit[data-unit-type="spells"] { background: #423356; border-color: #695086; }
-.lineup-unit[data-unit-type="heroes"] { background: #54412d; border-color: #806746; }
-.lineup-unit[data-unit-type="equipment"] { background: #504238; border-color: #77675a; }
-.lineup-unit[data-unit-type="siegeMachines"] { background: #513835; border-color: #795251; }
-.lineup-unit[data-unit-type="pets"] { background: #2b463d; border-color: #547767; }
+.lineup-unit[data-unit-type="spells"] { background: #eee9f7; border-color: #b0a2c6; }
+.lineup-unit[data-unit-type="heroes"] { background: #faf0da; border-color: #bfa979; }
+.lineup-unit[data-unit-type="equipment"] { background: #f1eae0; border-color: #b8a995; }
+.lineup-unit[data-unit-type="siegeMachines"] { background: #fae9e4; border-color: #c5a096; }
+.lineup-unit[data-unit-type="pets"] { background: #e3f1e9; border-color: #90b6a1; }
 
 .lineup-attribution {
   margin: 8px 0 0;
-  color: var(--muted, #aaa8a1);
+  color: var(--muted);
   font-size: 12px;
   line-height: 1.5;
 }

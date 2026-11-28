@@ -6,7 +6,7 @@ import { decodeArmyShareCode } from "../collector.mjs";
 import { workbookBytes } from "../files.mjs";
 import {
   armySets, attacksWithEquipment, defenseRanks, equipmentUsage, legendPlayerMetrics,
-  legendStrategyLeaderboard, myAttacksByOpponent, playerStrategyStats, sortLegendPlayers,
+  legendStrategyLeaderboard, myAttacksByOpponent, playerStrategySamples, playerStrategyStats, sortLegendPlayers,
 } from "../insights.mjs";
 
 function strategyOf(code) {
@@ -69,6 +69,19 @@ function legendRows(date, trophyDelta, { length = 8, stars = 2, strategy = "龙�
     trophyDelta, stars, strategy,
   }));
 }
+
+test("strategy comparisons use the latest triple and the closest scored miss from only the selected range and style", () => {
+  const battle = (id, stars, destruction, strategy = "龙流") => ({
+    id, stars, destruction, strategy, timestamp: `2026-11-26T11:0${id}:00Z`, army: { troops: [{ id }] },
+  });
+  const rows = [battle(0, 3, 100), battle(1, 3, 100), battle(2, 2, 97), battle(3, 2, 97), battle(4, 1, 99),
+    battle(5, 2, null), battle(6, 2, 99, "天女蓝胖"), battle(7, null, 99), battle(8, 2, 101)];
+  const samples = playerStrategySamples(rows, "龙流");
+  assert.equal(samples.triple, rows[1]);
+  assert.equal(samples.near, rows[3]);
+  assert.deepEqual(playerStrategySamples(rows.slice(6, 7), "龙流"), { triple: undefined, near: undefined });
+  assert.equal(playerStrategySamples([rows[5]], "龙流").near, rows[5]);
+});
 
 test("Legend board metrics use up to sixteen attacks across the two latest league days at the 05:00 UTC reset", () => {
   const now = new Date("2026-11-27T18:00:00Z");

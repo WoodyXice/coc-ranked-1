@@ -7,10 +7,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { getReport } from "../analytics.mjs";
 import { fetchLegendLeaderboard, fetchLegendLocations, legendBoardLocation } from "../collector.mjs";
 import { workbookBytes } from "../files.mjs";
+import { freshLegendSnapshot } from "../insights.mjs";
 import { cachedReport, collectData, collectGroupedPlayer, collectTemporaryPlayer, createTemporaryGroupService, developerPortal, getPublicIp, sampleReport } from "./service.mjs";
 import { createAccountStore, importAccountsJson, validateDeveloperToken } from "./accounts.mjs";
 import { openDatabase } from "./database.mjs";
 import { createDefenseNoteStore } from "./defense-notes.mjs";
+import { createReportSources } from "./report-sources.mjs";
 import { createLegendMetricsService } from "./legend-metrics.mjs";
 import { importLegacyJson } from "./legacy-import.mjs";
 import { createUpdater, releasePage } from "./updater.mjs";
@@ -84,7 +86,7 @@ function createWindow(database, storageWarnings) {
     minWidth: 700,
     minHeight: 560,
     show: false,
-    backgroundColor: "#121315",
+    backgroundColor: "#f3f7f9",
     webPreferences: { preload, sandbox: true, contextIsolation: true, nodeIntegration: false },
   });
   const accountStore = createAccountStore(database, safeStorage);
@@ -96,7 +98,7 @@ function createWindow(database, storageWarnings) {
   let temporaryLookupId = 0;
   const legendBoards = new Map();
   let legendTokenRevision = 0;
-  let displayedReport = null;
+  const reportSources = createReportSources(database.reports.load);
   async function savedDeveloperToken() {
     const token = await accountStore.getDeveloperToken();
     if (!token) throw new Error("请先保存 Supercell 开发者 API 令牌。");
@@ -111,7 +113,7 @@ function createWindow(database, storageWarnings) {
       legendBoards.set(location, state);
     }
     if (state.pending) return state.pending;
-    if (!force && state.data && Date.now() - Date.parse(state.data.fetchedAt) < 10 * 60_000) return Promise.resolve(state.data);
+    if (!force && state.data && freshLegendSnapshot(state.data.fetchedAt)) return Promise.resolve(state.data);
     state.pending = fetchLegendLeaderboard({ token, location }).then((board) => {
       if (window.isDestroyed() || legendBoards.get(location) !== state) {
         throw new Error("榜单查询已过期，请重新查询。");
@@ -149,10 +151,9 @@ function createWindow(database, storageWarnings) {
     if (!raw.battleViews) return payload;
     return { ...payload, raw: { ...raw, battleViews: await defenseNotes.withNotes(raw.battleViews) } };
   }
-  async function displayReport(payload) {
-    const result = payload ? await withDefenseNotes(payload) : null;
-    displayedReport = payload;
-    return result;
+  async function displayReport(payload, ownerTag, persisted) {
+    reportSources.show(ownerTag, payload, persisted);
+    return payload ? withDefenseNotes(payload) : null;
   }
   bind(window, "coc:accounts", async () => {
     const accounts = await accountStore.list();
@@ -188,17 +189,21 @@ function createWindow(database, storageWarnings) {
     const result = await collectData({ playerTag: input?.playerTag, token }, { snapshots: database.snapshots });
     let fetchedAt = new Date().toISOString();
     const playerTag = savedReportTag(input?.playerTag);
+    let persisted = false;
     try {
-      if (playerTag) fetchedAt = database.reports.save(playerTag, result.raw, fetchedAt);
+      if (playerTag) {
+        fetchedAt = database.reports.save(playerTag, result.raw, fetchedAt);
+        persisted = true;
+      }
     } catch (error) {
       console.warn(`Could not save the latest report: ${error?.message}`);
     }
-    return displayReport({ ...result, fetchedAt });
+    return displayReport({ ...result, fetchedAt }, playerTag, persisted);
   });
   bind(window, "coc:cached-report", async (tag) => {
     const playerTag = savedReportTag(tag);
     const saved = playerTag ? cachedReport(database.reports.load(playerTag)) : null;
-    return displayReport(saved);
+    return displayReport(saved, playerTag);
   });
   bind(window, "coc:legend-leaderboard", async (input) => {
     const revision = legendTokenRevision;
@@ -218,9 +223,9 @@ function createWindow(database, storageWarnings) {
   });
   bind(window, "coc:temporary-player", async (input) => {
     const lookupId = ++temporaryLookupId;
-    temporaryGroups.remember(null);
     const group = input?.group;
     if (!group) {
+      temporaryGroups.forget(savedReportTag(input?.playerTag));
       const revision = legendTokenRevision;
       const token = await savedDeveloperToken();
       const result = await collectTemporaryPlayer({ token, playerTag: input?.playerTag }, {
@@ -242,12 +247,7 @@ function createWindow(database, storageWarnings) {
       }
       return result;
     }
-    const raw = displayedReport?.raw;
-    const fetchedAt = displayedReport?.fetchedAt;
-    if (raw?.source !== "api" || raw.groupTag !== group.groupTag || raw.seasonId !== group.seasonId
-      || raw.week !== group.week || fetchedAt !== group.fetchedAt) {
-      throw new Error("正在查看的小组战报已切换，请返回排位排名重新打开。");
-    }
+    const { raw, fetchedAt } = reportSources.resolve(group);
     return collectGroupedPlayer({ raw, fetchedAt, playerTag: input.playerTag, snapshots: database.snapshots });
   });
   bind(window, "coc:workbook", async (raw) => {

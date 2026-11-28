@@ -255,10 +255,10 @@ export default function Standings({ rows, battleViews, groupTag, week, leagueTie
   }
 
   return (
-    <section ref={sectionRef} className={compact ? "standings standings-compact" : "standings"} aria-labelledby="standings-title">
+    <section ref={sectionRef} className={compact ? "standings standings-compact" : "standings"} aria-labelledby={panelPrefix + "-title"}>
       <header className="report-header">
         <div className="standings-heading">
-          <h2 id="standings-title">本周排位排名</h2>
+          <h2 id={panelPrefix + "-title"}>本周排位排名</h2>
           <LeagueBadge tier={leagueTier} />
         </div>
         <p>{[groupTag && `小组 ${groupTag}`, week && `${week} 周`, rows.length > 0 && "时间为北京时间"].filter(Boolean).join(" · ")}</p>
@@ -271,7 +271,7 @@ export default function Standings({ rows, battleViews, groupTag, week, leagueTie
               <p>传奇 I 的名次在全球榜和地区榜中显示，本周战绩可在进攻和防守页查看。</p>
               {onOpenLegend && <button type="button" onClick={onOpenLegend}>查看传奇 I 全球榜</button>}
             </div>
-          ) : <p>{isSample ? "示例未包含小组排名。查询村庄后可查看排名。" : "官方 API 本次未返回该小组的成员排名。"}</p>}
+          ) : <p>{isSample ? "示例未包含小组排名。" : "官方 API 本次未返回该小组的成员排名。"}</p>}
         </div>
       ) : (
         <div className="battle-card standings-card">

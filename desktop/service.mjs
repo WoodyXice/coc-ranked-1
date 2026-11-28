@@ -92,9 +92,7 @@ export async function collectTemporaryPlayer(input, { playerHistory, ...requestO
     ...(weekly && { weeklyLeaderboard: { ...weekly, attacks: withStrategies(weekly.attacks) } }),
     battleViews: classifyBattleViews(result.battleViews),
     history: classifyBattleViews(history),
-    recentAttacks: withStrategies(recent.attacks).map(({ battleType, strategy, stars, destruction }) => ({
-      battleType, strategy, stars, destruction,
-    })),
+    recentAttacks: withStrategies(recent.attacks),
     recentCoverage: result.battleViews.logAvailable === false ? null : {
       attacks: coverage(recent.attacks), defenses: coverage(recent.defenses),
     },
@@ -103,55 +101,82 @@ export async function collectTemporaryPlayer(input, { playerHistory, ...requestO
 }
 
 export function createTemporaryGroupService({ snapshots, now = () => new Date(), collect = fetchTemporaryGroupDetails } = {}) {
-  let selected = null;
-  let cache = null;
+  const verifiedPlayers = new Map();
+  const boards = new Map();
 
   function remember(result) {
-    const group = result?.weeklyLeaderboard;
-    selected = group && {
-      playerTag: result.battleViews.playerTag, groupTag: group.groupTag, seasonId: group.seasonId, week: group.week,
-      // A newly observed score or change of official order supersedes a still-fresh table.
+    const playerTag = result?.battleViews?.playerTag;
+    if (!playerTag) return;
+    verifiedPlayers.delete(playerTag);
+    const group = result.weeklyLeaderboard;
+    if (!group) return;
+    const scope = {
+      groupTag: group.groupTag, seasonId: group.seasonId, week: group.week,
       roster: JSON.stringify(group.rows.map(({ playerTag, trophies, attackCount, defenseCount }) =>
         [playerTag, trophies, attackCount, defenseCount])),
     };
+    // Older open pages may still refer to other members of the same group.
+    const members = new Set(group.rows.map(row => row.playerTag));
+    for (const [tag, prior] of verifiedPlayers) {
+      if (prior.groupTag !== scope.groupTag) continue;
+      if (prior.week !== scope.week || prior.seasonId !== scope.seasonId || !members.has(tag)) {
+        verifiedPlayers.delete(tag);
+      } else if (prior.roster !== scope.roster) {
+        verifiedPlayers.set(tag, scope);
+      }
+    }
+    if (members.has(playerTag)) verifiedPlayers.set(playerTag, scope);
+    if (verifiedPlayers.size > 50) verifiedPlayers.delete(verifiedPlayers.keys().next().value);
   }
 
   async function fetch(input, token) {
-    const scope = selected;
+    const playerTag = input?.playerTag;
+    const scope = verifiedPlayers.get(playerTag);
     const time = now();
-    if (!scope || scope.week !== rankedWeek(time) || input?.playerTag !== scope.playerTag
+    if (!scope || scope.week !== rankedWeek(time)
         || input.groupTag !== scope.groupTag || input.seasonId !== scope.seasonId || input.week !== scope.week) {
       throw new Error("请重新查询该村庄，再打开本周小组排名。");
     }
-    if (!cache || cache.token !== token || cache.groupTag !== scope.groupTag || cache.seasonId !== scope.seasonId
-        || cache.week !== scope.week || cache.roster !== scope.roster) {
-      cache = { token, groupTag: scope.groupTag, seasonId: scope.seasonId, week: scope.week, roster: scope.roster };
+    let entry = boards.get(scope.groupTag);
+    if (!entry || entry.token !== token || entry.seasonId !== scope.seasonId
+        || entry.week !== scope.week || entry.roster !== scope.roster) {
+      entry = { ...scope, token };
     }
-    const entry = cache;
-    const cachedMember = entry.board?.rows.some((member) => member.playerTag === scope.playerTag);
+    boards.delete(scope.groupTag);
+    boards.set(scope.groupTag, entry);
+    if (boards.size > 3) boards.delete(boards.keys().next().value);
+    const cachedMember = entry.board?.rows.some((member) => member.playerTag === playerTag);
     const lifetime = entry.board?.partial ? 60_000 : 10 * 60_000;
     if (!entry.pending && (!cachedMember || input.force === true || time.getTime() - entry.loadedAt >= lifetime)) {
-      entry.pending = collect({ ...scope, token }, { snapshots, now: time }).then((board) => {
+      entry.pending = collect({ ...scope, playerTag, token }, { snapshots, now: time }).then((board) => {
         const lineups = board.attacks.filter((attack) => attack.armyShareCode || attack.army);
-        entry.board = { ...board, attacks: withStrategies(lineups) };
+        const attacks = withStrategies(lineups);
+        const listedAttacks = board.rows.reduce((sum, row) => sum + (row.attackCount ?? 0), 0);
+        const { rows, total, notes, telemetry } = getReport({
+          source: "api", groupTag: scope.groupTag, week: scope.week, attacks,
+          telemetry: { expectedAttacks: Math.max(board.attacks.length, listedAttacks) },
+        });
+        // Send the classified lineups once; the chart only needs the group aggregates.
+        const metaReport = { source: "api", groupTag: scope.groupTag, week: scope.week, rows, total, notes, telemetry };
+        entry.board = { ...board, attacks, metaReport };
         entry.loadedAt = now().getTime();
       }).finally(() => { entry.pending = null; });
     }
     await entry.pending;
-    if (scope !== selected || cache !== entry || scope.week !== rankedWeek(now())) {
+    if (scope !== verifiedPlayers.get(playerTag) || boards.get(scope.groupTag) !== entry || scope.week !== rankedWeek(now())) {
       throw new Error("正在查看的村庄或周次已切换，请重新打开小组排名。");
     }
-    const standing = entry.board.rows.find((member) => member.playerTag === scope.playerTag);
+    const standing = entry.board.rows.find((member) => member.playerTag === playerTag);
     if (!standing) throw new Error("完整小组榜中未找到该村庄，请重新查询。");
-    return { ...entry.board, battleViews: { playerTag: scope.playerTag, standing, defenseTrophyMode: "earned" } };
+    return { ...entry.board, battleViews: { playerTag, standing, defenseTrophyMode: "earned" } };
   }
 
   function reset() {
-    selected = null;
-    cache = null;
+    verifiedPlayers.clear();
+    boards.clear();
   }
 
-  return { remember, fetch, reset };
+  return { remember, forget: (tag) => verifiedPlayers.delete(tag), fetch, reset };
 }
 
 export async function collectGroupedPlayer(input) {

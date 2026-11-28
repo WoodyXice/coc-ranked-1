@@ -1,4 +1,5 @@
-const maxAgeMs = 10 * 60 * 1000;
+import { freshLegendSnapshot } from "../insights.mjs";
+
 const emptyRequest = Object.freeze({ status: "idle", data: null, error: "", fetchedAt: null, pending: null });
 
 export function createLegendRequestCache(load, now = Date.now) {
@@ -18,13 +19,16 @@ export function createLegendRequestCache(load, now = Date.now) {
     if (key === null) return null;
     const previous = read(key);
     if (previous.pending) return previous.pending;
-    if (!force && previous.fetchedAt !== null && now() - previous.fetchedAt < maxAgeMs) {
+    if (!force && previous.fetchedAt !== null && freshLegendSnapshot(previous.fetchedAt, now())) {
       if (previous.status === "error") update(key, { status: "ready", error: "" });
       return null;
     }
 
     const pending = Promise.resolve().then(() => load(key, force)).then(
-      (data) => update(key, { status: "ready", data, fetchedAt: now(), pending: null }),
+      (data) => {
+        const capture = Date.parse(data?.fetchedAt);
+        update(key, { status: "ready", data, fetchedAt: Number.isFinite(capture) ? capture : now(), pending: null });
+      },
       (error) => update(key, { status: "error", error: error?.message || "查询失败，请重试。", pending: null }),
     );
     update(key, { status: "loading", pending, error: "" });
