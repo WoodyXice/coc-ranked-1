@@ -120,4 +120,17 @@ export const migrations = [
       `);
     },
   },
+  {
+    version: 5,
+    name: "weekly player battle ledgers",
+    up(db) {
+      db.exec(`
+        CREATE TABLE player_weekly_ledgers (
+          player_tag TEXT NOT NULL, week TEXT NOT NULL, group_tag TEXT NOT NULL, season_id INTEGER NOT NULL,
+          updated_at TEXT NOT NULL, data TEXT NOT NULL,
+          PRIMARY KEY (player_tag, week, group_tag, season_id)
+        );
+      `);
+    },
+  },
 ];

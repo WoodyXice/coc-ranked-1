@@ -179,6 +179,8 @@ export function legendPlayerMetrics(history, now = new Date()) {
 
   return {
     strategy: common?.strategy ?? null,
+    ...(!common && { strategyStatus: !recentAttacks.length ? 'no-attacks'
+      : recentAttacks.some(attack => attack.army?.troops?.length) ? 'unrecognized' : 'no-army' }),
     strategyCount: common?.count ?? 0,
     strategies: named.filter(({ scoredCount }) => scoredCount > 0)
       .map(({ strategy, scoredCount, threeStarCount }) => ({ strategy, scoredCount, threeStarCount })),

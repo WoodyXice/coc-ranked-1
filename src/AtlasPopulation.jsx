@@ -16,11 +16,11 @@ export default function AtlasPopulation({ players, anchors, width, height, hitRe
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
       ctx.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
-      for (const known of [false, true]) {
-        ctx.fillStyle = known ? "#3f859bc2" : "#859ba5ae";
+      ctx.globalAlpha = .78;
+      for (const [color, points] of Map.groupBy(layer.points, point => point.color)) {
+        ctx.fillStyle = color;
         ctx.beginPath();
-        for (const point of layer.points) {
-          if (point.known !== known) continue;
+        for (const point of points) {
           ctx.moveTo(point.x + layer.radius, point.y);
           ctx.arc(point.x, point.y, layer.radius, 0, Math.PI * 2);
         }

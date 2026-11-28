@@ -104,8 +104,11 @@
 }
 .network-style-options strong { display: block; font-size: 11px; margin: 2px 6px 4px; }
 .network-style-options label { display: flex; align-items: center; gap: 7px; padding: 5px; color: var(--overview-ink); cursor: pointer; }
-.network-style-options input { width: 15px; height: 15px; min-height: 0; margin: 0; accent-color: #176d7c; }
+.network-style-options input[type=checkbox] { width: 15px; height: 15px; min-height: 0; margin: 0; accent-color: #176d7c; }
+.network-style-options input[type=search] { width: 100%; min-width: 16ch; min-height: 30px; margin-bottom: 4px; }
 .network-plot { position: relative; min-width: 0; background: #fff; }
+.atlas-hover-card { position: absolute; pointer-events: none; display: grid; max-width: min(190px, 95%); padding: 5px 9px; background: #fff; color: #173a4c; border: 1px solid #bfd0d6; border-radius: 5px; box-shadow: 0 2px 8px #173e511a; font-size: 12px; }
+.atlas-hover-card b, .atlas-hover-card span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .strategy-network-map { display: block; width: 100%; overflow: hidden; }
 .network-empty { margin: 0; min-height: 160px; display: grid; place-items: center; color: var(--overview-muted); }
 .network-zone, .network-player { cursor: pointer; }
@@ -114,22 +117,12 @@
 .network-zone:hover path, .network-zone:focus-visible path, .network-zone[aria-pressed="true"] path { fill-opacity: .68; }
 .network-zone:focus-visible path { stroke: #356a84; stroke-width: 1.5; }
 .network-player:focus, .network-zone:focus { outline: none; }
-.network-edge { stroke: #82929d; stroke-opacity: .54; stroke-width: .85; }
-.network-edge.same-primary { stroke: #57788a; stroke-opacity: .68; stroke-width: 1.65; }
-.network-edge.active { stroke: #386e9e; stroke-opacity: .95; stroke-width: 1.6; }
-.network-signal {
-  stroke: #548da9; stroke-opacity: .78; stroke-width: 1.45; stroke-linecap: round;
-  stroke-dasharray: 5 95; animation: overview-network-flow 8s linear infinite;
-}
-@keyframes overview-network-flow { to { stroke-dashoffset: -100; } }
-@media (prefers-reduced-motion: reduce) { .network-signal { display: none; animation: none; } }
-.network-point { fill: #398cb6; stroke: #fff; stroke-width: 1.25; }
-.network-point[data-tier="0"] { fill: #144b85; }
-.network-point[data-tier="1"] { fill: #23659f; }
-.network-point[data-tier="2"] { fill: #2c7fad; }
-.network-point[data-tier="4"] { fill: #329cc0; }
-.network-point[data-tier="5"] { fill: #4c819a; }
-.network-point.unknown { fill: #8798a2; }
+.network-point { stroke: #fff; stroke-width: 1.25; }
+.network-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 9px; padding: 6px 14px; border-top: 1px solid #e4ecee; }
+.network-legend button, .network-legend span { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; }
+.network-legend button { color: var(--overview-ink); border: 1px solid transparent; background: transparent; min-height: 25px; padding: 2px 4px; }
+.network-legend button:hover, .network-legend button[aria-pressed=true] { background: #edf5f6; border-color: #bbd0d5; }
+.network-legend i { width: 8px; height: 8px; border-radius: 50%; }
 .network-point-ring { fill: #fff; fill-opacity: .65; stroke: #226487; stroke-width: 1.4; }
 .network-player:focus-visible .network-point { stroke: #153b4d; stroke-width: 2; }
 .network-player-label text {

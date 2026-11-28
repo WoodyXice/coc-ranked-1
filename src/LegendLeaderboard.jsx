@@ -217,6 +217,8 @@ export default function LegendLeaderboard({ scope, active = true, overview = fal
   const searchId = useId();
   const [search, setSearch] = useState("");
   const [limit, setLimit] = useState(200);
+  const [draftLimit, setDraftLimit] = useState("200");
+  const [limitError, setLimitError] = useState("");
   const [view, setView] = useState("players");
   const [playerSort, setPlayerSort] = useState({ key: "rank", ascending: true });
   const [strategySort, setStrategySort] = useState({ key: "threeStarRate", ascending: false });
@@ -258,12 +260,25 @@ export default function LegendLeaderboard({ scope, active = true, overview = fal
   const showProfile = !regional && selectedTag && !ownInTable && (profileRank !== null || Number.isFinite(profileTrophies));
   const range = regional ? "地区" : "全球";
   const heading = board.data?.hasTierData === false ? `官方${range}杯数榜` : hasTier ? `传奇 I ${range}榜` : `${range}排行榜`;
-  const scopeControl = !regional && <label className="legend-scope-control">榜单范围
-    <select aria-label="榜单范围" value={limit} onChange={event => setLimit(Number(event.target.value))}>
-      <option value={200}>前 200 人</option><option value={1000}>前 1,000 人</option>
-      <option value={2000}>前 2,000 人</option><option value={10000}>前 1 万人</option>
-    </select>
-  </label>;
+  const scopeControl = !regional && <form className="legend-scope-control" onSubmit={event => {
+    event.preventDefault();
+    const digits = draftLimit.trim().normalize("NFKC");
+    const next = Number(digits);
+    if (!/^\d+$/.test(digits) || !Number.isSafeInteger(next) || next < 1) {
+      setLimitError("请输入有效的正整数");
+      return;
+    }
+    setLimitError("");
+    setDraftLimit(String(next));
+    setLimit(next);
+  }}>
+    <label>榜单前 <input aria-label="榜单范围" inputMode="numeric" value={draftLimit}
+      aria-invalid={!!limitError} onFocus={event => event.target.select()} onChange={event => {
+        setDraftLimit(event.target.value); setLimitError("");
+      }} /> 人</label>
+    <button type="submit">应用</button>
+    {limitError && <small role="alert">{limitError}</small>}
+  </form>;
 
   function refresh() {
     if (regional && !region) refreshLocations();
@@ -295,7 +310,7 @@ export default function LegendLeaderboard({ scope, active = true, overview = fal
             {board.data.fetchedAt && <time dateTime={board.data.fetchedAt}>更新于 {formatTime(board.data.fetchedAt)}（北京时间）</time>}
             {board.data.hasTierData === false && <span>接口未返回段位</span>}
             {board.data.paginationInterrupted ? <span>榜单分页中断，可刷新重试</span>
-              : limit > 200 && rows.length < limit && <span>已显示本次接口返回的全部可用玩家</span>}
+              : !regional && rows.length < limit && <span>已显示本次接口返回的全部可用玩家</span>}
           </p>}
         </div>
         <div className="legend-board-controls">

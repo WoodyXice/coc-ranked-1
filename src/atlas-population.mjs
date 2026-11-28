@@ -80,7 +80,7 @@ export function buildPopulationLayer(players, anchors, width, height) {
     const px = (x + .3 + ((seed >>> 8) & 255) * .4 / 255) * step;
     const py = (y + .3 + ((seed >>> 16) & 255) * .4 / 255) * step;
     cells[cell] = points.length + 1;
-    points.push({ x: px, y: py, playerTag: player.playerTag, known: player.cluster != null });
+    points.push({ x: px, y: py, playerTag: player.playerTag, known: player.cluster != null, color: player.pointColor ?? "#89969c" });
   }
   function hitTest(x, y) {
     if (!(x >= 0 && y >= 0 && x < width && y < height)) return null;

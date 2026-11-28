@@ -1,6 +1,6 @@
 import { isIPv4 } from "node:net";
-import { getReport, sampleData } from "../analytics.mjs";
-import { buildGroupedPlayerReport, createLegendBattleLogCollector, decodeArmyShareCode, fetchRankedReport, fetchTemporaryGroupDetails, fetchTemporaryPlayer } from "../collector.mjs";
+import { classifyBattleArmy, getReport, sampleData } from "../analytics.mjs";
+import { buildGroupedPlayerReport, createLegendBattleLogCollector, decodeArmyShareCode, fetchRankedReport, fetchTemporaryGroupDetails, fetchTemporaryPlayer, playerHistoryWithWeeklyBoards, weeklyPlayerBattleViews } from "../collector.mjs";
 import { legendPlayerMetrics } from "../insights.mjs";
 
 const hour = 3_600_000;
@@ -34,15 +34,11 @@ export function rankedWeek(now = new Date()) {
 }
 
 function withStrategies(records) {
-  const withArmy = records.map((battle) => ({
-    ...battle,
-    army: battle.army ?? decodeArmyShareCode(battle.armyShareCode),
-  }));
-  const attacks = withArmy.map(({ id, timestamp, armyShareCode, army }) => ({ id, timestamp, armyShareCode, army }));
-  const classified = getReport({ source: "api", attacks }).attacks;
-  const strategies = new Map(classified.map(({ id, strategy }) => [id, strategy]));
-  // Always reclassify with the current rules; a saved label is only a fallback for armies we cannot decode.
-  return withArmy.map((battle) => ({ ...battle, strategy: strategies.get(battle.id) || battle.strategy || "" }));
+  return records.map(battle => {
+    const army = battle.army?.troops?.length ? battle.army : decodeArmyShareCode(battle.armyShareCode) ?? battle.army ?? null;
+    const strategy = classifyBattleArmy(army) ?? battle.strategy ?? "";
+    return { ...battle, army, strategy };
+  });
 }
 
 function classifyBattleViews(battleViews) {
@@ -77,19 +73,21 @@ export async function collectTemporaryPlayer(input, { playerHistory, ...requestO
       return time && (!oldest || time < oldest) ? time : oldest;
     }, null),
   });
-  let history = recent;
+  let history;
   let historySaved = false;
   if (playerHistory) {
     try {
-      history = playerHistory.merge(result.battleViews.playerTag, recent, result.fetchedAt);
+      history = playerHistory.merge(result.battleViews.playerTag, recent, result.fetchedAt, weekly);
       historySaved = true;
     } catch {
       console.warn("Could not save the player battle history.");
     }
   }
+  history ??= playerHistoryWithWeeklyBoards(recent, weekly ? [weekly] : []);
   return {
     ...result,
-    ...(weekly && { weeklyLeaderboard: { ...weekly, attacks: withStrategies(weekly.attacks) } }),
+    ...(weekly && { weeklyLeaderboard: { ...weekly, attacks: withStrategies(weekly.attacks),
+      battleViews: classifyBattleViews(weeklyPlayerBattleViews(weekly, history)) } }),
     battleViews: classifyBattleViews(result.battleViews),
     history: classifyBattleViews(history),
     recentAttacks: withStrategies(recent.attacks),

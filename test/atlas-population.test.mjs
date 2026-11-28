@@ -27,11 +27,12 @@ test("every non-anchor in the filtered population has a visible, individually hi
 
 test("small and empty filtered results carry only the current player identities", () => {
   const a = { playerTag: "#A", rank: 1, x: 50, y: 50 };
-  const b = { playerTag: "#B", rank: 8976, cluster: "dragon" };
+  const b = { playerTag: "#B", rank: 8976, cluster: "dragon", pointColor: "#287f90" };
   assert.deepEqual(buildPopulationLayer([], [], 320, 160).points, []);
   assert.equal(buildPopulationLayer([a], [a], 320, 160).points.length, 0);
   const layer = buildPopulationLayer([a, b], [a], 320, 200);
   assert.deepEqual(layer.points.map(p => p.playerTag), ["#B"]);
+  assert.equal(layer.points[0].color, b.pointColor);
   assert.equal(layer.hitTest(300, 180), null);
   assert.deepEqual(layer.points, buildPopulationLayer([a, b], [a], 320, 200).points);
 });

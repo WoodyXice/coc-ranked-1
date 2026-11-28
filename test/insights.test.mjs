@@ -145,15 +145,16 @@ test("incomplete defenses do not discard a complete attack day from the attack a
 test("Legend board metrics distinguish missing samples, zero scores, and tied named strategies", () => {
   const now = new Date("2026-11-27T18:00:00Z");
   const none = {
-    strategy: null, strategyCount: 0, strategies: [], attackCount: 0, threeStarRate: null,
+    strategy: null, strategyStatus: "no-attacks", strategyCount: 0, strategies: [], attackCount: 0, threeStarRate: null,
     averageDailyAttack: null, attackDays: 0, averageDailyNet: null, completedDays: 0,
   };
   assert.deepEqual(legendPlayerMetrics({}, now), none);
   const attacks = legendRows("2026-11-26", 0, { stars: 0, strategy: "其他" });
   const defenses = legendRows("2026-11-26", 0);
   assert.deepEqual(legendPlayerMetrics({ attacks, defenses }, now), {
-    ...none, attackCount: 8, threeStarRate: 0, averageDailyAttack: 0, attackDays: 1, averageDailyNet: 0, completedDays: 1,
+    ...none, strategyStatus: "no-army", attackCount: 8, threeStarRate: 0, averageDailyAttack: 0, attackDays: 1, averageDailyNet: 0, completedDays: 1,
   });
+  assert.equal(legendPlayerMetrics({ attacks: [{ ...attacks[0], army: decodeArmyShareCode("u1x12345") }] }, now).strategyStatus, "unrecognized");
   const mixed = [
     { ...attacks[0], strategy: "龙流" },
     { ...attacks[1], strategy: "巨矛投手" },
@@ -265,6 +266,31 @@ test("bowler classification uses hero gear ownership and supports older army rec
     { army: { troops, heroes: [{ name: "飞龙公爵", equipment: ["雷电獠牙"] }], spells: { 隐形法术: 3 } } },
   ] }).attacks;
   assert.deepEqual(classified.map(({ strategy }) => strategy), ["天女蓝胖", "隐龙蓝胖"]);
+});
+
+test("main-force styles use trained troop space and distinguish corroborated hero equipment", () => {
+  assert.equal(strategyOf("u8x110-10x12-3x7"), "根蔓武神");
+  assert.equal(strategyOf("u2x17-20x5-4x7"), "熔岩狗球");
+  assert.equal(strategyOf("u2x201-2x202-4x7"), "矿猪");
+  assert.equal(strategyOf("h1e15_20u12x11-12x24-4x7"), "天女矿猪");
+  assert.equal(strategyOf("h2e15_20u12x11-12x24-4x7"), "矿猪");
+  assert.equal(strategyOf("h2e22u3x66-4x7s2x35"), "火球超女巫");
+  assert.equal(strategyOf("h2e22u3x66-4x7"), "超级女巫流");
+  assert.equal(strategyOf("h1e22u3x66-4x7s2x35"), "超级女巫流");
+});
+
+test("fallback names describe troop combinations consistently and keep incomplete records unclassified", () => {
+  const name = strategyOf("u4x167-4x194-2x7");
+  assert.match(name, /陨石戈仑/);
+  assert.match(name, /图腾投手/);
+  assert.equal(strategyOf("u6x194-3x167-2x7"), name);
+  assert.equal(strategyOf("u1x110-2x12-4x7i6x110"), "其他");
+  assert.equal(strategyOf("u8x110-10x999"), "其他");
+  const report = getReport({ source: "import", attacks: [
+    { id: "cn", army: { troops: { 根蔓骑士: 8, 瓦基丽武神: 10, 天使: 3 } } },
+    { id: "no-main-army", armyShareCode: "h2e22i5x110s3x35" },
+  ] });
+  assert.deepEqual(report.attacks.map(row => [row.id, row.strategy]), [["cn", "根蔓武神"]]);
 });
 
 test("workbook adds the defense top list and opponent defense ranks", async () => {

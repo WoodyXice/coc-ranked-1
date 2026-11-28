@@ -13,7 +13,7 @@ function battleTrophy(row, lost) {
 }
 
 export default function BattleLog({ kind, battleViews, isSample, accountName, periodLabel = "本周", showStanding = true,
-  onLookupPlayer, dailyTrophies, standings }) {
+  onLookupPlayer, dailyTrophies, standings, officialStanding, recordedOnly = false }) {
   const headingId = useId();
   const [sort, setSort] = useState({ key: "time", ascending: false });
   const offense = kind === "attacks";
@@ -23,6 +23,8 @@ export default function BattleLog({ kind, battleViews, isSample, accountName, pe
   const label = offense ? "进攻" : "防守";
   const lineupLabel = offense ? "己方阵容" : "对手阵容";
   const rows = battleViews?.[kind] ?? [];
+  const weekly = officialStanding ?? (showStanding && !battleViews?.personalOnly ? battleViews?.standing : null);
+  const weeklyCount = weekly?.[offense ? "attackCount" : "defenseCount"];
   const ranks = offense && standings?.length && !battleViews?.personalOnly ? defenseRanks(standings, mode) : null;
   const columns = [
     { key: "opponent", label: offense ? "防守方" : "进攻方", ascendingFirst: true },
@@ -79,10 +81,11 @@ export default function BattleLog({ kind, battleViews, isSample, accountName, pe
       ) : (
         <>
           <dl className="battle-summary battle-log-stats">
-            <div><dt>{label}场次</dt><dd>{formatNumber.format(rows.length)}</dd></div>
-            <div><dt>{offense ? "三星场次" : "被三星场次"}</dt><dd>{formatNumber.format(threeStars)}</dd></div>
-            <div><dt>{offense ? "平均进攻星数" : "平均被打星数"}</dt><dd>{averageStars}</dd></div>
-            <div><dt>{offense ? "平均摧毁率" : "对手平均摧毁率"}</dt><dd>{average}</dd></div>
+            <div><dt>{weekly ? "本周小组" : recordedOnly ? "已收录" : ""}{label}场次</dt><dd>{weekly ? (Number.isFinite(weeklyCount) ? formatNumber.format(weeklyCount) : "—") : formatNumber.format(rows.length)}</dd>
+              {weekly && <small>已取得 {rows.length} 场明细</small>}</div>
+            <div><dt>{weekly ? "明细" : ""}{offense ? "三星场次" : "被三星场次"}</dt><dd>{formatNumber.format(threeStars)}</dd></div>
+            <div><dt>{weekly ? "明细" : ""}{offense ? "平均进攻星数" : "平均被打星数"}</dt><dd>{averageStars}</dd></div>
+            <div><dt>{weekly ? "明细" : ""}{offense ? "平均摧毁率" : "对手平均摧毁率"}</dt><dd>{average}</dd></div>
           </dl>
           <div className="battle-mobile-sort"><CompactSort columns={columns} sort={sort} onSort={setSort} /></div>
           <div className="battle-card">

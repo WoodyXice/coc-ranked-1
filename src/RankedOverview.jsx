@@ -53,7 +53,7 @@ export default function RankedOverview({ rows, strategies, metricsByTag, board, 
       {scopeControl}
       {enabled && <button type="button" disabled={waiting} onClick={onRefresh}>刷新</button>}
     </div></header>
-    {board.data && (board.data.paginationInterrupted || (limit > 200 && rows.length < limit)) && <p className="overview-status" role="status">
+    {board.data && (board.data.paginationInterrupted || rows.length < limit) && <p className="overview-status" role="status">
       {board.data.paginationInterrupted ? "榜单分页中断，已保留取得的玩家，可点刷新重试。" : `当前接口结果仅有 ${count.format(rows.length)} 名可用玩家。`}
     </p>}
     {status && <div className="overview-status" role={board.status === "error" ? "alert" : "status"}>{status}

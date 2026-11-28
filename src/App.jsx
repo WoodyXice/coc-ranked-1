@@ -85,8 +85,8 @@ export default function App() {
     startNavigation();
     setEntries([]);
   }
-  function openPlayer(tag, group) {
-    const item = newEntry({ tag, kind: "player" });
+  function openPlayer(tag, group, origin) {
+    const item = newEntry({ tag, kind: "player", origin });
     if (lookup.query(tag, group)) {
       startNavigation(true);
       pending.current = item;
@@ -213,7 +213,7 @@ export default function App() {
     </div>
     <footer className="workspace-footer"><UpdatePanel busy={!!busy}/></footer>
     <ReportDialog entries={entries} onBack={back} onClose={closeDialog} search={top && search} feedback={top && status}>
-      {entry => entry.kind === "player" ? <TemporaryPlayer lookup={{ result: entry.result }} onLookupPlayer={canLookup ? openPlayer : undefined}
+      {entry => entry.kind === "player" ? <TemporaryPlayer lookup={{ result: entry.result }} origin={entry.origin} onLookupPlayer={canLookup ? openPlayer : undefined}
         onOpenLegend={canLookup ? () => choosePage("global") : undefined}/> :
         <VillageReport entry={entry} busy={!!busy} run={run} onManage={() => choosePage("villages")} onOpenLegend={() => choosePage("global")}
           onRefresh={entry.kind === "saved" && canLookup ? () => openSaved(entry.tag, true) : undefined}

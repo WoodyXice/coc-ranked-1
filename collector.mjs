@@ -131,6 +131,19 @@ const chineseEquipment = {
   59: '雷电獠牙', 60: '反击卡组', 61: '传送吊坠',
 };
 
+// Use the share-code catalog for named/translated imports as well as decoded armies.
+const troopCatalog = new Map();
+for (const [id, [name, housingSpace]] of Object.entries(troopData)) {
+  const displayName = chineseTroops[id] ?? name;
+  const troop = { name, displayName, housingSpace };
+  troopCatalog.set(name.toLowerCase(), troop);
+  troopCatalog.set(displayName, troop);
+}
+
+export function lookupArmyTroop(name) {
+  return troopCatalog.get(name.toLowerCase());
+}
+
 function shareCode(value) {
   return typeof value === 'string' && value.trim().length <= 8192 ? value.trim() : '';
 }
@@ -687,7 +700,8 @@ function mergeBattleDetails(recorded, candidate) {
   const army = betterArmy(candidate, recorded)
     ? { armyShareCode: candidate.armyShareCode, armySource: candidate.armySource }
     : {};
-  const decodedArmy = recorded.army ?? candidate.army;
+  const decodedArmy = army.armyShareCode ? candidate.army ?? decodeArmyShareCode(army.armyShareCode)
+    : recorded.army ?? (candidate.armyShareCode === recorded.armyShareCode || !recorded.armyShareCode ? candidate.army : undefined);
   return {
     ...recorded,
     ...army,
@@ -749,22 +763,29 @@ function mergeBattles(current, cached) {
     complete.set(battle.id, update ? mergeSameBattle(update, battle) : battle);
   }
 
-  // The group API has returned the same creation time in both millisecond
-  // precision and rounded to a whole second. Preserve the exact time and ID.
+  // Some sources round milliseconds, others truncate. Keep the precise ID,
+  // but only when neither timestamp could identify a second nearby battle.
   const timed = [...complete.values()].map((battle) => ({ battle, epoch: Date.parse(battle.timestamp) }))
     .filter(({ epoch }) => Number.isFinite(epoch));
-  const bySecond = Map.groupBy(timed, ({ battle, epoch }) => `${pairKey(battle)}|${Math.round(epoch / 1000)}`);
-  for (const entries of bySecond.values()) {
-    if (entries.length !== 2) continue;
-    const whole = entries.find(({ epoch }) => epoch % 1000 === 0);
-    const precise = entries.find(({ epoch }) => epoch % 1000 !== 0);
-    if (!whole || !precise) continue;
-    const firstCups = whole.battle.trophies;
-    const secondCups = precise.battle.trophies;
-    if (Number.isFinite(firstCups) && Number.isFinite(secondCups) && firstCups !== secondCups
-        && trophyEvidence(whole.battle) === trophyEvidence(precise.battle)) continue;
-    complete.set(precise.battle.id, mergeSameBattle(precise.battle, whole.battle));
-    complete.delete(whole.battle.id);
+  const wholeTimes = Map.groupBy(timed.filter(({ epoch }) => epoch % 1000 === 0),
+    ({ battle, epoch }) => `${pairKey(battle)}|${epoch / 1000}`);
+  const candidates = new Map();
+  const ambiguous = new Set();
+  for (const { battle, epoch } of timed) {
+    if (epoch % 1000 === 0) continue;
+    const seconds = new Set([Math.floor(epoch / 1000), Math.round(epoch / 1000)]);
+    const matches = [...seconds].flatMap(second => wholeTimes.get(`${pairKey(battle)}|${second}`) ?? [])
+      .map(entry => entry.battle).filter(whole => !Number.isFinite(whole.trophies) || !Number.isFinite(battle.trophies)
+        || whole.trophies === battle.trophies || trophyEvidence(whole) !== trophyEvidence(battle));
+    for (const whole of matches) {
+      if (matches.length > 1 || candidates.has(whole.id)) ambiguous.add(whole.id);
+      candidates.set(whole.id, battle);
+    }
+  }
+  for (const [id, precise] of candidates) {
+    if (ambiguous.has(id)) continue;
+    complete.set(precise.id, mergeSameBattle(precise, complete.get(id)));
+    complete.delete(id);
   }
 
   const rows = [...complete.values()];
@@ -1186,7 +1207,7 @@ export function legendBoardLocation(value = 'global') {
 }
 
 export function legendBoardLimit(value = 200) {
-  if (![200, 1000, 2000, 10000].includes(value)) throw clientError(400, '请选择有效的排行榜人数。');
+  if (!Number.isSafeInteger(value) || value < 1) throw clientError(400, '榜单人数须为正整数。');
   return value;
 }
 
@@ -1396,6 +1417,70 @@ function temporaryStanding(member, attacks, defenses) {
     clanTag: normalizeTag(member.clanTag),
     clanName: typeof member.clanName === 'string' ? member.clanName.trim() : '',
   };
+}
+
+// Group creation times and personal battle timestamps can differ by the duration of
+// a battle. Attach personal detail only to a mutually unique match in the same direction.
+export function weeklyPlayerBattleViews(board, history) {
+  const views = board.battleViews;
+  const start = Date.parse(`${board.week}T05:00:00Z`);
+  function records(direction, countKey) {
+    const group = views[direction] ?? [];
+    const expected = views.standing?.[countKey];
+    const personal = (history?.[direction] ?? []).filter(row => {
+      const time = Date.parse(row.battleTimestamp || row.timestamp);
+      return row.battleType === 'RANKED' && time >= start && time < start + 7 * day;
+    });
+    const indexed = groupByPair(personal);
+    const official = groupByPair(group);
+    const byId = new Map(personal.map(row => [row.id, row]));
+    const used = new Set();
+    const detailed = group.map(row => {
+      let match = byId.get(row.id);
+      if (!match) {
+        const key = pairKey(row);
+        const near = nearest(Date.parse(row.timestamp), indexed.get(key) ?? []);
+        if (near && nearest(near.epoch, official.get(key) ?? [])?.battle === row) match = near.battle;
+      }
+      if (!match || used.has(match.id)) return row;
+      used.add(match.id);
+      return { ...mergeBattleDetails(row, match), opponentName: row.opponentName || match.opponentName };
+    });
+    if (Number.isInteger(expected) && detailed.length === expected) return detailed.sort(newestFirst);
+    const additional = personal.filter(row => !used.has(row.id) && !(official.get(pairKey(row)) ?? [])
+      .some(entry => Math.abs(entry.epoch - Date.parse(row.timestamp)) <= matchWindow));
+    const combined = [...detailed, ...additional];
+    // An ambiguous time match must never inflate the detail count beyond the official count.
+    if (Number.isInteger(expected) && combined.length > expected) {
+      return personal.length > detailed.length && personal.length <= expected ? personal.sort(newestFirst) : detailed.sort(newestFirst);
+    }
+    return combined.sort(newestFirst);
+  }
+  return { ...views, attacks: records('attacks', 'attackCount'), defenses: records('defenses', 'defenseCount') };
+}
+
+// Keep both sources separately on disk. A later lookup can resolve a time ambiguity
+// without deleting either original observation or treating it as another battle.
+export function playerHistoryWithWeeklyBoards(personal, boards) {
+  if (!boards.length) return personal;
+  const weeks = new Map(boards.map(board => [board.week, { board, attacks: [], defenses: [] }]));
+  const history = { attacks: [], defenses: [] };
+  for (const direction of ['attacks', 'defenses']) {
+    for (const row of personal[direction] ?? []) {
+      const epoch = Date.parse(row.battleTimestamp || row.timestamp);
+      const scoped = row.battleType === 'RANKED' && Number.isFinite(epoch)
+        && weeks.get(weekMonday(epoch - rankedWeekStartOffset));
+      (scoped || history)[direction].push(row);
+    }
+  }
+  for (const scoped of weeks.values()) {
+    const { attacks, defenses } = weeklyPlayerBattleViews(scoped.board, scoped);
+    history.attacks.push(...attacks);
+    history.defenses.push(...defenses);
+  }
+  history.attacks.sort(newestFirst);
+  history.defenses.sort(newestFirst);
+  return history;
 }
 
 async function temporaryWeeklyLeaderboard(request, league, profile, start, end) {

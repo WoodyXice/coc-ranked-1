@@ -132,8 +132,13 @@ function ribbonCells(rim, width, height) {
 function territories(categories, nodes, width, height) {
   const painted = new Set();
   const zones = [];
-  for (const { key } of categories) {
-    const allMembers = nodes.filter(p => p.cluster === key);
+  const clusters = categories.map(({ key }) => ({ key, members: nodes.filter(p => p.cluster === key) }))
+    .filter(cluster => cluster.members.length >= 2);
+  if (!clusters.length) return zones;
+  const capacity = Math.min(clusters.length, width < 520 ? 4 : width < 800 ? 5 : 7);
+  const referenceCount = clusters.slice(0, capacity).reduce((sum, c) => sum + c.members.length, 0) / capacity;
+  for (const { key, members: allMembers } of clusters) {
+    const areaTarget = clamp(.29 / capacity * Math.sqrt(allMembers.length / referenceCount), .026, .077);
     // The tint represents a local pair. Bounded candidates keep one dominant style cheap to lay out.
     const members = allMembers.length <= 18 ? allMembers : Array.from({ length: 18 }, (_, i) =>
       allMembers[Math.round(i * (allMembers.length - 1) / 17)]);
@@ -147,9 +152,10 @@ function territories(categories, nodes, width, height) {
         const cells = ribbonCells(ribbon.rim, width, height);
         const covered = cells.filter(cell => painted.has(cell)).length;
         const area = cells.length / (44 * 28);
-        if (area < .018 || area > .096 || covered > cells.length * .055) continue;
+        if (area < .015 || area > areaTarget * 1.35 || covered > cells.length * .055 ||
+            painted.size + cells.length - covered > .32 * 44 * 28) continue;
         const central = cells.filter(cell => Math.abs(cell % 44 + .5 - 22) < 7 && Math.abs(Math.floor(cell / 44) + .5 - 14) < 6).length;
-        const score = outwardness(ribbon.center, width, height) - 7 * Math.abs(area - .071)
+        const score = outwardness(ribbon.center, width, height) - 9 * Math.abs(area - areaTarget)
           - (3 * covered + 1.5 * central) / cells.length;
         if (score > bestScore) { best = { ribbon, cells }; bestScore = score; }
       }
@@ -158,15 +164,50 @@ function territories(categories, nodes, width, height) {
     const { ribbon, cells } = best;
     cells.forEach(cell => painted.add(cell));
     zones.push({ key, d: ribbon.d, ...ribbon.label });
-    if (zones.length >= (width < 520 ? 3 : 4)) break;
+    if (zones.length >= capacity) break;
   }
   return zones;
+}
+
+// A routed line should pass behind as few unrelated markers as possible. Try
+// opposite elbows, both inside the canvas, and keep the clearer of the two.
+function edgePath(a, b, nodes, width, height, bridge) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const length = Math.hypot(dx, dy);
+  const bend = Math.min(length * .15, bridge ? 29 : 17);
+  const normalX = -dy / length * bend, normalY = dx / length * bend;
+  const side = randomFor(a.playerTag + ":" + b.playerTag)() < .5 ? -1 : 1;
+  function route(sign) {
+    const point = t => ({
+      x: clamp(a.x + dx * t + normalX * sign, 6, width - 6),
+      y: clamp(a.y + dy * t + normalY * sign, 6, height - 6),
+    });
+    return length < 110 ? [a, point(.52), b] : [a, point(.32), point(.64), b];
+  }
+  function obstruction(points) {
+    let cost = 0;
+    for (let i = 1; i < points.length; i++) {
+      const start = points[i - 1], end = points[i];
+      const vx = end.x - start.x, vy = end.y - start.y;
+      for (const p of nodes) {
+        if (p === a || p === b || p.x < Math.min(start.x, end.x) - 14 || p.x > Math.max(start.x, end.x) + 14 ||
+            p.y < Math.min(start.y, end.y) - 14 || p.y > Math.max(start.y, end.y) + 14) continue;
+        const t = clamp(((p.x - start.x) * vx + (p.y - start.y) * vy) / (vx * vx + vy * vy || 1), 0, 1);
+        cost += Math.max(0, 14 - Math.hypot(p.x - start.x - t * vx, p.y - start.y - t * vy));
+      }
+    }
+    return cost;
+  }
+  const preferred = route(side);
+  const other = route(-side);
+  const points = obstruction(preferred) <= obstruction(other) ? preferred : other;
+  return points.map((p, i) => `${i ? "L" : "M"}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
 }
 
 function mapEdges(nodes, width, height, mode) {
   const uses = nodes.map(node => new Set((node.uses ?? []).map(entry => entry.strategy).filter(Boolean)));
   const pairs = [];
-  const maxLength = Math.min(Math.hypot(width, height) * .33, 320);
+  const maxLength = nodes.length <= 4 ? Math.hypot(width, height) : Math.min(Math.hypot(width, height) * .33, 320);
   const bridgeLength = Math.min(Math.hypot(width, height) * .52, 500);
   for (let i = 0; i < nodes.length; i++) {
     for (let j = i + 1; j < nodes.length; j++) {
@@ -181,14 +222,17 @@ function mapEdges(nodes, width, height, mode) {
     }
   }
   pairs.sort((a, b) => a.distance - b.distance);
-  const degree = nodes.map(() => 0);
+  const neighbours = nodes.map(() => []);
   const edges = [];
-  // Preserve room for the player dots as density rises, especially when a popular style connects everyone.
-  const edgeLimit = Math.min(Math.ceil(nodes.length * 1.25), width < 520 ? 30 : width < 800 ? 52 : 76);
+  const edgeLimit = Math.min(Math.ceil(nodes.length * 1.8), width < 520 ? 45 : width < 800 ? 88 : 140);
   function link(pair) {
     const { i, j } = pair;
-    edges.push({ a: nodes[i], b: nodes[j] });
-    degree[i]++; degree[j]++; pair.used = true;
+    const a = nodes[i], b = nodes[j];
+    const kind = mode !== "style" ? "band" : pair.cross ? "bridge" : "primary";
+    edges.push({ a, b, d: edgePath(a, b, nodes, width, height, pair.cross), kind });
+    neighbours[i].push(b);
+    neighbours[j].push(a);
+    pair.used = true;
   }
   if (mode === "style" && nodes.length >= 8) {
     // A few links between different primary styles reveal genuine secondary-style
@@ -200,23 +244,34 @@ function mapEdges(nodes, width, height, mode) {
     const linkedGroups = new Set();
     for (const pair of bridges) {
       const key = JSON.stringify([nodes[pair.i].cluster, nodes[pair.j].cluster].sort());
-      if (linkedGroups.has(key) || degree[pair.i] || degree[pair.j]) continue;
+      if (linkedGroups.has(key) || neighbours[pair.i].length || neighbours[pair.j].length) continue;
       link(pair);
       linkedGroups.add(key);
-      if (edges.length >= (width < 520 ? 2 : 3)) break;
+      if (edges.length >= (width < 520 ? 2 : width < 800 ? 4 : 6)) break;
     }
   }
-  // Give remote members their closest eligible link first, then add a few local triangles.
-  for (const connectIsolated of [true, false]) {
+  // Give isolated players a neighbour first. Then distribute links around each
+  // marker so a handful of popular players don't collect all the linework.
+  for (const maxDegree of [2, 3, 5]) {
     for (const pair of pairs) {
       const { i, j } = pair;
-      if (pair.distance > maxLength || pair.used || degree[i] >= 3 || degree[j] >= 3) continue;
-      if (connectIsolated && degree[i] && degree[j]) continue;
+      if (pair.used || pair.distance > maxLength || neighbours[i].length >= maxDegree || neighbours[j].length >= maxDegree) continue;
+      if (maxDegree === 2 && neighbours[i].length && neighbours[j].length) continue;
+      if (maxDegree === 5 && (crowdedAngle(i, j) || crowdedAngle(j, i))) continue;
       link(pair);
       if (edges.length >= edgeLimit) return edges;
     }
   }
   return edges;
+
+  function crowdedAngle(i, j) {
+    const from = nodes[i], to = nodes[j];
+    const dx = to.x - from.x, dy = to.y - from.y;
+    return neighbours[i].some(p => {
+      const x = p.x - from.x, y = p.y - from.y;
+      return dx * x + dy * y > .94 * Math.hypot(dx, dy) * Math.hypot(x, y);
+    });
+  }
 }
 
 const densityLimits = {

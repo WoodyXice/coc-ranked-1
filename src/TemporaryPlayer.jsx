@@ -4,6 +4,7 @@ import PlayerStrategyStats from "./PlayerStrategyStats.jsx";
 import GroupReport from "./GroupReport.jsx";
 import EquipmentFilter from "./EquipmentFilter.jsx";
 import { formatTime } from "./battle-time.mjs";
+import { weeklyStanding } from "./weekly-standing.mjs";
 import Standings, { LeagueBadge, scoreText, Trophy } from "./Standings.jsx";
 import "./temporary-player.css";
 
@@ -54,10 +55,9 @@ function isLegendReport(result) {
   return !result.groupReport && (result.period === "retained" || result.leagueTier?.id === legendOneTierId);
 }
 
-function PlayerProfile({ result, onOpenLegend, onLookupPlayer }) {
+function PlayerProfile({ result, onOpenLegend, onLookupPlayer, details, onGroupDetails }) {
   const { battleViews, profile, leagueTier, groupReport, weeklyLeaderboard, weeklyLeaderboardStatus } = result;
   const [rankingOpen, setRankingOpen] = useState(false);
-  const [details, setDetails] = useState(null);
   const [detailStatus, setDetailStatus] = useState("idle");
   const [groupView, setGroupView] = useState("standings");
   const [equipmentFocus, setEquipmentFocus] = useState(null);
@@ -82,7 +82,7 @@ function PlayerProfile({ result, onOpenLegend, onLookupPlayer }) {
       const next = await fetchDetails({ playerTag, groupTag, seasonId, week, force });
       if (next?.groupTag !== groupTag || next.week !== week || String(next.seasonId) !== String(seasonId)
         || !next.rows?.some((row) => row.playerTag === playerTag)) throw new Error("小组榜单不匹配");
-      setDetails(next);
+      onGroupDetails(next);
       setDetailStatus(next.partial ? "partial" : "ready");
     } catch {
       setDetailStatus("error");
@@ -135,7 +135,10 @@ function PlayerProfile({ result, onOpenLegend, onLookupPlayer }) {
           </div>}
           {groupView === "standings" && <Standings rows={board.rows} battleViews={board.battleViews ?? { playerTag: battleViews.playerTag }}
             leagueTier={board.leagueTier ?? leagueTier} groupTag={board.groupTag} week={board.week}
-            attacks={board.attacks} onLookupPlayer={onLookupPlayer} focus={equipmentFocus}
+            attacks={board.attacks} onLookupPlayer={onLookupPlayer && (tag => onLookupPlayer(tag, undefined, {
+              groupTag: board.groupTag, week: board.week, seasonId: board.seasonId,
+              row: board.rows.find(player => player.playerTag === tag),
+            }))} focus={equipmentFocus}
             showOwnResults={false} requireFullDefenseRanks />}
           {groupView === "equipment" && details && <EquipmentFilter attacks={details.attacks} standings={details.rows}
             groupTag={details.groupTag} week={details.week} onOpenPlayer={(playerTag, equipment) => {
@@ -150,14 +153,14 @@ function PlayerProfile({ result, onOpenLegend, onLookupPlayer }) {
   );
 }
 
-function BattleDirections({ battles, kind, setKind, logId, daily = false, groupReport }) {
+function BattleDirections({ battles, kind, setKind, logId, daily = false, standing }) {
   return (
     <div className="metric-control legend-player-directions" role="group" aria-label="对战方向">
       {Object.entries(directions).map(([direction, label]) => {
         const count = battles[direction]?.length ?? 0;
-        const groupCount = battles.standing?.[direction === "attacks" ? "attackCount" : "defenseCount"];
+        const groupCount = standing?.[direction === "attacks" ? "attackCount" : "defenseCount"];
         const total = daily ? `${count === 0 ? "已查到 " : ""}${count}/${dailyLimit}`
-          : groupReport ? `榜单 ${Number.isFinite(groupCount) ? `${scoreText(groupCount)} 场` : "—"} · 明细 ${scoreText(count)} 场`
+          : standing ? `榜单 ${Number.isFinite(groupCount) ? `${scoreText(groupCount)} 场` : "—"} · 明细 ${scoreText(count)} 场`
             : `已收录 ${count} 场`;
         return (
           <button key={direction} type="button" aria-pressed={kind === direction} aria-controls={logId}
@@ -192,11 +195,12 @@ function HistoryCoverage({ recentCoverage, history, historySaved }) {
   );
 }
 
-function PlayerHistory({ result, onLookupPlayer, onOpenLegend }) {
+function PlayerHistory({ result, onLookupPlayer, onOpenLegend, origin }) {
   const { battleViews, history = battleViews, fetchedAt, weekStart, recentCoverage, historySaved } = result;
   const defaultMode = isLegendReport(result) ? "LEGEND" : "RANKED";
   const [mode, setMode] = useState(defaultMode);
   const [selectedRange, setSelectedRange] = useState("");
+  const [details, setDetails] = useState(null);
   const [kind, setKind] = useState(battleViews.attacks?.length || !battleViews.defenses?.length ? "attacks" : "defenses");
   const logId = useId();
   const today = legendDay(Date.now());
@@ -220,22 +224,26 @@ function PlayerHistory({ result, onLookupPlayer, onOpenLegend }) {
   const fallbackRange = legend ? today : "week";
   const range = selectedRange === "week" || selectedRange === "all" || days.has(selectedRange) ? selectedRange : fallbackRange;
   const singleDay = days.has(range);
-  const battles = Object.fromEntries(Object.entries(archived).map(([direction, entries]) => [direction,
+  const weekly = result.weeklyLeaderboard;
+  const weekBoard = mode === "RANKED" && weekly?.week === weekStart &&
+    weekly?.battleViews?.playerTag === battleViews.playerTag ? weekly : null;
+  const standing = range === "week" ? weeklyStanding(weekBoard, battleViews.playerTag, details, origin) : null;
+  const battles = standing ? weekBoard.battleViews : Object.fromEntries(Object.entries(archived).map(([direction, entries]) => [direction,
     entries.filter(({ day }) => range === "all" || (range === "week" ? day >= weekStart : day === range)).map(({ row }) => row),
   ]));
   const attackTrophies = sumRecordedTrophies(battles.attacks);
   const defenseTrophies = sumRecordedTrophies(battles.defenses, legend);
   const netTrophies = attackTrophies === null || defenseTrophies === null ? null : attackTrophies + defenseTrophies;
-  const scope = singleDay ? "当日" : "已收录";
+  const scope = standing ? "本周小组" : singleDay ? "当日" : "已收录";
   const strategyRanges = [
     { key: "recent", label: "本次近期", attacks: (result.recentAttacks ?? []).filter((row) => row.battleType === mode) },
-    { key: "week", label: "本周", attacks: archived.attacks.filter(({ day }) => day >= weekStart).map(({ row }) => row) },
+    { key: "week", label: "本周", attacks: weekBoard?.battleViews.attacks ?? archived.attacks.filter(({ day }) => day >= weekStart).map(({ row }) => row) },
     { key: "all", label: "全部已收录", attacks: archived.attacks.map(({ row }) => row) },
   ];
 
   return (
     <>
-      <PlayerProfile result={result} onOpenLegend={onOpenLegend} onLookupPlayer={onLookupPlayer} />
+      <PlayerProfile result={result} onOpenLegend={onOpenLegend} onLookupPlayer={onLookupPlayer} details={details} onGroupDetails={setDetails} />
       <PlayerStrategyStats ranges={strategyRanges} />
       <div className="legend-player-day-bar legend-player-week-bar query-card">
         <div className="history-controls">
@@ -254,22 +262,23 @@ function PlayerHistory({ result, onLookupPlayer, onOpenLegend }) {
               <option value="all">全部已收录</option>
             </select>
           </label>
-          <BattleDirections battles={battles} kind={kind} setKind={setKind} logId={logId} daily={legend && singleDay} />
+          <BattleDirections battles={battles} kind={kind} setKind={setKind} logId={logId} daily={legend && singleDay} standing={standing} />
         </div>
         <HistoryCoverage recentCoverage={recentCoverage} history={history} historySaved={historySaved} />
-        <p>北京时间 13:00 换日。日期和杯数按已收录的战报统计。</p>
+        <p>{standing ? `小组 ${weekBoard.groupTag} · ${weekBoard.week} 周 · 场次与得杯取自周榜，明细按已取得的对战显示。`
+          : "北京时间 13:00 换日。日期和杯数按已收录的战报统计。"}</p>
         <LookupTime fetchedAt={fetchedAt} />
       </div>
       <dl className="battle-summary legend-player-week-cups" aria-label={`${scope}杯数`}>
-        <div><dt>{scope}进攻得杯</dt><dd><Trophy value={attackTrophies} /></dd></div>
-        <div><dt>{scope}{legend ? "防守扣杯" : "防守得杯"}</dt><dd><Trophy value={defenseTrophies} /></dd></div>
-        <div><dt>{scope}{legend ? "净杯" : "得杯合计"}</dt><dd><Trophy value={netTrophies} /></dd></div>
+        <div><dt>{scope}进攻得杯</dt><dd><Trophy value={standing ? standing.attackTrophies : attackTrophies} /></dd></div>
+        <div><dt>{scope}{legend ? "防守扣杯" : "防守得杯"}</dt><dd><Trophy value={standing ? standing.defenseTrophies : defenseTrophies} /></dd></div>
+        <div><dt>{scope}{standing ? "总杯数" : legend ? "净杯" : "得杯合计"}</dt><dd><Trophy value={standing ? standing.trophies : netTrophies} change={!standing} /></dd></div>
       </dl>
       <div id={logId}>
         {battles[kind].length ? <BattleLog key={`${mode}-${range}-${kind}`} kind={kind}
           battleViews={{ ...battleViews, ...battles, defenseTrophyMode: legend ? "lost" : "earned" }}
           isSample={false} periodLabel={singleDay ? "当日" : range === "week" ? "本周" : "历史"}
-          showStanding={false} onLookupPlayer={onLookupPlayer} />
+          showStanding={false} officialStanding={standing} recordedOnly={!standing} onLookupPlayer={onLookupPlayer} />
           : <div className="empty-card"><p>这段时间暂无已收录的{directions[kind]}记录。</p></div>}
       </div>
     </>
@@ -288,7 +297,7 @@ function PlayerWeek({ result, onLookupPlayer }) {
       <PlayerProfile result={result} />
       <PlayerStrategyStats ranges={[{ key: "week", label: "本周小组", attacks }]} />
       <div className="legend-player-day-bar legend-player-week-bar query-card">
-        <BattleDirections battles={battleViews} kind={kind} setKind={setKind} logId={logId} groupReport={groupReport} />
+        <BattleDirections battles={battleViews} kind={kind} setKind={setKind} logId={logId} standing={standing} />
         {(week || groupTag) && <p>{[week && `${week} 周`, groupTag && `小组 ${groupTag}`].filter(Boolean).join(" · ")}</p>}
         <p>杯数和场次来自同一份小组排位榜。明细显示战报收录的对战。</p>
         <LookupTime fetchedAt={fetchedAt} label="小组战报时间" />
@@ -301,7 +310,7 @@ function PlayerWeek({ result, onLookupPlayer }) {
       <div id={logId}>
         {!battleViews[kind]?.length ? <div className="empty-card"><p>这份小组战报未收录该方向的对战明细。</p></div>
           : <BattleLog key={kind} kind={kind} battleViews={battleViews} isSample={false}
-            periodLabel="小组" showStanding={false} onLookupPlayer={onLookupPlayer} />}
+            periodLabel="小组" showStanding={false} officialStanding={standing} onLookupPlayer={onLookupPlayer} />}
       </div>
     </>
   );
@@ -513,7 +522,7 @@ export function TemporaryPlayerSearch({ lookup, accounts, disabled, onLookupPlay
   );
 }
 
-export default function TemporaryPlayer({ lookup, onLookupPlayer, onOpenLegend }) {
+export default function TemporaryPlayer({ lookup, onLookupPlayer, onOpenLegend, origin }) {
   const headingId = useId();
   const { result, waiting, error } = lookup;
   const groupReport = result?.groupReport;
@@ -522,7 +531,7 @@ export default function TemporaryPlayer({ lookup, onLookupPlayer, onOpenLegend }
   return (
     <section className="legend-player" aria-labelledby={headingId}>
       <h2 id={headingId}>村庄战报</h2>
-      {result && <PlayerReport result={result}
+      {result && <PlayerReport result={result} origin={origin}
         key={[result.battleViews.playerTag, groupReport?.groupTag ?? result.weeklyLeaderboard?.groupTag,
           groupReport?.week ?? result.weeklyLeaderboard?.week, result.weeklyLeaderboard?.seasonId].join(":")}
         onLookupPlayer={onLookupPlayer} onOpenLegend={onOpenLegend} />}

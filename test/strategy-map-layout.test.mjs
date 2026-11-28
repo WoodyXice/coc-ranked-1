@@ -35,7 +35,7 @@ test("density budgets change the number of visible representatives without trunc
       assert.equal(nodes.length, limits[i]);
       assert.equal(nodes.at(-1).rank, 10000);
       assert.deepEqual(nodes.slice(0, 3).map(p => p.rank), [1, 2, 3]);
-      assert.ok(edges.length <= (width < 520 ? 30 : width < 800 ? 52 : 76));
+      assert.ok(edges.length <= (width < 520 ? 45 : width < 800 ? 88 : 140));
       heights.push(height);
     }
     assert.ok(heights[0] < heights[1] && heights[1] < heights[2]);
@@ -61,7 +61,7 @@ test("nodes use horizontal space and stay separate while official rank has a bro
     }
     const meanY = subset => subset.reduce((sum, p) => sum + p.y, 0) / subset.length;
     assert.ok(meanY(nodes.slice(0, 3)) < meanY(nodes.slice(-3)));
-    assert.ok(zones.length >= 1 && zones.length <= 4);
+    assert.ok(zones.length >= 1 && zones.length <= (width < 520 ? 4 : width < 800 ? 5 : 7));
     assert.equal(new Set(zones.map(z => z.key)).size, zones.length);
     for (const z of zones) {
       assert.ok(nodes.filter(p => p.cluster === z.key).length >= 2);
@@ -72,16 +72,25 @@ test("nodes use horizontal space and stay separate while official rank has a bro
   }
 });
 
-test("links are short, sparse and explainable from actual strategy uses or the selected metric band", () => {
+test("links form a bounded mesh of routed shared styles or members of the same metric band", () => {
   const width = 950;
   const { nodes, edges, height } = buildStrategyMap(players, groups, width);
-  assert.ok(edges.length > 5 && edges.length <= Math.ceil(nodes.length * 1.25));
+  assert.ok(edges.length > nodes.length * 1.4 && edges.length <= Math.ceil(nodes.length * 1.8));
   const seen = new Set();
   const bridges = [];
-  for (const { a, b } of edges) {
+  const degree = new Map();
+  for (const { a, b, kind, d } of edges) {
     assert.ok(nodes.includes(a) && nodes.includes(b) && a !== b);
     assert.ok(a.uses.some(x => b.uses.some(y => y.strategy === x.strategy)));
     const length = Math.hypot(a.x - b.x, a.y - b.y);
+    assert.equal(kind, a.cluster === b.cluster ? "primary" : "bridge");
+    const coords = d.match(/-?\d+\.\d+/g).map(Number);
+    assert.ok(coords.length === 6 || coords.length === 8);
+    assert.ok(Math.hypot(coords[0] - a.x, coords[1] - a.y) < .08);
+    assert.ok(Math.hypot(coords.at(-2) - b.x, coords.at(-1) - b.y) < .08);
+    const bend = Math.abs((b.y - a.y) * (coords[2] - a.x) - (b.x - a.x) * (coords[3] - a.y)) / length;
+    assert.ok(bend > 1);
+    for (const endpoint of [a, b]) degree.set(endpoint, (degree.get(endpoint) ?? 0) + 1);
     assert.ok(length <= Math.min(500, Math.hypot(width, height) * .52));
     if (length > Math.min(320, Math.hypot(width, height) * .33)) {
       assert.notEqual(a.cluster, b.cluster);
@@ -91,7 +100,8 @@ test("links are short, sparse and explainable from actual strategy uses or the s
     assert.ok(!seen.has(key));
     seen.add(key);
   }
-  assert.ok(bridges.length <= 3);
+  assert.ok(Math.max(...degree.values()) <= 5);
+  assert.ok(bridges.length <= 6);
   assert.equal(new Set(bridges.flat()).size, bridges.length * 2);
   const bandOnly = players.slice(0, 10).map(p => ({ ...p, uses: [], cluster: "r75" }));
   const bands = [{ key: "r75", name: "75–90%" }];
@@ -104,13 +114,14 @@ test("links are short, sparse and explainable from actual strategy uses or the s
   for (const mode of ["rate", "net"]) {
     const bandMap = buildStrategyMap(mixedBands, [...bands, { key: "r50" }], 375, "rank", mode);
     assert.ok(bandMap.edges.length > 0);
-    assert.ok(bandMap.edges.every(({ a, b }) => a.cluster === b.cluster));
+    assert.ok(bandMap.edges.every(({ a, b, kind }) => a.cluster === b.cluster && kind === "band"));
   }
 });
 
 test("curved tints occupy distinct outer neighbourhoods and leave the centre mostly clear", () => {
   const width = 1012;
   const { zones, height } = buildStrategyMap(players, groups, width);
+  assert.equal(zones.length, groups.length);
   const occupied = new Set();
   let overlaps = 0, centerCells = 0;
   for (const zone of zones) {
@@ -158,4 +169,9 @@ test("empty, single and sparse filtered results keep the real players and origin
   const map = buildStrategyMap(subset, groups, 1200);
   assert.deepEqual(map.nodes.map(({ x, y, ...p }) => p), subset);
   assert.ok(subset.every(p => !("x" in p) && !("y" in p)));
+  const pair = [players[0], players[2]]; // different primary styles, one shared secondary style
+  const closeup = buildStrategyMap(pair, groups, 1200);
+  assert.equal(closeup.edges.length, 1);
+  assert.equal(closeup.edges[0].kind, "bridge");
+  assert.equal(buildStrategyMap([players[0], players[1]], groups, 1200).edges.length, 0);
 });

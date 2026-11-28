@@ -78,7 +78,7 @@ test("a legacy local board remains distinguishable when no official tier is avai
 });
 
 test("requested ranking ranges use official ranks and accept an exhausted first page", async () => {
-  for (const limit of [1000, 2000, 10000]) {
+  for (const limit of [37, 237, 863, 1000, 2000, 10000, 12345]) {
     const path = `/v1/locations/global/rankings/players?limit=${limit}`;
     const item = (rank) => ({ rank, tag: `#R${rank}`, trophies: 5000 });
     const { calls, options } = apiFixture({ [path]: { items: [item(limit + 1), item(1), item(limit)] } });
@@ -89,7 +89,7 @@ test("requested ranking ranges use official ranks and accept an exhausted first 
     assert.equal(calls.length, 1);
   }
   const { calls, options } = apiFixture({});
-  for (const limit of [null, 0, 300, 10001, "1000"]) {
+  for (const limit of [null, 0, -2, 3.5, Infinity, Number.MAX_SAFE_INTEGER + 1, "1000"]) {
     await assert.rejects(fetchLegendLeaderboard({ token: mockToken, limit }, options), { status: 400 });
   }
   assert.equal(calls.length, 0);
