@@ -135,6 +135,11 @@ function assertDistinctAttackHistory(result) {
   assert.equal(result.telemetry.collectedAttacks, 2);
   assert.equal(result.telemetry.expectedAttacks, 2);
   assertCompleteStanding(result);
+  const member = result.groupBattles[result.standings[0].playerTag];
+  assert.equal(member.attacks.length, result.standings[0].attackCount);
+  assert.equal(member.defenses.length, result.standings[0].defenseCount);
+  assert.equal(member.defenses[0].opponentTag, result.battleViews.defenses[0].opponentTag);
+  assert.notEqual(member.defenses[0].opponentTag, result.standings[0].playerTag);
 }
 
 test("changing group timestamp precision preserves two real same-minute attacks", async (context) => {
@@ -151,6 +156,7 @@ test("changing group timestamp precision preserves two real same-minute attacks"
   assert.equal(result.standings[0].attackDurationAverage, 31);
   assert.equal(result.battleViews.defenses[0].armyShareCode, defenseArmyCode);
   assert.equal((await fixture.saved()).attacks.length, 2);
+  assert.equal(result.groupBattles[result.standings[0].playerTag].defenses[0].armyShareCode, defenseArmyCode);
 });
 
 test("an already doubled cache collapses both variants and preserves older defense note IDs", async (context) => {
@@ -292,5 +298,5 @@ test("Legend I can show a badge without assigning a weekly attack limit", async 
     id: 105000036, name: "传奇 I", iconUrl: officialIconSmall, attackLimit: null,
   });
   assert.equal(result.battleViews.personalOnly, true);
-  assert.deepEqual(result.standings, []);
+  assert.deepEqual(result.standings, []);  assert.equal(result.groupBattles, undefined);
 });

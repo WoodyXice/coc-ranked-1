@@ -1,7 +1,6 @@
-import { Fragment, useEffect, useId, useMemo, useState } from "react";
-import ArmyLineup, { ArmyAttribution, hasLineup } from "./ArmyLineup.jsx";
+import { useMemo, useState } from "react";
 import { formatDuration, formatShortTime, formatTime } from "./battle-time.mjs";
-import { DEFENSE_TOP_N, attackEquipmentIds, defenseRanks, myAttacksByOpponent } from "../insights.mjs";
+import { DEFENSE_TOP_N, defenseRanks, myAttacksByOpponent } from "../insights.mjs";
 
 const number = new Intl.NumberFormat("zh-CN");
 const signed = new Intl.NumberFormat("zh-CN", { signDisplay: "exceptZero" });
@@ -114,41 +113,6 @@ function DirectionTiming({ timestamp, average, count }) {
   </>;
 }
 
-function ArmyHistory({ history, player, focusEquipment }) {
-  return (
-    <div className="group-army-history">
-      <h3>{player.playerName || player.playerTag} 已获取的进攻阵容</h3>
-      {history.map((battle, index) => {
-        const timestamp = battle.battleTimestamp || battle.timestamp;
-        const strategy = battle.strategy || "已获取阵容";
-        const gear = focusEquipment ? attackEquipmentIds(battle.army) : null;
-        const carried = !!focusEquipment?.ids?.length && focusEquipment.ids.every((id) => gear.has(id));
-        const facts = [
-          Number.isFinite(battle.durationSeconds) && `用时 ${formatDuration(battle.durationSeconds)}`,
-          Number.isInteger(battle.stars) && `${battle.stars} 星`,
-          Number.isFinite(battle.destruction) && `${battle.destruction}%`,
-        ].filter(Boolean);
-        return (
-          <div className={"army-history-row" + (carried ? " army-history-focus" : "")} key={battle.id || index}>
-            <div className="army-history-label">
-              <strong title={strategy}>{strategy}</strong>
-              {carried && <span className="gear-badge">带{focusEquipment.name}</span>}
-              <span>
-                {timestamp && <> · <time dateTime={timestamp} title={formatTime(timestamp)}>{formatShortTime(timestamp)}</time></>}
-                {facts.length > 0 && " · " + facts.join(" · ")}
-              </span>
-            </div>
-            <ArmyLineup army={battle.army} label="进攻阵容明细" />
-          </div>
-        );
-      })}
-      <ArmyAttribution />
-    </div>
-  );
-}
-
-const emptyAttacks = [];
-
 function MyResult({ results }) {
   return results.map((result, index) => (
     <span className="my-result" key={index} title={result.timestamp ? formatTime(result.timestamp) : undefined}>
@@ -157,11 +121,8 @@ function MyResult({ results }) {
   ));
 }
 
-export default function Standings({ rows, battleViews, groupTag, week, leagueTier, isSample,
-  attacks = emptyAttacks, classifiedAttacks = emptyAttacks, onOpenLegend, focus = null }) {
+export default function Standings({ rows, battleViews, groupTag, week, leagueTier, isSample, onOpenLegend, onOpenPlayer }) {
   const [sort, setSort] = useState({ key: "rank", ascending: true });
-  const [expandedPlayer, setExpandedPlayer] = useState(null);
-  const panelPrefix = useId();
   const mode = battleViews?.defenseTrophyMode;
   const lost = mode === "lost";
   const selected = battleViews?.playerTag;
@@ -170,28 +131,6 @@ export default function Standings({ rows, battleViews, groupTag, week, leagueTie
   const showDefenseRank = !battleViews?.personalOnly && ranks.size > 0;
   const rankedRows = rows.map((row) => ({ ...row, defenseRank: ranks.get(row.playerTag) ?? null }));
 
-  useEffect(() => {
-    if (!focus?.playerTag) return;
-    setExpandedPlayer(focus.playerTag);
-    const frame = requestAnimationFrame(() => {
-      document.getElementById(`${panelPrefix}-row-${focus.playerTag.replace(/^#/, "")}`)
-        ?.scrollIntoView({ block: "center", inline: "nearest" });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [focus, panelPrefix]);
-  const attackHistory = useMemo(() => {
-    const grouped = new Map();
-    const labels = new Map(classifiedAttacks.map(({ id, strategy }) => [id, strategy]));
-    for (const battle of attacks) {
-      if (!battle.playerTag || !hasLineup(battle.army)) continue;
-      if (!grouped.has(battle.playerTag)) grouped.set(battle.playerTag, []);
-      grouped.get(battle.playerTag).push({ ...battle, strategy: labels.get(battle.id) || battle.strategy });
-    }
-    for (const history of grouped.values()) {
-      history.sort((a, b) => (b.battleTimestamp || b.timestamp || "").localeCompare(a.battleTimestamp || a.timestamp || ""));
-    }
-    return grouped;
-  }, [attacks, classifiedAttacks]);
   const scoreColumns = [
     { key: "attackCount", label: "进攻进度", title: "可进攻场次 / 已完成进攻场次，按已完成场次排序" },
     { key: "attackTrophies", label: "进攻得杯" },
@@ -259,48 +198,41 @@ export default function Standings({ rows, battleViews, groupTag, week, leagueTie
               {detailColumns.map(sortHeader)}
             </tr></thead>
             <tbody>{sorted.map((row) => {
-              const history = attackHistory.get(row.playerTag) ?? [];
-              const expanded = expandedPlayer === row.playerTag && history.length > 0;
-              const panelId = `${panelPrefix}-${row.playerTag.replace(/^#/, "")}`;
               const name = row.playerName || row.playerTag;
               const results = mine.get(row.playerTag) ?? [];
               const topHit = showDefenseRank && results.length > 0 && row.defenseRank !== null && row.defenseRank <= DEFENSE_TOP_N;
               const rowClass = [selected === row.playerTag && "standing-selected", topHit && "defense-top-hit"].filter(Boolean).join(" ");
+              const canOpen = typeof onOpenPlayer === "function";
               return (
-                <Fragment key={row.playerTag}>
-                  <tr className={rowClass || undefined} id={`${panelPrefix}-row-${row.playerTag.replace(/^#/, "")}`}>
-                    <td>{scoreText(row.rank)}</td>
-                    <th scope="row">
-                      <span className="standings-player-name" title={name}>{name}</span>
-                      {row.playerName && <small>{row.playerTag}</small>}
-                      {history.length > 0 && <button type="button" className="lineup-button group-lineup-button" aria-expanded={expanded}
-                        aria-controls={expanded ? panelId : undefined} onClick={() => setExpandedPlayer(expanded ? null : row.playerTag)}>
-                        <span className="lineup-button-label">{scoreText(history.length)} 场阵容</span>
-                      </button>}
-                    </th>
-                    <AttackProgress limit={leagueTier?.attackLimit} completed={row.attackCount} />
-                    <td><Trophy value={row.attackTrophies} /></td>
-                    <td><Trophy value={row.defenseTrophies} loss={lost} /></td>
-                    <td className="total-trophies"><Trophy value={row.trophies} change={lost} /></td>
-                    {showDefenseRank && <td>{row.defenseRank ? `第 ${row.defenseRank} 名` : "—"}</td>}
-                    {showDefenseRank && <td className="my-result-cell">{selected === row.playerTag ? "本人"
-                      : results.length ? <MyResult results={results} /> : "—"}</td>}
-                    <td>{scoreText(row.defenseCount)}</td>
-                    <td>{scoreText(row.attackStars)}</td>
-                    <td>{destructionText(row.attackDestruction)}</td>
-                    <td>{destructionText(row.defenseDestruction)}</td>
-                    <td><DirectionTiming timestamp={row.lastAttackAt} average={row.attackDurationAverage} count={row.attackDurationCount} /></td>
-                    <td><DirectionTiming timestamp={row.lastDefenseAt} average={row.defenseDurationAverage} count={row.defenseDurationCount} /></td>
-                  </tr>
-                  {expanded && <tr className="army-expanded-row"><td colSpan={2 + scoreColumns.length + detailColumns.length + (showDefenseRank ? 2 : 0)} id={panelId}>
-                    <ArmyHistory history={history} player={row}
-                      focusEquipment={focus?.playerTag === row.playerTag ? focus.equipment : null} />
-                  </td></tr>}
-                </Fragment>
+                <tr key={row.playerTag} className={rowClass || undefined}>
+                  <td>{scoreText(row.rank)}</td>
+                  <th scope="row">
+                    {canOpen ? <button type="button" className="battle-opponent-lookup standings-player-name" title={`查看 ${name} 的进攻和防守记录`}
+                      onClick={() => onOpenPlayer(row.playerTag, "attacks")}>{name}</button>
+                      : <span className="standings-player-name" title={name}>{name}</span>}
+                    {row.playerName && <small>{row.playerTag}</small>}
+                  </th>
+                  <AttackProgress limit={leagueTier?.attackLimit} completed={row.attackCount} />
+                  <td><Trophy value={row.attackTrophies} /></td>
+                  <td><Trophy value={row.defenseTrophies} loss={lost} /></td>
+                  <td className="total-trophies"><Trophy value={row.trophies} change={lost} /></td>
+                  {showDefenseRank && <td>{row.defenseRank ? `第 ${row.defenseRank} 名` : "—"}</td>}
+                  {showDefenseRank && <td className="my-result-cell">{selected === row.playerTag ? "本人"
+                    : results.length ? <MyResult results={results} /> : "—"}</td>}
+                  <td>{canOpen && row.defenseCount > 0
+                    ? <button type="button" className="battle-opponent-lookup standings-defense-lookup" title={`查看 ${name} 的防守记录`}
+                      onClick={() => onOpenPlayer(row.playerTag, "defenses")}>{scoreText(row.defenseCount)}</button>
+                    : scoreText(row.defenseCount)}</td>
+                  <td>{scoreText(row.attackStars)}</td>
+                  <td>{destructionText(row.attackDestruction)}</td>
+                  <td>{destructionText(row.defenseDestruction)}</td>
+                  <td><DirectionTiming timestamp={row.lastAttackAt} average={row.attackDurationAverage} count={row.attackDurationCount} /></td>
+                  <td><DirectionTiming timestamp={row.lastDefenseAt} average={row.defenseDurationAverage} count={row.defenseDurationCount} /></td>
+                </tr>
               );
             })}</tbody>
           </table>
-          <p className="battle-note">平均用时只计入已知用时的对战。「最近」是最近一场的对战时间。
+          <p className="battle-note">点击玩家名字查看其进攻和防守记录与阵容。平均用时只计入已知用时的对战。「最近」是最近一场的对战时间。
             {showDefenseRank && ` 防守排名按防守得杯，并列时平均被打星少的靠前；打过防守前 ${DEFENSE_TOP_N} 的行标黄。`}</p>
         </div>
       )}

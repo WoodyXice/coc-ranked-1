@@ -13,7 +13,7 @@ function battleTrophy(row, lost) {
 }
 
 export default function BattleLog({ kind, battleViews, isSample, accountName, periodLabel = "本周", showStanding = true,
-  onLookupPlayer, dailyTrophies, standings }) {
+  onLookupPlayer, dailyTrophies, standings, rowBadge }) {
   const headingId = useId();
   const [sort, setSort] = useState({ key: "time", ascending: false });
   const offense = kind === "attacks";
@@ -100,8 +100,10 @@ export default function BattleLog({ kind, battleViews, isSample, accountName, pe
                   const defenseRank = ranks?.get(row.opponentTag);
                   const topDefense = Number.isInteger(defenseRank) && defenseRank <= DEFENSE_TOP_N;
                   const canLookup = row.opponentTag && typeof onLookupPlayer === "function";
+                  const badge = rowBadge?.(row);
+                  const rowClass = [topDefense && "defense-top-hit", badge && "army-history-focus"].filter(Boolean).join(" ");
                   return (
-                    <tr key={row.id || index} className={topDefense ? "defense-top-hit" : undefined}>
+                    <tr key={row.id || index} className={rowClass || undefined}>
                       <th scope="row">
                         {canLookup ? (
                           <button className="battle-opponent-name battle-opponent-lookup" type="button" title={opponent}
@@ -122,7 +124,10 @@ export default function BattleLog({ kind, battleViews, isSample, accountName, pe
                       <td><Trophy value={trophy} /></td>
                       <td className="battle-army-cell">{showArmy ? (
                         <div className="battle-army">
-                          <span className="battle-army-strategy" title={lineup}>{lineup}</span>
+                          {badge ? <div className="battle-army-label">
+                            <span className="battle-army-strategy" title={lineup}>{lineup}</span>
+                            <span className="gear-badge">{badge}</span>
+                          </div> : <span className="battle-army-strategy" title={lineup}>{lineup}</span>}
                           <ArmyLineup army={row.army} label={lineupLabel} />
                         </div>
                       ) : <span className="missing-lineup">{row.strategy || (row.armyShareCode ? "阵容待解析" : "暂无阵容")}</span>}</td>

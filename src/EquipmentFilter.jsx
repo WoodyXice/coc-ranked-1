@@ -133,7 +133,7 @@ export default function EquipmentFilter({ attacks = emptyRows, classifiedAttacks
                       <tr>
                         <th scope="row">
                           {canOpen ? <button type="button" className="battle-opponent-lookup standings-player-name"
-                            title="在排位排名中展开该玩家" aria-label={`在排位排名中展开 ${name}`}
+                            title="在玩家记录中查看该玩家的进攻" aria-label={`在玩家记录中查看 ${name} 的进攻`}
                             onClick={() => onOpenPlayer(player.playerTag, { ids: activeIds, name: label })}>{name}</button>
                             : <span className="standings-player-name" title={name}>{name}</span>}
                           {player.playerName && <small>{player.playerTag}</small>}

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { toBlob } from "html-to-image";
 import AccountPanel from "./AccountPanel.jsx";
 import BattleLog from "./BattleLog.jsx";
+import GroupPlayer from "./GroupPlayer.jsx";
 import EquipmentFilter from "./EquipmentFilter.jsx";
 import LegendLeaderboard from "./LegendLeaderboard.jsx";
 import TemporaryPlayer, { TemporaryPlayerSearch, useTemporaryPlayerLookup } from "./TemporaryPlayer.jsx";
@@ -198,7 +199,7 @@ function Report({ report, reportRef, battleViews }) {
 }
 
 const legendTabs = ["legend-global", "legend-regional"];
-const baseTabs = ["meta", "standings", "equipment", "attacks", "defenses", ...legendTabs];
+const baseTabs = ["meta", "standings", "group-player", "equipment", "attacks", "defenses", ...legendTabs];
 const temporaryTab = "temporary-player";
 const sourceLabels = { sample: "截图示例", api: "官方 API" };
 const initialAccounts = { accounts: [], selectedTag: "", hasDeveloperToken: false };
@@ -224,7 +225,7 @@ export default function App() {
   const [tokenRevision, setTokenRevision] = useState(0);
   const [busy, setBusy] = useState("");
   const [feedback, setFeedback] = useState(null);
-  const [standingFocus, setStandingFocus] = useState(null);
+  const [playerFocus, setPlayerFocus] = useState(null);
   const reportRef = useRef(null);
   const working = useRef(false);
   const showLookupWhenReady = useRef(false);
@@ -243,6 +244,7 @@ export default function App() {
   const tabLabels = {
     meta: "小组流派",
     standings: "排位排名",
+    "group-player": "玩家记录",
     equipment: "装备筛选",
     attacks: "进攻" + (battleViews?.attacks ? ` ${battleViews.attacks.length}` : ""),
     defenses: "防守" + (battleViews?.defenses ? ` ${battleViews.defenses.length}` : ""),
@@ -300,7 +302,7 @@ export default function App() {
     setAccounts({ ...result, storageWarnings: accounts.storageWarnings });
     if (result.selectedTag === accounts.selectedTag) return null;
     setPayload(null);
-    setStandingFocus(null);
+    setPlayerFocus(null);
     if (!result.selectedTag) return null;
     const saved = await loadSavedReport(result.selectedTag);
     if (saved) showSavedReport(saved);
@@ -412,7 +414,7 @@ export default function App() {
 
   function chooseTab(next) {
     showLookupWhenReady.current = false;
-    setStandingFocus(null);
+    setPlayerFocus(null);
     setTab(next);
   }
 
@@ -425,9 +427,14 @@ export default function App() {
     document.getElementById("tab-legend-global")?.focus();
   }
 
+  function openGroupPlayer(playerTag, kind = "attacks", equipment = null) {
+    chooseTab("group-player");
+    setPlayerFocus({ playerTag, kind, equipment, opened: Date.now() });
+    document.getElementById("tab-group-player")?.focus();
+  }
+
   function openEquipmentPlayer(playerTag, equipment) {
-    chooseTab("standings");
-    setStandingFocus({ playerTag, equipment });
+    openGroupPlayer(playerTag, "attacks", equipment);
   }
 
   function moveTab(event) {
@@ -479,9 +486,11 @@ export default function App() {
             {report && tab === "meta" && <Report key={report.source + report.groupTag + report.week}
               report={report} reportRef={reportRef} battleViews={battleViews} />}
             {report && tab === "standings" && <Standings key={report.groupTag + report.week} rows={payload.raw?.standings ?? []} battleViews={battleViews}
-              attacks={payload.raw?.attacks ?? report.attacks} classifiedAttacks={report.attacks}
               groupTag={report.groupTag} week={report.week} leagueTier={payload.raw?.leagueTier} isSample={report.source === "sample"}
-              onOpenLegend={openLegendLeaderboard} focus={standingFocus} />}
+              onOpenLegend={openLegendLeaderboard} onOpenPlayer={openGroupPlayer} />}
+            {report && tab === "group-player" && <GroupPlayer key={report.groupTag + report.week + (playerFocus?.opened ?? "")}
+              standings={payload.raw?.standings ?? []} groupBattles={payload.raw?.groupBattles} battleViews={battleViews}
+              isSample={report.source === "sample"} focus={playerFocus} onLookupPlayer={openTemporaryPlayer} />}
             {report && tab === "equipment" && <EquipmentFilter key={report.groupTag + report.week}
               attacks={payload.raw?.attacks ?? []} classifiedAttacks={report.attacks} standings={payload.raw?.standings ?? []}
               groupTag={report.groupTag} week={report.week} isSample={report.source === "sample"}

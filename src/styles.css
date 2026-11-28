@@ -268,6 +268,12 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
   gap: 8px;
 }
 .battle-army-strategy { overflow: hidden; text-overflow: ellipsis; }
+.battle-army-label { display: grid; justify-items: start; gap: 4px; min-width: 0; }
+.battle-army-label .battle-army-strategy { max-width: 100%; }
+.battle-army-label .gear-badge { margin-left: 0; }
+.group-player-bar { grid-template-columns: minmax(0, 320px) auto; }
+.group-player-bar label { display: grid; gap: 6px; }
+.standings-defense-lookup { font-variant-numeric: tabular-nums; }
 .missing-lineup { color: var(--muted); font-size: 14px; }
 .lineup-button {
   position: relative;

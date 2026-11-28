@@ -76,7 +76,7 @@ function PlayerProfile({ result, daily }) {
   );
 }
 
-function BattleDirections({ battles, kind, setKind, logId, daily = false }) {
+export function BattleDirections({ battles, kind, setKind, logId, daily = false }) {
   return (
     <div className="metric-control legend-player-directions" role="group" aria-label="对战方向">
       {Object.entries(directions).map(([direction, label]) => {

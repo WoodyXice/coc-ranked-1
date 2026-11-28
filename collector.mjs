@@ -781,29 +781,30 @@ function newestFirst(a, b) {
   return b.timestamp.localeCompare(a.timestamp) || a.id.localeCompare(b.id);
 }
 
+function battleRows(battles, isDefense) {
+  return [...battles].sort(newestFirst).map((battle) => ({
+    id: battle.id,
+    ...(battle.previousIds?.length ? { previousIds: battle.previousIds } : {}),
+    timestamp: battle.timestamp,
+    battleTimestamp: battle.battleTimestamp ?? null,
+    durationSeconds: battle.durationSeconds ?? null,
+    opponentTag: isDefense ? battle.playerTag : battle.opponentTag,
+    opponentName: (isDefense ? battle.playerName : battle.opponentName) ?? '',
+    stars: battle.stars,
+    destruction: battle.destruction,
+    trophies: battle.trophies ?? null,
+    trophyDelta: battle.trophies == null ? null
+      : (isDefense && battle.battleType === 'LEGEND' ? -battle.trophies : battle.trophies),
+    armyShareCode: battle.armyShareCode,
+    armySource: battle.armySource ?? '',
+    army: decodeArmyShareCode(battle.armyShareCode),
+    ...(battle.battleType ? { battleType: battle.battleType } : {}),
+  }));
+}
+
 function buildBattleViews(member, playerAttacks, playerDefenses, attackTelemetry, defenseTelemetry) {
-  function rows(battles, isDefense) {
-    return battles.sort(newestFirst).map((battle) => ({
-      id: battle.id,
-      ...(battle.previousIds?.length ? { previousIds: battle.previousIds } : {}),
-      timestamp: battle.timestamp,
-      battleTimestamp: battle.battleTimestamp ?? null,
-      durationSeconds: battle.durationSeconds ?? null,
-      opponentTag: isDefense ? battle.playerTag : battle.opponentTag,
-      opponentName: (isDefense ? battle.playerName : battle.opponentName) ?? '',
-      stars: battle.stars,
-      destruction: battle.destruction,
-      trophies: battle.trophies ?? null,
-      trophyDelta: battle.trophies == null ? null
-        : (isDefense && battle.battleType === 'LEGEND' ? -battle.trophies : battle.trophies),
-      armyShareCode: battle.armyShareCode,
-      armySource: battle.armySource ?? '',
-      army: decodeArmyShareCode(battle.armyShareCode),
-      ...(battle.battleType ? { battleType: battle.battleType } : {}),
-    }));
-  }
-  const attacks = rows(playerAttacks, false);
-  const defenses = rows(playerDefenses, true);
+  const attacks = battleRows(playerAttacks, false);
+  const defenses = battleRows(playerDefenses, true);
   return {
     playerTag: member.playerTag,
     playerName: member.playerName,
@@ -1029,12 +1030,27 @@ export async function fetchRankedReport({
     battleViews.standing = standings.find((standing) => standing.playerTag === playerTag)
       ?? groupStanding(selectedMember, selectedAttackLog, selectedDefenseLog);
   }
+  // Every member's weekly attacks and defenses, in the same row shape as battleViews.
+  const groupBattles = {};
+  for (const member of members) {
+    const memberDefenses = defensesByMember.get(member.playerTag) ?? [];
+    reuseGroupBattleDetails(memberDefenses, merged);
+    groupBattles[member.playerTag] = {
+      playerName: member.playerName,
+      attacks: battleRows(attacksByMember.get(member.playerTag) ?? [], false),
+      defenses: battleRows(memberDefenses, true),
+    };
+  }
+  if (battleViews && groupBattles[playerTag]) {
+    groupBattles[playerTag] = { ...groupBattles[playerTag], attacks: battleViews.attacks, defenses: battleViews.defenses };
+  }
   return {
     ...league,
     source: 'api',
     leagueTier: await leagueTier,
     attacks,
     standings,
+    groupBattles,
     telemetry: {
       members: members.length,
       expectedAttacks: Math.max(listedAttacks, attacks.length),

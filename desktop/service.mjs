@@ -52,8 +52,23 @@ function classifyBattleViews(battleViews) {
   };
 }
 
+// Classify every member's attacks and defenses in one pass, then put each row back in place.
+function classifyGroupBattles(groupBattles) {
+  const entries = Object.entries(groupBattles);
+  const flat = entries.flatMap(([, battles]) => [...(battles.attacks ?? []), ...(battles.defenses ?? [])]);
+  const labelled = withStrategies(flat);
+  let offset = 0;
+  const take = (count) => labelled.slice(offset, offset += count);
+  return Object.fromEntries(entries.map(([tag, battles]) => [tag, {
+    ...battles,
+    attacks: take(battles.attacks?.length ?? 0),
+    defenses: take(battles.defenses?.length ?? 0),
+  }]));
+}
+
 function buildReport(raw) {
-  const classified = raw.battleViews ? { ...raw, battleViews: classifyBattleViews(raw.battleViews) } : raw;
+  let classified = raw.battleViews ? { ...raw, battleViews: classifyBattleViews(raw.battleViews) } : raw;
+  if (raw.groupBattles) classified = { ...classified, groupBattles: classifyGroupBattles(raw.groupBattles) };
   return { raw: classified, report: getReport(classified) };
 }
 
@@ -121,6 +136,20 @@ export function sampleReport() {
           stars: 2, destruction: 82, trophies: 14, trophyDelta: 14, armyShareCode: "h2p4e4_22i1x52-4x5d1x70u2x205-3x5s2x2-3x5", armySource: "defense", strategy: "龙流" },
         { id: "sample-d2", timestamp: "2026-11-24T10:42:00Z", opponentTag: "#DEMO5", opponentName: "演示对手 D",
           stars: 3, destruction: 100, trophies: 0, trophyDelta: 0, armyShareCode: "", armySource: "" },
+      ]),
+    },
+  };
+  raw.groupBattles = {
+    [playerTag]: { playerName: "演示村庄", attacks: raw.battleViews.attacks, defenses: raw.battleViews.defenses },
+    "#DEMO2": {
+      playerName: "演示对手 A",
+      attacks: withStrategies([
+        { id: "sample-b1", timestamp: "2026-11-24T13:05:00Z", durationSeconds: 151, opponentTag: playerTag, opponentName: "演示村庄",
+          stars: 2, destruction: 88, trophies: 33, trophyDelta: 33, armyShareCode: "u12x132", armySource: "attack" },
+      ]),
+      defenses: withStrategies([
+        { id: "sample-a1", timestamp: "2026-11-24T12:46:00Z", durationSeconds: 148, opponentTag: playerTag, opponentName: "演示村庄",
+          stars: 3, destruction: 100, trophies: 40, trophyDelta: 40, armyShareCode: "h1p4e15_39i1x52-4x5d1x70u4x80-5x7s2x2-3x35", armySource: "attack" },
       ]),
     },
   };
