@@ -46,3 +46,10 @@
   .atlas-link-flow { display: none; }
   .atlas-link-flow path { animation: none; }
 }
+
+:root[data-theme="dark"] .atlas-link-track { stroke: #6f8ea2; }
+:root[data-theme="dark"] .atlas-link-primary .atlas-link-track { stroke: #7fa3bb; }
+:root[data-theme="dark"] .atlas-link-bridge .atlas-link-track { stroke: #82aec4; }
+:root[data-theme="dark"] .atlas-link.is-selected .atlas-link-track { stroke: #a9d6ee; }
+:root[data-theme="dark"] .atlas-link-trail { stroke: #74c1e6; }
+:root[data-theme="dark"] .atlas-link-pulse { stroke: #9fe0f7; }

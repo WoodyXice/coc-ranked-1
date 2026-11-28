@@ -151,3 +151,11 @@
   font-size: 12px;
   line-height: 1.5;
 }
+
+:root[data-theme="dark"] .lineup-unit { background: #1f3340; border-color: #3f5868; }
+:root[data-theme="dark"] .lineup-unit[data-unit-type="spells"] { background: #2b2640; border-color: #554a72; }
+:root[data-theme="dark"] .lineup-unit[data-unit-type="heroes"] { background: #352c17; border-color: #6e5d34; }
+:root[data-theme="dark"] .lineup-unit[data-unit-type="equipment"] { background: #2f2a22; border-color: #645846; }
+:root[data-theme="dark"] .lineup-unit[data-unit-type="siegeMachines"] { background: #362520; border-color: #714f45; }
+:root[data-theme="dark"] .lineup-unit[data-unit-type="pets"] { background: #1d3127; border-color: #456a55; }
+:root[data-theme="dark"] .lineup-unit-count { background: #0a1419; }

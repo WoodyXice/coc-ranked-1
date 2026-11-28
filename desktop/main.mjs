@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, protocol, safeStorage, session, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, net, protocol, safeStorage, session, shell } from "electron";
 import { mkdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
@@ -89,7 +89,7 @@ function createWindow(database, storageWarnings) {
     minWidth: 700,
     minHeight: 560,
     show: false,
-    backgroundColor: "#f3f7f9",
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#0e161b" : "#f3f7f9",
     webPreferences: { preload, sandbox: true, contextIsolation: true, nodeIntegration: false },
   });
   const accountStore = createAccountStore(database, safeStorage);

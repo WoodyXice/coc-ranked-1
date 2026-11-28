@@ -5,6 +5,7 @@ import EquipmentFilter from "./EquipmentFilter.jsx";
 import GroupReport from "./GroupReport.jsx";
 import PlayerStrategyStats from "./PlayerStrategyStats.jsx";
 import Standings from "./Standings.jsx";
+import { themeColor } from "./theme.mjs";
 
 const labels = { meta: "小组流派", standings: "排位排名", equipment: "装备筛选", attacks: "进攻", defenses: "防守" };
 
@@ -28,7 +29,7 @@ export default function VillageReport({ entry, busy, run, onRefresh, onOpenLegen
     const node = chart.current;
     if (!node) throw new Error("当前没有可保存的流派图。");
     const blob = await toBlob(node, {
-      backgroundColor: "#f4f8fa", pixelRatio: 2, skipFonts: true,
+      backgroundColor: themeColor("--page", "#f4f8fa"), pixelRatio: 2, skipFonts: true,
       width: node.offsetWidth + 56, height: node.offsetHeight + 56,
       style: { padding: "28px", boxSizing: "border-box" },
       filter: (element) => element.dataset?.noExport !== "true",

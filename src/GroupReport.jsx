@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { StandingSummary } from "./Standings.jsx";
+import { themeColor, useTheme } from "./theme.mjs";
 
 const TAU = Math.PI * 2;
 const CHART_SIZE = 400;
@@ -13,6 +14,7 @@ const formatShare = new Intl.NumberFormat("zh-CN", {
 function Pie({ rows, active, onActive }) {
   const canvas = useRef(null);
   const angle = useRef([]);
+  const { resolved: theme } = useTheme();
 
   useEffect(() => {
     const element = canvas.current;
@@ -25,6 +27,7 @@ function Pie({ rows, active, onActive }) {
     const radius = center - 1.5;
     const labels = [];
     let start = -Math.PI / 2;
+    const separator = themeColor("--surface", "#fff");
 
     angle.current = rows.map((row, index) => {
       const end = start + row.share * TAU;
@@ -38,7 +41,7 @@ function Pie({ rows, active, onActive }) {
       context.fill();
       context.globalAlpha = 1;
       context.lineWidth = 3;
-      context.strokeStyle = "#fff";
+      context.strokeStyle = separator;
       if (row.share < 1) context.stroke();
       const middle = (start + end) / 2;
       if (row.share >= 0.05) labels.push({ middle, share: row.share });
@@ -59,7 +62,7 @@ function Pie({ rows, active, onActive }) {
       context.strokeText(text, x, y);
       context.fillText(text, x, y);
     }
-  }, [rows, active]);
+  }, [rows, active, theme]);
 
   function move(event) {
     const rect = canvas.current.getBoundingClientRect();

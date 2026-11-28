@@ -5,6 +5,17 @@ import ReportDialog from "./ReportDialog.jsx";
 import TemporaryPlayer, { TemporaryPlayerSearch, useTemporaryPlayerLookup } from "./TemporaryPlayer.jsx";
 import UpdatePanel from "./UpdatePanel.jsx";
 import VillageReport from "./VillageReport.jsx";
+import { setThemePreference, themeLabels, useTheme } from "./theme.mjs";
+
+function ThemeSelect() {
+  const { preference } = useTheme();
+  return <label className="theme-select">
+    <span>外观</span>
+    <select value={preference} onChange={(event) => setThemePreference(event.target.value)}>
+      {Object.entries(themeLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+    </select>
+  </label>;
+}
 
 const sections = { overview: "总览", villages: "常用村庄", global: "全球榜", regional: "地区榜" };
 const emptyAccounts = { accounts: [], selectedTag: "", hasDeveloperToken: false };
@@ -212,7 +223,7 @@ export default function App() {
         {Object.entries(sections).map(([key, label]) => <button type="button" key={key} aria-current={page === key ? "page" : undefined}
           onClick={() => choosePage(key)}>{label}</button>)}
       </nav>
-      {!top && <div className="workspace-tools">{search}</div>}
+      <div className="workspace-tools">{!top && search}<ThemeSelect/></div>
     </header>
     {accounts.storageWarnings?.length > 0 && <div className="feedback error" role="alert">{accounts.storageWarnings.join(" ")}</div>}
     {!top && status}

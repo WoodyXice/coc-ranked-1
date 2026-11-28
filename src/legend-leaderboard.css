@@ -17,7 +17,7 @@
 .legend-scope-control { flex-wrap: wrap; }
 .legend-scope-control label { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 .legend-scope-control input { width: 8ch; min-height: 30px; padding: 2px 6px; font-variant-numeric: tabular-nums; }
-.legend-scope-control small { color: #a33128; }
+.legend-scope-control small { color: var(--negative); }
 .legend-board > .legend-pages { justify-content: flex-end; margin-block: 8px; }
 .legend-pages button, .legend-pages select, .overview-tools .legend-scope-control select { width: auto; min-height: 30px; font-size: 13px; padding: 3px 8px; }
 .legend-board > .standings-compact-sort { display: none; }
