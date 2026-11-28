@@ -182,8 +182,7 @@ export function legendPlayerMetrics(history, now = new Date()) {
     ...(!common && { strategyStatus: !recentAttacks.length ? 'no-attacks'
       : recentAttacks.some(attack => attack.army?.troops?.length) ? 'unrecognized' : 'no-army' }),
     strategyCount: common?.count ?? 0,
-    strategies: named.filter(({ scoredCount }) => scoredCount > 0)
-      .map(({ strategy, scoredCount, threeStarCount }) => ({ strategy, scoredCount, threeStarCount })),
+    strategies: named.map(({ strategy, count, scoredCount, threeStarCount }) => ({ strategy, count, scoredCount, threeStarCount })),
     attackCount,
     threeStarRate: attackCount ? threeStarCount / attackCount : null,
     averageDailyAttack: attackDays ? attackTotal / attackDays : null,
@@ -222,6 +221,7 @@ export function legendStrategyLeaderboard(rows, metricsByTag) {
   const groups = new Map();
   for (const { playerTag, playerName, rank } of rows) {
     for (const { strategy, scoredCount, threeStarCount } of metricsByTag.get(playerTag)?.strategies ?? []) {
+      if (!(scoredCount > 0)) continue;
       const group = groups.get(strategy) ?? { strategy, scoredCount: 0, threeStarCount: 0, players: [] };
       group.scoredCount += scoredCount;
       group.threeStarCount += threeStarCount;

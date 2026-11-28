@@ -114,7 +114,13 @@ function populationInRegions(players, anchors, width, height, regions, boxes) {
     const members = groups.get(region.key);
     if (!members?.length) continue;
     const bounds = region.bounds;
-    const foreground = anchors.filter(anchor => anchor.cluster === region.key || (!anchor.cluster && region.key === null));
+    // Near an intersection boundary, a neighbouring region's marker can share
+    // this region's surface hit target.
+    const foreground = anchors.filter(anchor => {
+      const padding = Math.max(12, (anchor.radius ?? 8) + 4) + radius;
+      return anchor.x + padding >= bounds.x && anchor.x - padding <= bounds.x + bounds.width
+        && anchor.y + padding >= bounds.y && anchor.y - padding <= bounds.y + bounds.height;
+    });
     const labels = boxes.filter(box => box.x < bounds.x + bounds.width && box.x + box.width > bounds.x
       && box.y < bounds.y + bounds.height && box.y + box.height > bounds.y);
     let step = Math.sqrt(bounds.width * bounds.height / (members.length * 1.8));

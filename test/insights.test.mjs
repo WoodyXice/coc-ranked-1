@@ -107,8 +107,8 @@ test("Legend board metrics use up to sixteen attacks across the two latest leagu
   assert.deepEqual(legendPlayerMetrics({ attacks, defenses }, now), {
     strategy: "龙流", strategyCount: 14,
     strategies: [
-      { strategy: "龙流", scoredCount: 14, threeStarCount: 8 },
-      { strategy: "天女蓝胖", scoredCount: 2, threeStarCount: 0 },
+      { strategy: "龙流", count: 14, scoredCount: 14, threeStarCount: 8 },
+      { strategy: "天女蓝胖", count: 2, scoredCount: 2, threeStarCount: 0 },
     ],
     attackCount: 16, threeStarRate: 0.5,
     averageDailyAttack: 240, attackDays: 2,
@@ -128,14 +128,14 @@ test("incomplete defenses do not discard a complete attack day from the attack a
   const defenses = [...legendRows("2026-11-27", -20, { length: 7 }), ...legendRows("2026-11-26", -30)];
   assert.deepEqual(legendPlayerMetrics({ attacks, defenses }, now), {
     strategy: "龙流", strategyCount: 16,
-    strategies: [{ strategy: "龙流", scoredCount: 16, threeStarCount: 8 }],
+    strategies: [{ strategy: "龙流", count: 16, scoredCount: 16, threeStarCount: 8 }],
     attackCount: 16, threeStarRate: 0.5,
     averageDailyAttack: 240, attackDays: 2,
     averageDailyNet: -80, completedDays: 1,
   });
   assert.deepEqual(legendPlayerMetrics({ attacks: [{ ...attacks[0], trophyDelta: null }, ...attacks.slice(1)], defenses }, now), {
     strategy: "龙流", strategyCount: 16,
-    strategies: [{ strategy: "龙流", scoredCount: 16, threeStarCount: 8 }],
+    strategies: [{ strategy: "龙流", count: 16, scoredCount: 16, threeStarCount: 8 }],
     attackCount: 16, threeStarRate: 0.5,
     averageDailyAttack: 160, attackDays: 1,
     averageDailyNet: -80, completedDays: 1,

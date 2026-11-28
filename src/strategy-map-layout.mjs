@@ -1,4 +1,5 @@
 import { measuredValue } from "./network-metrics.mjs";
+import { intersectionRegions, overlapContains } from "./strategy-intersections.mjs";
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const byRank = (a, b) => a.rank - b.rank || a.playerTag.localeCompare(b.playerTag);
@@ -136,6 +137,7 @@ function styleRegions(counts, width, height) {
 }
 
 export function regionContains(region, x, y, padding = 0) {
+  if (!region.outline) return overlapContains(region, x, y, padding);
   const rim = region.outline;
   for (let i = 0; i < rim.length; i++) {
     const a = rim[i], b = rim[(i + 1) % rim.length];
@@ -166,7 +168,7 @@ function positionInRegions(selected, regions) {
           - .12 * Math.max(0, 1 - Math.hypot(px - region.x, py - region.y) / 35);
         if (value > score) { score = value; best = { x: px, y: py }; }
       }
-      placed.push({ ...player, ...(best ?? { x: x + width / 2, y: y + height / 2 }) });
+      placed.push({ ...player, ...(best ?? region.seed ?? { x: x + width / 2, y: y + height / 2 }) });
     }
     nodes.push(...placed);
   }
@@ -292,6 +294,7 @@ function edgePath(a, b, nodes, width, height, bridge) {
 }
 
 function mapEdges(nodes, width, height, mode) {
+  const styleLinks = mode === "style" || mode === "overlap";
   const uses = nodes.map(node => new Set((node.uses ?? []).map(entry => entry.strategy).filter(Boolean)));
   const pairs = [];
   const maxLength = nodes.length <= 4 ? Math.hypot(width, height) : Math.min(Math.hypot(width, height) * .33, 320);
@@ -299,11 +302,11 @@ function mapEdges(nodes, width, height, mode) {
   for (let i = 0; i < nodes.length; i++) {
     for (let j = i + 1; j < nodes.length; j++) {
       const a = nodes[i], b = nodes[j];
-      const same = a.cluster != null && a.cluster === b.cluster;
+      const same = mode === "overlap" ? a.primary != null && a.primary === b.primary : a.cluster != null && a.cluster === b.cluster;
       const shared = [...uses[i]].some(style => uses[j].has(style));
-      if (!(mode === "style" ? shared : same)) continue;
+      if (!(styleLinks ? shared : same)) continue;
       const distance = Math.hypot(a.x - b.x, a.y - b.y);
-      if (distance <= maxLength || (mode === "style" && !same && distance <= bridgeLength)) {
+      if (distance <= maxLength || (styleLinks && !same && distance <= bridgeLength)) {
         pairs.push({ i, j, distance, cross: !same });
       }
     }
@@ -315,13 +318,13 @@ function mapEdges(nodes, width, height, mode) {
   function link(pair) {
     const { i, j } = pair;
     const a = nodes[i], b = nodes[j];
-    const kind = mode !== "style" ? "band" : pair.cross ? "bridge" : "primary";
+    const kind = !styleLinks ? "band" : pair.cross ? "bridge" : "primary";
     edges.push({ a, b, d: edgePath(a, b, nodes, width, height, pair.cross), kind });
     neighbours[i].push(b);
     neighbours[j].push(a);
     pair.used = true;
   }
-  if (mode === "style" && nodes.length >= 8) {
+  if (styleLinks && nodes.length >= 8) {
     // A few links between different primary styles reveal genuine secondary-style
     // overlaps. Prefer bridges across the open centre, each with its own endpoints.
     const bridges = pairs.filter(pair => pair.cross && pair.distance >= maxLength * .65);
@@ -377,7 +380,7 @@ export function buildStrategyMap(players, groups, width, sizeBy = "rank", mode =
   const canvasHeight = density === "all" ? Math.min(160, Math.max(0, players.length - limit) / 2) : 0;
   let height = players.length <= 3 ? 140 + 20 * players.length :
     Math.round(clamp(width * .34, 320, 450) + Math.max(extraHeight, canvasHeight));
-  if (!players.length) return { nodes: [], regions: [], height, zones: [], edges: [] };
+  if (!players.length) return { nodes: [], regions: [], height, zones: [], edges: [], styleShapes: [] };
   const ranked = [...players].sort(byRank);
   const counts = new Map();
   for (const player of ranked) {
@@ -385,13 +388,14 @@ export function buildStrategyMap(players, groups, width, sizeBy = "rank", mode =
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   const categories = groups.filter(group => counts.has(group.key))
-    .sort((a, b) => counts.get(b.key) - counts.get(a.key) || a.key.localeCompare(b.key));
+    .sort((a, b) => counts.get(b.key) - counts.get(a.key) || String(a.key).localeCompare(String(b.key)));
   const selected = representatives(ranked, categories, limit, sizeBy);
-  if (mode === "style") {
+  if (mode === "style" || mode === "overlap") {
     height = Math.max(height, Math.ceil(counts.size * 4600 / width));
-    const regions = styleRegions(counts, width, height);
+    const { regions, styleShapes } = mode === "overlap" ? intersectionRegions(counts, width, height)
+      : { regions: styleRegions(counts, width, height), styleShapes: [] };
     const nodes = positionInRegions(selected, regions);
-    return { nodes, regions, height, zones: regions, edges: mapEdges(nodes, width, height, mode) };
+    return { nodes, regions, height, zones: regions, styleShapes, edges: mapEdges(nodes, width, height, mode) };
   }
   const nodes = positionPlayers(selected, categories, width, height);
   return { nodes, regions: [], height, zones: territories(categories, nodes, width, height), edges: mapEdges(nodes, width, height, mode) };

@@ -7,9 +7,10 @@
 | 界面入口 | 当前行为和验收要点 | 主要实现 |
 | --- | --- | --- |
 | 首页总览 | 与传奇 I 全球榜共用「榜单范围」和近两个联赛日的数据。默认前 200 名，输入正整数并回车或点「应用」才发起查询。分别显示榜单实际收回人数、已取得战报人数及暂缺数。已识别且有星数的进攻计入流派出场占比和流派统计。玩家三星率同分优先有效进攻较多者，日均净杯同分优先完整攻防日较多者。 | [总览](src/RankedOverview.jsx)、[共享榜单](src/LegendLeaderboard.jsx) |
-| 玩家关系图 | 对实收榜单先算交集。默认「全员」，每位命中玩家各占一个可点的节点，图中人数取实际绘制的大点与小点总数。手动选疏朗、标准、密集时显示「代表玩家」和抽取人数。点人打开战报并保留名次与标签。线表示使用过同一流派或位于同一指标档。 | [关系图](src/StrategyNetwork.jsx)、[布局](src/strategy-map-layout.mjs)、[全员点位](src/atlas-population.mjs)、[名称放置](src/strategy-map-labels.mjs) |
+| 玩家关系图 | 默认「全员」及「流派交集」。每位命中玩家占一个可点的节点，图中人数取实际绘制的大点与小点总数。手动选疏朗、标准、密集时显示代表玩家及抽取人数。连线表示使用过同一流派或位于同一指标档。 | [关系图](src/StrategyNetwork.jsx)、[布局](src/strategy-map-layout.mjs)、[全员点位](src/atlas-population.mjs)、[名称放置](src/strategy-map-labels.mjs) |
+| 流派交集与个人战绩 | 近两个联赛日内按实际使用过的打法比对，可选择任意一对已识别流派，默认选共同使用人数最多的组合。仅有一侧样本、共同使用、其余已识别和待定分别放置。两者都用过的人在两个色块重叠范围内只出现一次。点人即时展示该榜单样本中各流派的使用场次、三星/有星数场次与三星率，再点「完整战报」打开原查询。使用过第三种打法时保留该行，缺星数仍计入使用场次。历史指标缺单项总场数时标出已知下限。 | [两日指标](insights.mjs)、[归组](src/strategy-map-board.mjs)、[交集几何](src/strategy-intersections.mjs)、[个人战绩卡](src/PlayerUsageCard.jsx) |
 | 关系图筛选 | 多选流派查找使用过所有所选流派的玩家。已识别的常用流派即使缺少星数，也能按流派查到。可叠加三星率、日均进攻杯、日均净杯和有效进攻门槛（至少 4、8 或 16 场）。勾选「按各流派计算」时，每项都须有星数记录并分别达标。两项日均杯按玩家计算。「查看玩家」包含所有命中者，超过 200 人时可按名次、名字或 Tag 搜索。 | [榜单流派](src/strategy-map-board.mjs)、[筛选与节点大小](src/network-metrics.mjs)、[两日样本](insights.mjs) |
-| 色块、图例和搜索 | 流派分区按玩家常用流派着色，每人归一组。点色块或图例筛出该组，再点解除。灰色组为流派待定，缺失战报、无近期进攻或配兵不足分别提示。「筛选 → 流派」保留同时用过多种流派的交集口径，输入“蓝胖”或“天蓝”可匹配“天女蓝胖”。悬停代表节点高亮真实关系，系统减少动态时显示静态连线。 | [模糊匹配](src/strategy-search.mjs)、[折线](src/AtlasEdges.jsx) |
+| 色块、图例和搜索 | 「常用流派」按每人的主要打法着色，「流派交集」展示相对于所选两种打法的归属。点色块或图例筛出该组，再点解除。灰色待定组分别提示缺失战报、无近期进攻或配兵不足。「筛选 → 流派」支持多种流派交集，输入“蓝胖”或“天蓝”可匹配“天女蓝胖”。悬停代表节点高亮真实关系，系统减少动态时显示静态连线。 | [模糊匹配](src/strategy-search.mjs)、[折线](src/AtlasEdges.jsx) |
 | 常用村庄与顶栏搜索 | 常用页列出本机已存村庄及最近查询。点名字打开该村庄战报；近期玩家可加入常用并编辑。顶栏点输入框展开历史，支持粘贴 Tag、按本机已知名称查找、方向键选项、回车及 Escape。无令牌也能查看已有的本周缓存。 | [常用村庄](src/AccountPanel.jsx)、[搜索框](src/TemporaryPlayer.jsx) |
 | 战报弹窗与返回 | 常用周排位村庄在弹窗中查看小组流派、排名、装备与个人攻防；传奇 I 提供个人攻防与历史。临时玩家可展开该玩家的本周小组，切换排名、装备和流派。点名单或对手继续查询，返回恢复上一层的排序、筛选、攻防方向与滚动位置，关闭回到原榜。 | [弹窗](src/ReportDialog.jsx)、[本周村庄战报](src/VillageReport.jsx)、[临时玩家](src/TemporaryPlayer.jsx) |
 | 个人流派配兵对照 | 展开个人流派的一行，对照所选范围内最近的三星进攻和最接近三星的进攻。未三星样本依次比较星数、摧毁率和对战时间，配兵取同一条战斗记录。 | [个人流派](src/PlayerStrategyStats.jsx)、[样本口径](insights.mjs) |
@@ -69,6 +70,7 @@ npm run harness
 | 流派、装备组合、防守排行、Excel、两日指标公式 | [insights.test.mjs](test/insights.test.mjs) |
 | 榜单 10 分钟缓存、旧榜重试、按需批量指标、同一联赛日优先续采尚未查询的玩家 | [legend-metric-batch.test.mjs](test/legend-metric-batch.test.mjs)、[legend-request-cache.test.mjs](test/legend-request-cache.test.mjs)、[legend-metrics.test.mjs](test/legend-metrics.test.mjs) |
 | 首页代表玩家、节点间距、流派归属、连线、名称避让、四档密度及全员点位逐人命中 | [strategy-map-board.test.mjs](test/strategy-map-board.test.mjs)、[strategy-map-layout.test.mjs](test/strategy-map-layout.test.mjs)、[strategy-map-labels.test.mjs](test/strategy-map-labels.test.mjs)、[atlas-population.test.mjs](test/atlas-population.test.mjs) |
+| 两种流派的成员归属、色块重叠与交集点命中 | [strategy-intersections.test.mjs](test/strategy-intersections.test.mjs)、[strategy-map-board.test.mjs](test/strategy-map-board.test.mjs) |
 | 关系图的多流派交集、三星率与场数口径、进攻杯和净杯条件、缺失指标与零值 | [network-metrics.test.mjs](test/network-metrics.test.mjs)、[insights.test.mjs](test/insights.test.mjs) |
 | 本地账号加密、旧库迁移、查询历史、快照、旧备注 | [accounts.test.mjs](test/accounts.test.mjs)、[migrations.test.mjs](test/migrations.test.mjs)、[database.test.mjs](test/database.test.mjs)、[defense-notes.test.mjs](test/defense-notes.test.mjs) |
 | 更新发现、下载、安装、重试及便携版 | [updater.test.mjs](test/updater.test.mjs) |
@@ -85,4 +87,5 @@ npm start -- "--user-data-dir=$qaProfile"
 3. 在全球榜按三星率先降后升，核对视口外成员参与、零值可排序、缺项始终在末尾。挑选用过两种流派的玩家核对两份样本和流派内前三，点名字查看个人战报再返回。地区榜按同样流程验证，切换地区后确认流派归属，筛选单个名字后确认地区流派榜仍含全地区。模拟 10 分钟边界、手动刷新和换密钥。传奇 I 与周排位各取一例，确认日净杯和周总杯符号。
 4. 在带测试发布数据的更新器上模拟连续两个正式版、断网重试与便携版入口；发布后再核对真实最新版本。查看示例和开发模式用于验界面，打包安装版用于验升级链路。
 5. 总览分别用 200 人、10,000 人及请求 10,000 实收 200 的夹具验证。切换范围、密度并返回，核对榜单实收人数、战报覆盖和图中人数。在大榜的「查看玩家」搜索第 10,000 名并下钻。测试后续页失败时可以从保留记录打开战报和刷新重试。宽屏与窄屏分别核对可见节点数量、区名和玩家标签间距，通过「查看玩家」打开一个图上没有标出的玩家，再返回。展开「筛选」，叠加两种流派、三星率至少 75% 和有效进攻至少 4 场。两种流派分别有 4/4 和 2/4 三星时，按总体计算应命中，按各流派计算应排除。验证净杯为零、交集为空以及只有 8 攻、7 防的情况。切换分区、节点大小或从战报返回后，名单仍应与全榜交集一致。
-6. 在 200 人夹具检验默认「图中 200 / 200 人」，宽屏切「标准」应显示「代表玩家 56 / 200 人」。核对图例各组人数之和等于当前筛选范围。准备一位常用龙流且用过蓝胖的玩家，点蓝胖色块应排除他，「筛选 → 流派」仅勾蓝胖应包含他。核对宽窄屏每个点命中的玩家身份，灰色点可以打开并说明待定原因。
+6. 在 200 人夹具检验默认「图中 200 / 200 人」，宽屏切「标准」应显示「代表玩家 56 / 200 人」。准备一位常用龙流且用过蓝胖的玩家，在「常用流派」点蓝胖色块应排除他，「筛选 → 流派」仅勾蓝胖应包含他。核对宽窄屏每个点命中的玩家身份及待定原因。
+7. 「流派交集」选龙流和天女蓝胖，核对两侧玩家仅命中一种色块，共同使用者同时命中两种。点击交集点，对照近两日每种流派的使用场次、三星分子与分母，第三种打法应另列。无星数显示「—」。覆盖没有人同用、全员同用、交换左右流派、点图例筛选后返回全员、打开完整战报及窄屏操作。
