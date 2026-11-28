@@ -77,7 +77,8 @@ function placeOne(node, width, height, measure, occupied, circles) {
       const box = { left: left - 2, right: left + lineWidth + 2, top: y - 13, bottom: y + (secondLine ? 18 : 5) };
       if (isFree(box, width, height, occupied, circles)) {
         occupied.push(box);
-        return secondLine ? { x, y, anchor, text, tag: secondLine } : { x, y, anchor, text };
+        return { x, y, anchor, text, ...(secondLine && { tag: secondLine }),
+          bounds: { x: box.left, y: box.top, width: box.right - box.left, height: box.bottom - box.top } };
       }
     }
   }

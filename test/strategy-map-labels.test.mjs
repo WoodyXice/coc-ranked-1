@@ -25,12 +25,14 @@ test("respects map edges, occupied titles, other labels and circles without labe
   assert.ok(labels.size >= 3);
   assert.ok(labels.has("#P11"));
   const boxes = [...reserved];
-  for (const { text, x, y, anchor } of labels.values()) {
+  for (const { text, x, y, anchor, bounds } of labels.values()) {
     // All names in this fixture are ASCII, with no second line.
     const width = text.length * 7;
     const rect = { x: x - (anchor === "start" ? 0 : anchor === "end" ? width : width / 2), y: y - 10, width, height: 13 };
     const right = rect.x + width;
     const bottom = rect.y + rect.height;
+    assert.ok(bounds.x <= rect.x && bounds.x + bounds.width >= right);
+    assert.ok(bounds.y <= rect.y && bounds.y + bounds.height >= bottom);
     assert.ok(rect.x >= 0 && right <= 362 && rect.y >= 0 && bottom <= 158);
     for (const box of boxes) {
       assert.ok(rect.x >= box.x + box.width || right <= box.x || rect.y >= box.y + box.height || bottom <= box.y);
@@ -50,6 +52,7 @@ test("preserves grapheme clusters in truncated names and puts a single # on a po
   const top = { ...player(1, 180, 64, "胜" + family.repeat(14)), playerTag: "Q2P80" };
   const result = placeMapLabels([top], 360, 150).get(top.playerTag);
   assert.equal(result.tag, "#Q2P80");
+  assert.ok(result.bounds.y + result.bounds.height > result.y + 13);
   assert.match(result.text, /^#1 胜(?:👩‍🚀)+…$/u);
   const tagsOnly = placeMapLabels([player(1, 180, 64, " ")], 360, 150).get("#P1");
   assert.equal(tagsOnly.text, "#1 #P1");

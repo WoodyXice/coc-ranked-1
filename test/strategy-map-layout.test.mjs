@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildStrategyMap } from "../src/strategy-map-layout.mjs";
+import { buildStrategyMap, regionContains } from "../src/strategy-map-layout.mjs";
 
 const groups = ["dragon", "bowler", "blimp", "balloon", "yeti", "witch"]
   .map(key => ({ key, name: key, color: "#638cad" }));
@@ -61,11 +61,12 @@ test("nodes use horizontal space and stay separate while official rank has a bro
     }
     const meanY = subset => subset.reduce((sum, p) => sum + p.y, 0) / subset.length;
     assert.ok(meanY(nodes.slice(0, 3)) < meanY(nodes.slice(-3)));
-    assert.ok(zones.length >= 1 && zones.length <= (width < 520 ? 4 : width < 800 ? 5 : 7));
+    assert.equal(zones.length, groups.length);
     assert.equal(new Set(zones.map(z => z.key)).size, zones.length);
     for (const z of zones) {
       assert.ok(nodes.filter(p => p.cluster === z.key).length >= 2);
       assert.ok(z.x >= 0 && z.x <= width && z.y >= 0 && z.y <= height);
+      for (const p of nodes) assert.equal(regionContains(z, p.x, p.y), p.cluster === z.key);
       assert.match(z.d, /^M [\d .]+ Q .+ Z$/);
       assert.doesNotMatch(z.d, /NaN|Infinity/);
     }
@@ -118,9 +119,9 @@ test("links form a bounded mesh of routed shared styles or members of the same m
   }
 });
 
-test("curved tints occupy distinct outer neighbourhoods and leave the centre mostly clear", () => {
+test("metric-band tints occupy distinct outer neighbourhoods and leave the centre mostly clear", () => {
   const width = 1012;
-  const { zones, height } = buildStrategyMap(players, groups, width);
+  const { zones, height } = buildStrategyMap(players, groups, width, "rank", "rate");
   assert.equal(zones.length, groups.length);
   const occupied = new Set();
   let overlaps = 0, centerCells = 0;
@@ -164,7 +165,8 @@ test("empty, single and sparse filtered results keep the real players and origin
   const one = buildStrategyMap([players[130]], groups, 375);
   assert.ok(one.height >= 160 && one.height <= 200);
   assert.equal(one.nodes[0].playerTag, players[130].playerTag);
-  assert.deepEqual([one.edges, one.zones], [[], []]);
+  assert.deepEqual(one.edges, []);
+  assert.deepEqual(one.zones.map(z => z.key), [players[130].cluster]);
   const subset = [players[4], players[26], players[77], players[191]];
   const map = buildStrategyMap(subset, groups, 1200);
   assert.deepEqual(map.nodes.map(({ x, y, ...p }) => p), subset);

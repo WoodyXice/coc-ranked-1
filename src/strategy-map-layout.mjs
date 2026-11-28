@@ -86,6 +86,93 @@ function positionPlayers(selected, categories, width, height) {
 const outwardness = (p, width, height) => Math.hypot(2 * p.x / width - 1, 2 * p.y / height - 1);
 const midpoint = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
 
+// Divide the available surface by membership. Each rounded contour is shared by
+// the painter and both point layers, including the independent unclassified area.
+function styleRegions(counts, width, height) {
+  const minimumWeight = [...counts.values()].reduce((sum, n) => sum + n, 0) * 4200 / (width * height);
+  const items = [...counts].map(([key, count]) => ({ key, count, weight: count + minimumWeight }))
+    .sort((a, b) => b.count - a.count || String(a.key).localeCompare(String(b.key)));
+  const zones = [];
+  function divide(items, x, y, w, h) {
+    if (items.length === 1) {
+      const { key, count } = items[0];
+      const random = randomFor(String(key));
+      const corners = [[.055,.21],[.32,.025],[.78,.025],[.965,.16],[.975,.69],[.85,.95],[.42,.975],[.075,.89],[.025,.52]];
+      const rim = corners.map(([u, v]) => ({
+        x: x + w * (u + (random() - .5) * .04), y: y + h * (v + (random() - .5) * .055),
+      }));
+      const coords = p => `${p.x.toFixed(2)} ${p.y.toFixed(2)}`;
+      let from = midpoint(rim.at(-1), rim[0]);
+      let d = `M ${coords(from)}`;
+      const outline = [];
+      rim.forEach((control, i) => {
+        const to = midpoint(control, rim[(i + 1) % rim.length]);
+        d += ` Q ${coords(control)} ${coords(to)}`;
+        for (const t of [0, .25, .5, .75]) {
+          outline.push({ x: (1-t)**2 * from.x + 2*(1-t)*t*control.x + t*t*to.x,
+            y: (1-t)**2 * from.y + 2*(1-t)*t*control.y + t*t*to.y });
+        }
+        from = to;
+      });
+      zones.push({ key, count, x: x + w * .5, y: y + h * .22, bounds: { x, y, width: w, height: h }, outline, d: d + " Z" });
+      return;
+    }
+    const total = items.reduce((sum, item) => sum + item.weight, 0);
+    let index = 1, sum = items[0].weight;
+    while (index < items.length - 1 && Math.abs(2 * (sum + items[index].weight) - total) < Math.abs(2 * sum - total)) {
+      sum += items[index++].weight;
+    }
+    const fraction = sum / total;
+    if (w >= h) {
+      divide(items.slice(0, index), x, y, w * fraction, h);
+      divide(items.slice(index), x + w * fraction, y, w * (1 - fraction), h);
+    } else {
+      divide(items.slice(0, index), x, y, w, h * fraction);
+      divide(items.slice(index), x, y + h * fraction, w, h * (1 - fraction));
+    }
+  }
+  divide(items, 3, 3, width - 6, height - 6);
+  return zones;
+}
+
+export function regionContains(region, x, y, padding = 0) {
+  const rim = region.outline;
+  for (let i = 0; i < rim.length; i++) {
+    const a = rim[i], b = rim[(i + 1) % rim.length];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    if (dx * (y - a.y) - dy * (x - a.x) < (padding ? padding * Math.hypot(dx, dy) : 0)) return false;
+  }
+  return true;
+}
+
+function positionInRegions(selected, regions) {
+  const members = Map.groupBy(selected, p => p.cluster ?? null);
+  const nodes = [];
+  for (const region of regions) {
+    const players = members.get(region.key) ?? [];
+    const { x, y, width, height } = region.bounds;
+    const placed = [];
+    for (const [index, player] of players.entries()) {
+      const random = randomFor(player.playerTag);
+      const rankY = y + height * (.18 + .64 * ((index + .5) / players.length));
+      const gap = clamp(Math.sqrt(width * height / players.length) * .54, 27, 105);
+      let best, score = -Infinity;
+      for (let i = 0; i < 160; i++) {
+        const px = x + width * random(), py = y + height * random();
+        if (!regionContains(region, px, py, Math.min(14, width * .12, height * .12))) continue;
+        let distance = gap;
+        for (const node of placed) distance = Math.min(distance, Math.hypot(px - node.x, py - node.y));
+        const value = 4 * distance / gap - .45 * Math.abs(py - rankY) / height
+          - .12 * Math.max(0, 1 - Math.hypot(px - region.x, py - region.y) / 35);
+        if (value > score) { score = value; best = { x: px, y: py }; }
+      }
+      placed.push({ ...player, ...(best ?? { x: x + width / 2, y: y + height / 2 }) });
+    }
+    nodes.push(...placed);
+  }
+  return nodes.sort(byRank);
+}
+
 function makeRibbon(a, b, width, height) {
   // The narrow end points back toward the centre. The broad, curved rim is on the
   // periphery, with the two actual members defining its orientation and length.
@@ -288,15 +375,24 @@ export function buildStrategyMap(players, groups, width, sizeBy = "rank", mode =
   const extraHeight = Math.max(0, visible - densityLimits.sparse[band]) * (band === 0 ? 6 : 2.5);
   // All-player mode keeps a few foreground anchors; its canvas needs space for everyone else.
   const canvasHeight = density === "all" ? Math.min(160, Math.max(0, players.length - limit) / 2) : 0;
-  const height = players.length <= 3 ? 140 + 20 * players.length :
+  let height = players.length <= 3 ? 140 + 20 * players.length :
     Math.round(clamp(width * .34, 320, 450) + Math.max(extraHeight, canvasHeight));
-  if (!players.length) return { nodes: [], height, zones: [], edges: [] };
+  if (!players.length) return { nodes: [], regions: [], height, zones: [], edges: [] };
   const ranked = [...players].sort(byRank);
   const counts = new Map();
-  for (const player of ranked) counts.set(player.cluster, (counts.get(player.cluster) ?? 0) + 1);
+  for (const player of ranked) {
+    const key = player.cluster ?? null;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
   const categories = groups.filter(group => counts.has(group.key))
     .sort((a, b) => counts.get(b.key) - counts.get(a.key) || a.key.localeCompare(b.key));
-  const nodes = positionPlayers(representatives(ranked, categories, limit, sizeBy), categories, width, height);
-  const zones = territories(categories, nodes, width, height);
-  return { nodes, height, zones, edges: mapEdges(nodes, width, height, mode) };
+  const selected = representatives(ranked, categories, limit, sizeBy);
+  if (mode === "style") {
+    height = Math.max(height, Math.ceil(counts.size * 4600 / width));
+    const regions = styleRegions(counts, width, height);
+    const nodes = positionInRegions(selected, regions);
+    return { nodes, regions, height, zones: regions, edges: mapEdges(nodes, width, height, mode) };
+  }
+  const nodes = positionPlayers(selected, categories, width, height);
+  return { nodes, regions: [], height, zones: territories(categories, nodes, width, height), edges: mapEdges(nodes, width, height, mode) };
 }

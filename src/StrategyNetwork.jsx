@@ -1,10 +1,12 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import AtlasPopulation from "./AtlasPopulation.jsx";
 import AtlasEdges from "./AtlasEdges.jsx";
-import { matchesStyleName, styleColors } from "./strategy-search.mjs";
-import { buildStrategyMap } from "./strategy-map-layout.mjs";
+import { buildPopulationLayer } from "./atlas-population.mjs";
+import { prepareBoard, unknownStyle } from "./strategy-map-board.mjs";
+import { matchesStyleName } from "./strategy-search.mjs";
+import { buildStrategyMap, regionContains } from "./strategy-map-layout.mjs";
 import { placeMapLabels } from "./strategy-map-labels.mjs";
-import { matchesNetworkFilters, measuredValue, netBands, playerRadius, rateBands, valueBand } from "./network-metrics.mjs";
+import { matchesNetworkFilters, measuredValue, netBands, playerRadius, rateBands } from "./network-metrics.mjs";
 
 const strategyStatus = { "no-attacks": "暂无近期进攻", "no-army": "缺少配兵资料", unrecognized: "配兵待识别" };
 const primaryLabel = player => player.primary || strategyStatus[player.stats?.strategyStatus] || (player.stats ? "暂无流派样本" : "暂无战报");
@@ -16,36 +18,13 @@ const rateOptions = [...rateBands, { id: "at75", label: "至少 75%" }, { id: "p
 const netOptions = [...netBands, { id: "positive", label: "正净杯（>0）" }, { id: "at40", label: "至少 +40" }];
 const attackOptions = [240, 280, 300, 320].map(id => ({ id, label: `至少 +${id}` }));
 
-function prepareBoard(rows, metrics, strategies, mode) {
-  const bands = mode === "rate" ? rateBands : netBands;
-  const groups = mode === "style"
-    ? strategies.map(({ strategy }) => ({ key: strategy, name: strategy, ...styleColors(strategy) }))
-    : bands.map(band => ({ key: band.id, name: band.label, color: band.color, pointColor: band.color }));
-  const byKey = new Map(groups.map(group => [group.key, group]));
-  const players = rows.filter(row => Number.isInteger(row.rank) && row.rank >= 1)
-    .map(row => {
-      const stats = metrics.get(row.playerTag);
-      const uses = (stats?.strategies ?? []).filter(entry => entry.scoredCount > 0);
-      const primary = (uses.find(entry => entry.strategy === stats?.strategy) ?? uses[0])?.strategy;
-      const cluster = mode === "style" ? primary : valueBand(measuredValue(stats, mode), bands)?.id;
-      const tier = [1, 3, 10, 30, 80, Infinity].findIndex(last => row.rank <= last);
-      return { ...row, stats, uses, primary, cluster, tier, pointColor: byKey.get(cluster)?.pointColor ?? "#89969c" };
-    }).sort((a, b) => a.rank - b.rank);
-  let min = Infinity, max = -Infinity;
-  for (const player of players) {
-    const net = measuredValue(player.stats, "net");
-    if (net !== null) { min = Math.min(min, net); max = Math.max(max, net); }
-  }
-  return { players, groups, netExtent: min === Infinity ? [0, 0] : [min, max] };
-}
-
 function drawMap(players, groups, width, mode, sizeBy, netExtent, density) {
-  const { nodes, zones, height, edges } = buildStrategyMap(players, groups, width, sizeBy, mode, density);
+  const { nodes, zones, height, edges, regions } = buildStrategyMap(players, groups, width, sizeBy, mode, density);
   const points = nodes.map(node => ({ ...node, radius: playerRadius(node, sizeBy, netExtent) * 1.36 }));
   // Reserve painted zone captions first. Player names can then use any clear side of their marker.
   const reserved = [];
   const territories = zones.map(zone => {
-    const group = groups.find(entry => entry.key === zone.key);
+    const group = zone.key === null ? unknownStyle : groups.find(entry => entry.key === zone.key);
     const labelWidth = Array.from(group.name).reduce((w, c) => w + (c.charCodeAt(0) < 128 ? 7 : 12), 4);
     const x = Math.max(9 + labelWidth / 2, Math.min(width - 9 - labelWidth / 2, zone.x));
     let caption;
@@ -53,6 +32,8 @@ function drawMap(players, groups, width, mode, sizeBy, netExtent, density) {
       const y = zone.y + shift;
       const box = { x: x - labelWidth / 2, y: y - 12, width: labelWidth, height: 16 };
       if (box.y < 5 || y + 4 > height - 4) continue;
+      if (mode === "style" && ![box.x, box.x + box.width].every(cx =>
+        [box.y, box.y + box.height].every(cy => regionContains(zone, cx, cy)))) continue;
       if (points.some(p => Math.abs(p.x - x) < labelWidth / 2 + p.radius + 3 && Math.abs(p.y - y + 4) < p.radius + 10)) continue;
       if (reserved.some(r => Math.abs(r.x + r.width / 2 - x) < (r.width + labelWidth) / 2 + 4 && Math.abs(r.y - box.y) < 19)) continue;
       caption = { x, y };
@@ -61,7 +42,15 @@ function drawMap(players, groups, width, mode, sizeBy, netExtent, density) {
     }
     return { ...zone, group, caption };
   });
-  return { height, edges, points, territories, labels: placeMapLabels(points, width, height, { reserved }) };
+  const labels = placeMapLabels(points, width, height, { reserved });
+  const excludedBoxes = [...reserved, ...Array.from(labels.values(), label => label.bounds)];
+  const population = density === "all" ? buildPopulationLayer(players, points, width, height, regions, excludedBoxes) : null;
+  if (population && points.length + population.points.length < players.length) {
+    // Give players priority when captions consume a very small region.
+    return { height, edges, points, territories: territories.map(zone => ({ ...zone, caption: null })),
+      labels: new Map(), population: buildPopulationLayer(players, points, width, height, regions) };
+  }
+  return { height, edges, points, territories, population, labels };
 }
 
 function useCanvasWidth(ref) {
@@ -76,7 +65,7 @@ function useCanvasWidth(ref) {
   return width;
 }
 
-function StylePicker({ strategies, selected, onToggle }) {
+function StylePicker({ styles, selected, onToggle }) {
   const menu = useRef(null);
   const [query, setQuery] = useState("");
   useEffect(() => {
@@ -86,7 +75,7 @@ function StylePicker({ strategies, selected, onToggle }) {
     document.addEventListener("pointerdown", dismiss);
     return () => document.removeEventListener("pointerdown", dismiss);
   }, []);
-  const names = [...new Set([...strategies.map(entry => entry.strategy), ...selected])].filter(name => matchesStyleName(name, query));
+  const names = [...new Set([...styles, ...selected])].filter(name => matchesStyleName(name, query));
   return <details ref={menu} className="network-style-picker" onBlur={event => {
     if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false;
   }} onKeyDown={event => {
@@ -174,19 +163,28 @@ const PlayerPicker = memo(function PlayerPicker({ players, onLookup }) {
 
 export default function StrategyNetwork({ rows, strategies, metricsByTag, onLookupPlayer, onOpenStrategies }) {
   const frame = useRef(null);
-  const hitRef = useRef(null);
   const hoverPoint = useRef(null);
   const width = useCanvasWidth(frame);
   const [mode, setMode] = useState("style");
   const [sizeBy, setSizeBy] = useState("rank");
-  const [density, setDensity] = useState("standard");
+  const [density, setDensity] = useState("all");
+  const [primaryFilter, setPrimaryFilter] = useState(undefined);
   const [filters, setFilters] = useState(emptyFilters);
   const [controlsOpen, setControlsOpen] = useState(false);
   const [focused, setFocused] = useState("");
   const board = useMemo(() => prepareBoard(rows, metricsByTag, strategies, mode), [rows, metricsByTag, strategies, mode]);
-  const filterCount = filters.styles.length + [filters.rate, filters.net, filters.attack, filters.sample].filter(Boolean).length;
-  const matching = useMemo(() => filterCount ? board.players.filter(player => matchesNetworkFilters(player, filters)) : board.players,
-    [board, filters, filterCount]);
+  const searchFilterCount = filters.styles.length + [filters.rate, filters.net, filters.attack, filters.sample].filter(Boolean).length;
+  const filterCount = searchFilterCount + Number(primaryFilter !== undefined);
+  const candidates = useMemo(() => searchFilterCount ? board.players.filter(player => matchesNetworkFilters(player, filters)) : board.players,
+    [board, filters, searchFilterCount]);
+  const matching = useMemo(() => primaryFilter === undefined ? candidates : candidates.filter(player => player.cluster === primaryFilter),
+    [candidates, primaryFilter]);
+  const counts = useMemo(() => {
+    const groups = new Map();
+    for (const player of candidates) groups.set(player.cluster, (groups.get(player.cluster) ?? 0) + 1);
+    return groups;
+  }, [candidates]);
+  const legendGroups = mode === "style" ? [...board.groups, unknownStyle].filter(group => counts.has(group.key) || group.key === primaryFilter) : board.groups;
   const graph = useMemo(() => drawMap(matching, board.groups, width, mode, sizeBy, board.netExtent, density),
     [matching, board, width, mode, sizeBy, density]);
   const canUseStyleRates = filters.styles.length > 0 && Boolean(filters.rate);
@@ -194,11 +192,12 @@ export default function StrategyNetwork({ rows, strategies, metricsByTag, onLook
   const matchingByTag = useMemo(() => new Map(matching.map(player => [player.playerTag, player])), [matching]);
   const current = matchingByTag.get(focused);
   const foreground = graph.points.find(player => player.playerTag === focused);
+  const visibleCount = graph.points.length + (graph.population?.points.length ?? 0);
   function backgroundPlayer(event) {
     if (density !== "all" || event.target.closest(".network-player, .network-zone text")) return null;
     const bounds = event.currentTarget.getBoundingClientRect();
     hoverPoint.current = { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
-    return hitRef.current?.((event.clientX - bounds.left) * width / bounds.width,
+    return graph.population?.hitTest((event.clientX - bounds.left) * width / bounds.width,
       (event.clientY - bounds.top) * graph.height / bounds.height);
   }
   const from = player => onLookupPlayer?.(player.playerTag);
@@ -208,9 +207,12 @@ export default function StrategyNetwork({ rows, strategies, metricsByTag, onLook
       ? previous.styles.filter(style => style !== name) : [...previous.styles, name] }));
     setFocused("");
   }
-  const selectedGroup = group => mode === "style" ? filters.styles.includes(group.key) : filters[mode] === group.key;
+  const selectedGroup = group => mode === "style" ? primaryFilter === group.key : filters[mode] === group.key;
   function pick(group) {
-    if (mode === "style") toggleStyle(group.key);
+    if (mode === "style") {
+      setPrimaryFilter(selectedGroup(group) ? undefined : group.key);
+      setFocused("");
+    }
     else setFilter(mode, selectedGroup(group) ? "" : group.key);
   }
   const rate = measuredValue(current?.stats, "rate");
@@ -234,10 +236,10 @@ export default function StrategyNetwork({ rows, strategies, metricsByTag, onLook
       <div className="network-controls">
         <label className="atlas-density">图上密度 <select aria-label="图上密度" value={density} onChange={event => {
           setDensity(event.target.value); setFocused("");
-        }}><option value="sparse">疏朗</option><option value="standard">标准</option><option value="dense">密集</option><option value="all">全员</option></select></label>
+        }}><option value="all">全员</option><optgroup label="代表玩家"><option value="sparse">疏朗</option><option value="standard">标准</option><option value="dense">密集</option></optgroup></select></label>
         <div className="network-modes" role="group" aria-label="色块分区">
           {Object.entries(modeNames).map(([key, name]) => <button key={key} type="button" aria-pressed={mode === key}
-            onClick={() => { setMode(key); setFocused(""); }}>{name}</button>)}
+            onClick={() => { if (key !== mode) setPrimaryFilter(undefined); setMode(key); setFocused(""); }}>{name}</button>)}
         </div>
         <button type="button" className="network-filter-toggle" aria-expanded={controlsOpen} onClick={() => setControlsOpen(open => !open)}>
           筛选{filterCount > 0 && ` · ${filterCount}`} <span aria-hidden="true">{controlsOpen ? "▴" : "▾"}</span>
@@ -245,7 +247,7 @@ export default function StrategyNetwork({ rows, strategies, metricsByTag, onLook
       </div>
     </header>
     {controlsOpen && <div className="network-filters" role="group" aria-label="玩家交集筛选">
-      <StylePicker strategies={strategies} selected={filters.styles} onToggle={toggleStyle} />
+      <StylePicker styles={board.styles} selected={filters.styles} onToggle={toggleStyle} />
       <MetricFilter label="三星率" title="近两个联赛日，三星进攻占有星数记录的进攻比例" value={filters.rate} options={rateOptions}
         onChange={value => setFilter("rate", value)} />
       <MetricFilter label="日均净杯" title="仅计进攻和防守均有完整 8 场杯数的联赛日" value={filters.net} options={netOptions}
@@ -257,7 +259,7 @@ export default function StrategyNetwork({ rows, strategies, metricsByTag, onLook
       {canUseStyleRates && <label className="network-rate-scope" title="每个所选流派的三星率和有效进攻场数均须达标">
         <input type="checkbox" checked={filters.perStyle} onChange={event => setFilter("perStyle", event.target.checked)} />按各流派计算
       </label>}
-      {filterCount > 0 && <button className="network-reset" type="button" onClick={() => { setFilters(emptyFilters); setFocused(""); }}>清除筛选</button>}
+      {filterCount > 0 && <button className="network-reset" type="button" onClick={() => { setPrimaryFilter(undefined); setFilters(emptyFilters); setFocused(""); }}>清除筛选</button>}
     </div>}
     <div ref={frame} className="network-plot">
       {matching.length === 0 ? <p className="network-empty">暂无符合条件的玩家</p> :
@@ -270,13 +272,13 @@ export default function StrategyNetwork({ rows, strategies, metricsByTag, onLook
             if (tag) { event.stopPropagation(); onLookupPlayer?.(tag); }
           }}>
           {graph.territories.map(({ key, d, group, caption }) =>
-            <g key={key} className="network-zone" role="button" tabIndex={0} aria-label={`筛选${group.name}`}
+            <g key={key ?? "unknown"} className="network-zone" role="button" tabIndex={0} aria-label={`筛选${group.name}`}
               aria-pressed={selectedGroup(group)} onClick={() => pick(group)}
               onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); pick(group); } }}>
-              <path d={d} fill={group.color} data-region={key} />
+              <path d={d} fill={group.color} data-region={key ?? "unknown"} />
               {caption && <text x={caption.x} y={caption.y} textAnchor="middle">{group.name}</text>}
             </g>)}
-          {density === "all" && <AtlasPopulation players={matching} anchors={graph.points} width={width} height={graph.height} hitRef={hitRef} />}
+          {graph.population && <AtlasPopulation layer={graph.population} width={width} height={graph.height} />}
           <AtlasEdges edges={graph.edges} current={current} />
           {graph.points.map(player => {
             const active = player === foreground;
@@ -284,7 +286,7 @@ export default function StrategyNetwork({ rows, strategies, metricsByTag, onLook
             const label = graph.labels.get(player.playerTag);
             const name = player.playerName || player.playerTag;
             return <g key={player.playerTag} className="network-player" data-rank={player.rank} data-player={player.playerTag}
-              role="button" aria-label={`第 ${player.rank} 名，${name}，${player.playerTag}，查看战报`}
+              role="button" aria-label={`第 ${player.rank} 名，${name}，${player.playerTag}，${primaryLabel(player)}，查看战报`}
               tabIndex={player === (foreground ?? graph.points[0]) ? 0 : -1}
               onMouseEnter={() => setFocused(player.playerTag)} onMouseLeave={() => setFocused("")} onFocus={() => setFocused(player.playerTag)}
               onBlur={() => setFocused("")} onClick={() => from(player)} onKeyDown={event => playerKey(event, player)}>
@@ -302,25 +304,29 @@ export default function StrategyNetwork({ rows, strategies, metricsByTag, onLook
       {current && (foreground || hoverPoint.current) && <span aria-hidden="true" className="atlas-hover-card" style={{
         left: Math.max(4, Math.min(width - Math.min(width - 8, 195), (foreground?.x ?? hoverPoint.current.x) + 12)),
         top: Math.max(3, Math.min(graph.height - 48, (foreground?.y ?? hoverPoint.current.y) + 11)),
-      }}><b>#{current.rank} {current.playerName || current.playerTag}</b><span>{primaryLabel(current)}</span></span>}
+      }}><b>#{current.rank} {current.playerName || current.playerTag}</b><span>常用流派 · {primaryLabel(current)}</span></span>}
     </div>
-    {board.groups.length > 0 && <div className="network-legend" role="group" aria-label={`${modeNames[mode]}图例`}>
-      {board.groups.map(group => <button type="button" key={group.key} aria-pressed={selectedGroup(group)}
-        onClick={() => pick(group)}><i style={{ backgroundColor: group.pointColor }} />{group.name}</button>)}
-      {matching.some(player => !player.cluster) && <span><i style={{ backgroundColor: "#89969c" }} />{mode === "style" ? "流派待定" : "指标暂缺"}</span>}
+    {legendGroups.length > 0 && <div className="network-legend" role="group" aria-label={`${modeNames[mode]}图例`}>
+      {mode === "style" && <strong>常用流派</strong>}
+      {legendGroups.map(group => <button type="button" key={group.key ?? "unknown"} aria-pressed={selectedGroup(group)}
+        onClick={() => pick(group)}><i style={{ backgroundColor: group.pointColor }} />{group.name}
+        {mode === "style" && <small>{counts.get(group.key) ?? 0} 人</small>}</button>)}
+      {mode !== "style" && counts.has(null) && <span><i style={{ backgroundColor: unknownStyle.pointColor }} />指标暂缺</span>}
     </div>}
     <footer className="network-footer">
       <div className="network-inspect" aria-live="polite">
-        <b className="network-count">{filterCount ? `交集 ${matching.length} / ${board.players.length} 人` : `榜单 ${board.players.length} 人`}</b>
+        <b className="network-count" title="图上可查看的人数 / 当前筛选范围内的玩家人数">
+          {density === "all" ? "图中" : "代表玩家"} {visibleCount} / {matching.length} 人</b>
+        {filterCount > 0 && <span>榜单 {board.players.length} 人</span>}
         {current ? <><b>#{current.rank} {current.playerName || current.playerTag}</b><span>{current.playerTag}</span>
           <span>{primaryLabel(current)} · 总体三星率 {rate === null ? "—" : percent.format(rate)}
           {rate !== null && `（${current.stats.attackCount} 场）`} · 日均进攻杯 {attack === null ? "—" : score.format(attack)} · 日均净杯 {net === null ? "—" : score.format(net)}
           {net !== null && `（${current.stats.completedDays} 日）`}</span>
           {useStyleRates && current.uses.filter(use => filters.styles.includes(use.strategy)).map(use =>
             <span key={use.strategy}>{use.strategy} {percent.format(use.threeStarCount / use.scoredCount)}（{use.threeStarCount}/{use.scoredCount}）</span>)}</>
-        : matching.length > 0 && <><span>图中 {density === "all" ? matching.length : graph.points.length} 人</span><span className="network-edge-key"
+        : matching.length > 0 && <span className="network-edge-key"
           title={mode === "style" ? "连线表示用过同一流派，加粗表示常用流派相同" : undefined}>
-          {mode === "style" ? "共用流派" : mode === "rate" ? "同档三星率" : "同档净杯"}</span></>}</div>
+          {mode === "style" ? "共用流派" : mode === "rate" ? "同档三星率" : "同档净杯"}</span>}</div>
       <div className="network-actions"><label>节点大小 <select aria-label="节点大小" value={sizeBy} onChange={event => setSizeBy(event.target.value)}>
         <option value="rank">官方名次</option><option value="rate">三星率</option><option value="net">日均净杯</option><option value="sample">有效进攻</option>
       </select></label>

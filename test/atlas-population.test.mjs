@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildPopulationLayer } from "../src/atlas-population.mjs";
-import { buildStrategyMap } from "../src/strategy-map-layout.mjs";
+import { buildStrategyMap, regionContains } from "../src/strategy-map-layout.mjs";
 
 test("every non-anchor in the filtered population has a visible, individually hit-testable point", () => {
   const groups = [{ key: "dragon" }, { key: "bowler" }];
@@ -9,19 +9,38 @@ test("every non-anchor in the filtered population has a visible, individually hi
     const players = Array.from({ length: count }, (_, i) => ({
       rank: i + 1, playerTag: `#P${i + 1}`, cluster: i % 3 === 0 ? "dragon" : i % 3 === 1 ? "bowler" : null,
     }));
-    const { nodes, height } = buildStrategyMap(players, groups, width, "rank", "style", "all");
-    const layer = buildPopulationLayer(players, nodes, width, height);
+    const { nodes, height, regions } = buildStrategyMap(players, groups, width, "rank", "style", "all");
+    const box = { x: width * .18, y: 65, width: 65, height: 35 };
+    const layer = buildPopulationLayer(players, nodes, width, height, regions, [box]);
     assert.equal(layer.points.length + nodes.length, players.length);
     const ids = new Set(nodes.map(n => n.playerTag));
+    const owners = new Map(players.map(p => [p.playerTag, p.cluster]));
     for (const p of layer.points) {
       assert.ok(p.x >= 0 && p.x < width && p.y >= 0 && p.y < height);
       assert.ok(!ids.has(p.playerTag));
+      assert.deepEqual(regions.filter(z => regionContains(z, p.x, p.y)).map(z => z.key), [owners.get(p.playerTag)]);
+      assert.ok(p.x < box.x || p.y < box.y || p.x > box.x + box.width || p.y > box.y + box.height);
       assert.equal(layer.hitTest(p.x, p.y), p.playerTag);
       ids.add(p.playerTag);
     }
     assert.equal(ids.size, players.length);
     assert.equal(layer.hitTest(-1, 0), null);
     for (const node of nodes) assert.equal(layer.hitTest(node.x, node.y), null);
+  }
+});
+
+test("unknown and singleton styles have exclusive space even without a foreground representative", () => {
+  const groups = Array.from({ length: 24 }, (_, i) => ({ key: String(i) }));
+  const players = Array.from({ length: 200 }, (_, i) => ({
+    rank: i + 1, playerTag: String(i), cluster: groups[i]?.key ?? null,
+  }));
+  const { nodes, height, regions } = buildStrategyMap(players, groups, 320, "rank", "style", "all");
+  assert.equal(regions.length, 25);
+  const layer = buildPopulationLayer(players, nodes, 320, height, regions);
+  assert.equal(nodes.length + layer.points.length, players.length);
+  for (const p of [...nodes, ...layer.points]) {
+    const owner = players[Number(p.playerTag)].cluster;
+    assert.deepEqual(regions.filter(zone => regionContains(zone, p.x, p.y)).map(zone => zone.key), [owner]);
   }
 });
 

@@ -1,11 +1,8 @@
-import { useLayoutEffect, useMemo, useRef } from "react";
-import { buildPopulationLayer } from "./atlas-population.mjs";
+import { useLayoutEffect, useRef } from "react";
 
-export default function AtlasPopulation({ players, anchors, width, height, hitRef }) {
+export default function AtlasPopulation({ layer, width, height }) {
   const canvasRef = useRef(null);
-  const layer = useMemo(() => buildPopulationLayer(players, anchors, width, height), [players, anchors, width, height]);
   useLayoutEffect(() => {
-    hitRef.current = layer.hitTest;
     const canvas = canvasRef.current;
     function paint() {
       const rect = canvas.getBoundingClientRect();
@@ -34,9 +31,8 @@ export default function AtlasPopulation({ players, anchors, width, height, hitRe
     return () => {
       observer.disconnect();
       window.removeEventListener("resize", paint);
-      hitRef.current = null;
     };
-  }, [layer, width, height, hitRef]);
+  }, [layer, width, height]);
   return <foreignObject width={width} height={height} pointerEvents="none" aria-hidden="true" data-population-count={layer.points.length}>
     <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block", pointerEvents: "none" }} />
   </foreignObject>;

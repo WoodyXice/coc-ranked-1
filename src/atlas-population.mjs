@@ -1,3 +1,5 @@
+import { regionContains } from "./strategy-map-layout.mjs";
+
 function nearestRank(anchors, rank) {
   let low = 0, high = anchors.length;
   while (low < high) {
@@ -20,7 +22,7 @@ function tagHash(tag) {
 
 // Give every background player a separate cell. Start near a representative with
 // the same category and a neighbouring rank, then expand locally to find room.
-export function buildPopulationLayer(players, anchors, width, height) {
+export function buildPopulationLayer(players, anchors, width, height, regions = [], excludedBoxes = []) {
   if (!anchors.length || !(width > 0 && height > 0)) return { points: [], radius: 0, hitTest: () => null };
   const sorted = [...anchors].sort((a, b) => a.rank - b.rank);
   const groups = new Map();
@@ -31,6 +33,7 @@ export function buildPopulationLayer(players, anchors, width, height) {
   const anchorTags = new Set(anchors.map(p => p.playerTag));
   const remaining = players.filter(player => !anchorTags.has(player.playerTag));
   if (!remaining.length) return { points: [], radius: 0, hitTest: () => null };
+  if (regions.length) return populationInRegions(remaining, anchors, width, height, regions, excludedBoxes);
   const step = Math.min(9, Math.sqrt(width * height / (remaining.length * 2.2)));
   const columns = Math.floor(width / step), rows = Math.floor(height / step);
   const radius = Math.max(.65, Math.min(2.6, step * .31));
@@ -47,6 +50,12 @@ export function buildPopulationLayer(players, anchors, width, height) {
     visit(Math.floor(anchor.x / step), Math.floor(anchor.y / step), Math.ceil(clearance / step), (x, y, cell) => {
       if (((x + .5) * step - anchor.x) ** 2 + ((y + .5) * step - anchor.y) ** 2 <= clearance ** 2) cells[cell] = -1;
     });
+  }
+  for (const box of excludedBoxes) {
+    const margin = radius + step * .25;
+    const x0 = Math.max(0, Math.floor((box.x - margin) / step)), x1 = Math.min(columns - 1, Math.floor((box.x + box.width + margin) / step));
+    const y0 = Math.max(0, Math.floor((box.y - margin) / step)), y1 = Math.min(rows - 1, Math.floor((box.y + box.height + margin) / step));
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) cells[y * columns + x] = -1;
   }
 
   const cloud = Math.sqrt(width * height / anchors.length) * .85;
@@ -92,6 +101,68 @@ export function buildPopulationLayer(players, anchors, width, height) {
       const distance = (x - point.x) ** 2 + (y - point.y) ** 2;
       if (distance < nearest) { nearest = distance; tag = point.playerTag; }
     });
+    return tag;
+  }
+  return { points, radius, hitTest };
+}
+
+function populationInRegions(players, anchors, width, height, regions, boxes) {
+  const groups = Map.groupBy(players, player => player.cluster ?? null);
+  const points = [];
+  const radius = Math.min(2.9, Math.sqrt(width * height / players.length) * .17);
+  for (const region of regions) {
+    const members = groups.get(region.key);
+    if (!members?.length) continue;
+    const bounds = region.bounds;
+    const foreground = anchors.filter(anchor => anchor.cluster === region.key || (!anchor.cluster && region.key === null));
+    const labels = boxes.filter(box => box.x < bounds.x + bounds.width && box.x + box.width > bounds.x
+      && box.y < bounds.y + bounds.height && box.y + box.height > bounds.y);
+    let step = Math.sqrt(bounds.width * bounds.height / (members.length * 1.8));
+    let seats;
+    // Reduce the cell size locally if labels and foreground hit targets consume
+    // too much of this area. A reserved point never spills into a different colour.
+    for (let attempt = 0; attempt < 7; attempt++, step *= .72) {
+      seats = [];
+      const columns = Math.max(1, Math.ceil(bounds.width / step));
+      const rows = Math.max(1, Math.ceil(bounds.height / step));
+      const dx = bounds.width / columns, dy = bounds.height / rows;
+      const randomSeed = tagHash(String(region.key));
+      for (let row = 0; row < rows; row++) {
+        for (let col = 0; col < columns; col++) {
+          const seed = Math.imul((row * columns + col) ^ randomSeed, 0x9e3779b1) >>> 0;
+          const px = bounds.x + (col + .29 + (seed & 255) * .42 / 255) * dx;
+          const py = bounds.y + (row + .29 + ((seed >>> 16) & 255) * .42 / 255) * dy;
+          if (!regionContains(region, px, py, radius + .1)) continue;
+          if (labels.some(box => px >= box.x - radius && px <= box.x + box.width + radius
+            && py >= box.y - radius && py <= box.y + box.height + radius)) continue;
+          if (foreground.some(anchor => (px - anchor.x) ** 2 + (py - anchor.y) ** 2 < (Math.max(12, (anchor.radius ?? 8) + 4) + radius) ** 2)) continue;
+          seats.push({ x: px, y: py, order: seed });
+        }
+      }
+      if (seats.length >= members.length) break;
+    }
+    seats.sort((a, b) => a.order - b.order);
+    const selected = seats.slice(0, members.length).sort((a, b) => a.y - b.y);
+    for (const [index, seat] of selected.entries()) {
+      const player = members[index];
+      points.push({ x: seat.x, y: seat.y, playerTag: player.playerTag, known: region.key !== null, color: player.pointColor ?? "#89969c" });
+    }
+  }
+  const reach = radius + Math.min(2.6, radius * .85);
+  const columns = Math.ceil(width / reach);
+  const cells = Map.groupBy(points, p => Math.floor(p.y / reach) * columns + Math.floor(p.x / reach));
+  function hitTest(x, y) {
+    if (!(x >= 0 && y >= 0 && x < width && y < height)) return null;
+    const col = Math.floor(x / reach), row = Math.floor(y / reach);
+    let closest = reach * reach, tag = null;
+    for (let j = Math.max(0, row - 1); j <= row + 1; j++) {
+      for (let i = Math.max(0, col - 1); i <= Math.min(columns - 1, col + 1); i++) {
+        for (const point of cells.get(j * columns + i) ?? []) {
+          const d = (point.x - x) ** 2 + (point.y - y) ** 2;
+          if (d < closest) { closest = d; tag = point.playerTag; }
+        }
+      }
+    }
     return tag;
   }
   return { points, radius, hitTest };
