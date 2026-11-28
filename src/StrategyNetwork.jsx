@@ -1,9 +1,9 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import AtlasPopulation from "./AtlasPopulation.jsx";
 import AtlasEdges from "./AtlasEdges.jsx";
 import PlayerUsageCard from "./PlayerUsageCard.jsx";
 import { buildPopulationLayer } from "./atlas-population.mjs";
-import { prepareBoard, unknownStyle } from "./strategy-map-board.mjs";
+import { partitionOverlapPlayers, prepareBoard, unknownStyle } from "./strategy-map-board.mjs";
 import { matchesStyleName } from "./strategy-search.mjs";
 import { buildStrategyMap, regionContains } from "./strategy-map-layout.mjs";
 import { placeMapLabels } from "./strategy-map-labels.mjs";
@@ -107,10 +107,65 @@ function MetricFilter({ label, value, options, onChange, title }) {
 
 const samples = [{ id: 4, label: "至少 4 场" }, { id: 8, label: "至少 8 场" }, { id: 16, label: "满 16 场" }];
 
-const PlayerPicker = memo(function PlayerPicker({ players, onLookup }) {
-  const [open, setOpen] = useState(false);
+function PlayerRoster({ players, onLookup, details = false }) {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(0);
+  const matches = useMemo(() => {
+    const term = query.trim().toLowerCase();
+    if (!term) return players;
+    const rank = Number(term.replace(/^#/, ""));
+    return players.filter(player => player.rank === rank || player.playerTag.toLowerCase().includes(term)
+      || player.playerName?.toLowerCase().includes(term));
+  }, [players, query]);
+  const pageCount = Math.max(1, Math.ceil(matches.length / 30));
+  const current = Math.min(page, pageCount - 1);
+  return <>
+    <input type="search" aria-label="搜索榜上玩家" placeholder="名次、玩家名或标签" autoFocus value={query}
+      onChange={event => { setQuery(event.target.value); setPage(0); }} />
+    <div className="atlas-player-list">
+      {matches.slice(current * 30, (current + 1) * 30).map(player => <button type="button" key={player.playerTag}
+        onClick={() => onLookup(player.playerTag)}>
+        <span>#{player.rank} {player.playerName} <small>{player.playerTag}</small></span>
+        {details && player.stats && <small>{primaryLabel(player)}</small>}
+      </button>)}
+      {!matches.length && <p>没有匹配的玩家</p>}
+    </div>
+    {matches.length > 30 && <div className="legend-pages">
+      <button type="button" disabled={!current} onClick={() => setPage(current - 1)}>上一页</button>
+      <span>{current + 1} / {pageCount}</span>
+      <button type="button" disabled={current + 1 === pageCount} onClick={() => setPage(current + 1)}>下一页</button>
+    </div>}
+  </>;
+}
+
+const outsideGroups = ["其他流派", "暂无近期进攻", "流派未识别", "待取战报", "战报暂缺"];
+function OutsideRoster({ outside, onLookup }) {
+  const [active, setActive] = useState(null);
+  const panelId = useId();
+  const container = useRef(null);
+  if (!outside.size && !active) return null;
+  return <section className="atlas-outside" aria-label="图外玩家" ref={container} onKeyDown={event => {
+    if (event.key === "Escape" && active) {
+      event.stopPropagation();
+      container.current.querySelector('[aria-expanded="true"]')?.focus();
+      setActive(null);
+    }
+  }}>
+    <div className="atlas-outside-groups"><strong>图外名单</strong>
+      {outsideGroups.filter(group => outside.has(group) || active === group).map(group =>
+        <button key={group} type="button" aria-expanded={active === group} aria-controls={panelId}
+          onClick={() => setActive(active === group ? null : group)}>
+          {group} <b>{outside.get(group)?.length ?? 0}</b><span aria-hidden="true">⌄</span>
+        </button>)}
+    </div>
+    <div id={panelId} hidden={!active} className="atlas-outside-panel">
+      {active && <PlayerRoster key={active} players={outside.get(active) ?? []} details onLookup={onLookup} />}
+    </div>
+  </section>;
+}
+
+const PlayerPicker = memo(function PlayerPicker({ players, onLookup }) {
+  const [open, setOpen] = useState(false);
   const trigger = useRef(null);
   const panel = useRef(null);
   useEffect(() => {
@@ -121,20 +176,11 @@ const PlayerPicker = memo(function PlayerPicker({ players, onLookup }) {
     document.addEventListener("pointerdown", dismiss);
     return () => document.removeEventListener("pointerdown", dismiss);
   }, [open]);
-  const matches = useMemo(() => {
-    const term = query.trim().toLowerCase();
-    if (!open || !term) return players;
-    const rank = Number(term.replace(/^#/, ""));
-    return players.filter(player => player.rank === rank || player.playerTag.toLowerCase().includes(term)
-      || player.playerName?.toLowerCase().includes(term));
-  }, [players, query, open]);
   if (players.length <= 200 && !open) return <select value="" aria-label="查看榜上玩家战报"
     onChange={event => onLookup?.(event.target.value)} disabled={!onLookup || !players.length}>
     <option value="" disabled>查看玩家</option>
     {players.map(player => <option key={player.playerTag} value={player.playerTag}>#{player.rank} {player.playerName} · {player.playerTag}</option>)}
   </select>;
-  const pageCount = Math.max(1, Math.ceil(matches.length / 30));
-  const current = Math.min(page, pageCount - 1);
   function close(restoreFocus = false) {
     setOpen(false);
     if (restoreFocus) trigger.current?.focus();
@@ -144,30 +190,17 @@ const PlayerPicker = memo(function PlayerPicker({ players, onLookup }) {
   }}>
     <button type="button" ref={trigger} aria-expanded={open} disabled={!onLookup} onClick={() => setOpen(value => !value)}>查看玩家</button>
     {open && <div className="atlas-player-panel" ref={panel}>
-      <input type="search" aria-label="搜索榜上玩家" placeholder="名次、玩家名或标签" autoFocus value={query}
-        onChange={event => { setQuery(event.target.value); setPage(0); }} />
-      <div className="atlas-player-list">
-        {matches.slice(current * 30, (current + 1) * 30).map(player => <button type="button" key={player.playerTag}
-          onClick={() => { close(true); onLookup(player.playerTag); }}>
-          <span>#{player.rank} {player.playerName}</span><small>{player.playerTag}</small>
-        </button>)}
-        {!matches.length && <p>没有匹配的玩家</p>}
-      </div>
-      {matches.length > 30 && <div className="legend-pages">
-        <button type="button" disabled={!current} onClick={() => setPage(current - 1)}>上一页</button>
-        <span>{current + 1} / {pageCount}</span>
-        <button type="button" disabled={current + 1 === pageCount} onClick={() => setPage(current + 1)}>下一页</button>
-      </div>}
+      <PlayerRoster players={players} onLookup={tag => { close(true); onLookup(tag); }} />
     </div>}
   </div>;
 });
 
-export default function StrategyNetwork({ rows, strategies, metricsByTag, onLookupPlayer, onOpenStrategies }) {
+export default function StrategyNetwork({ rows, strategies, metricsByTag, metricStatuses, pairMemory, onLookupPlayer, onOpenStrategies }) {
   const frame = useRef(null);
   const hoverPoint = useRef(null);
   const width = useCanvasWidth(frame);
   const [mode, setMode] = useState("overlap");
-  const [requestedPair, setRequestedPair] = useState([]);
+  const [requestedPair, setRequestedPair] = useState(() => pairMemory?.current ?? []);
   const [usageTag, setUsageTag] = useState(null);
   const [sizeBy, setSizeBy] = useState("rank");
   const [density, setDensity] = useState("all");
@@ -177,6 +210,12 @@ export default function StrategyNetwork({ rows, strategies, metricsByTag, onLook
   const [focused, setFocused] = useState("");
   const board = useMemo(() => prepareBoard(rows, metricsByTag, strategies, mode, requestedPair),
     [rows, metricsByTag, strategies, mode, requestedPair]);
+  useLayoutEffect(() => {
+    if (requestedPair.length < 2 && board.pair.length === 2) {
+      if (pairMemory) pairMemory.current = board.pair;
+      setRequestedPair(board.pair);
+    }
+  }, [board.pair, requestedPair, pairMemory]);
   const overlap = mode === "overlap";
   const byStyle = overlap || mode === "style";
   const searchFilterCount = filters.styles.length + [filters.rate, filters.net, filters.attack, filters.sample].filter(Boolean).length;
@@ -190,17 +229,26 @@ export default function StrategyNetwork({ rows, strategies, metricsByTag, onLook
     for (const player of candidates) groups.set(player.cluster, (groups.get(player.cluster) ?? 0) + 1);
     return groups;
   }, [candidates]);
-  const legendGroups = byStyle ? [...board.groups, unknownStyle].filter(group => counts.has(group.key) || group.key === regionFilter) : board.groups;
-  const graph = useMemo(() => drawMap(matching, board.groups, width, mode, sizeBy, board.netExtent, density),
-    [matching, board, width, mode, sizeBy, density]);
+  const legendGroups = byStyle ? (overlap ? board.groups : [...board.groups, unknownStyle])
+    .filter(group => counts.has(group.key) || group.key === regionFilter) : board.groups;
+  const roster = useMemo(() => overlap ? partitionOverlapPlayers(matching, metricStatuses) : null, [matching, metricStatuses, overlap]);
+  const plotted = overlap ? roster.compared : matching;
+  const graph = useMemo(() => drawMap(plotted, board.groups, width, mode, sizeBy, board.netExtent, density),
+    [plotted, board, width, mode, sizeBy, density]);
   const canUseStyleRates = filters.styles.length > 0 && Boolean(filters.rate);
   const useStyleRates = canUseStyleRates && filters.perStyle;
   const matchingByTag = useMemo(() => new Map(matching.map(player => [player.playerTag, player])), [matching]);
   const current = matchingByTag.get(focused);
-  const usagePlayer = matchingByTag.get(usageTag);
+  const usagePlayer = usageTag && board.players.find(p => p.playerTag === usageTag);
   const inspectionLabel = player => overlap && player.cluster === "both" ? board.pair.join(" ∩ ") : primaryLabel(player);
   const foreground = graph.points.find(player => player.playerTag === focused);
   const visibleCount = graph.points.length + (graph.population?.points.length ?? 0);
+  let emptyMessage = "暂无符合条件的玩家";
+  if (overlap && matching.length && !plotted.length) {
+    if (roster.outside.has("待取战报")) emptyMessage = "正在读取玩家流派…";
+    else if (!metricsByTag.size) emptyMessage = "近期战报暂缺";
+    else emptyMessage = board.pair.length ? "暂无所选流派的进攻记录" : "近期战报暂无可识别的流派";
+  }
   function backgroundPlayer(event) {
     if (density !== "all" || event.target.closest(".network-player, .network-zone text")) return null;
     const bounds = event.currentTarget.getBoundingClientRect();
@@ -208,19 +256,15 @@ export default function StrategyNetwork({ rows, strategies, metricsByTag, onLook
     return graph.population?.hitTest((event.clientX - bounds.left) * width / bounds.width,
       (event.clientY - bounds.top) * graph.height / bounds.height);
   }
-  function keepPair() {
-    if (board.pair.some((name, i) => name !== requestedPair[i])) setRequestedPair(board.pair);
-  }
   function openPlayer(tag) {
-    if (overlap) {
-      keepPair();
-      setUsageTag(tag);
-    } else onLookupPlayer?.(tag);
+    if (overlap) setUsageTag(tag);
+    else onLookupPlayer?.(tag);
   }
   function setPairSide(index, name) {
     const next = [...board.pair];
     if (next[1 - index] === name) next[1 - index] = next[index];
     next[index] = name;
+    if (pairMemory) pairMemory.current = next;
     setRequestedPair(next);
     setRegionFilter(undefined);
     setFocused("");
@@ -234,7 +278,6 @@ export default function StrategyNetwork({ rows, strategies, metricsByTag, onLook
   const selectedGroup = group => byStyle ? regionFilter === group.key : filters[mode] === group.key;
   function pick(group) {
     if (byStyle) {
-      if (overlap) keepPair();
       setRegionFilter(selectedGroup(group) ? undefined : group.key);
       setFocused("");
     }
@@ -261,7 +304,7 @@ export default function StrategyNetwork({ rows, strategies, metricsByTag, onLook
       <div className="network-controls">
         <label className="atlas-density">图上密度 <select aria-label="图上密度" value={density} onChange={event => {
           setDensity(event.target.value); setFocused("");
-        }}><option value="all">全员</option><optgroup label="代表玩家"><option value="sparse">疏朗</option><option value="standard">标准</option><option value="dense">密集</option></optgroup></select></label>
+        }}><option value="all">{overlap ? "流派内全员" : "全员"}</option><optgroup label="代表玩家"><option value="sparse">疏朗</option><option value="standard">标准</option><option value="dense">密集</option></optgroup></select></label>
         <div className="network-modes" role="group" aria-label="色块分区">
           {Object.entries(modeNames).map(([key, name]) => <button key={key} type="button" aria-pressed={mode === key}
             onClick={() => { if (key !== mode) setRegionFilter(undefined); setMode(key); setFocused(""); }}>{name}</button>)}
@@ -295,7 +338,7 @@ export default function StrategyNetwork({ rows, strategies, metricsByTag, onLook
       {filterCount > 0 && <button className="network-reset" type="button" onClick={() => { setRegionFilter(undefined); setFilters(emptyFilters); setFocused(""); }}>清除筛选</button>}
     </div>}
     <div ref={frame} className="network-plot">
-      {matching.length === 0 ? <p className="network-empty">暂无符合条件的玩家</p> :
+      {plotted.length === 0 ? <p className="network-empty">{emptyMessage}</p> :
         <svg className="strategy-network-map" viewBox={`0 0 ${width} ${graph.height}`} aria-label={`全球榜玩家，按${modeNames[mode]}分区`} role="group"
           onPointerMove={event => {
             if (event.pointerType !== "touch" && !event.target.closest(".network-player")) setFocused(backgroundPlayer(event) || "");
@@ -307,7 +350,7 @@ export default function StrategyNetwork({ rows, strategies, metricsByTag, onLook
           {graph.styleShapes.map(shape => <path key={shape.key} d={shape.d} data-overlap-set={shape.key}
             fill={board.groups.find(group => group.key === shape.key)?.color} className="atlas-set-shape" aria-hidden="true" pointerEvents="none" />)}
           {graph.territories.map(({ key, d, group, caption }) =>
-            <g key={key ?? "unknown"} className={`network-zone${overlap && ["left", "right", "both"].includes(key) ? " atlas-set-zone" : ""}`}
+            <g key={key ?? "unknown"} className={`network-zone${overlap ? " atlas-set-zone" : ""}`}
               role="button" tabIndex={0} aria-label={`筛选${group.name}`}
               aria-pressed={selectedGroup(group)} onClick={() => pick(group)}
               onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); pick(group); } }}>
@@ -349,18 +392,19 @@ export default function StrategyNetwork({ rows, strategies, metricsByTag, onLook
         {byStyle && <small>{counts.get(group.key) ?? 0} 人</small>}</button>)}
       {!byStyle && counts.has(null) && <span><i style={{ backgroundColor: unknownStyle.pointColor }} />指标暂缺</span>}
     </div>}
+    {overlap && <OutsideRoster outside={roster.outside} onLookup={openPlayer} />}
     <footer className="network-footer">
       <div className="network-inspect" aria-live="polite">
-        <b className="network-count" title="图上可查看的人数 / 当前筛选范围内的玩家人数">
-          {density === "all" ? "图中" : "代表玩家"} {visibleCount} / {matching.length} 人</b>
-        {filterCount > 0 && <span>榜单 {board.players.length} 人</span>}
+        <b className="network-count">{density === "all" ? "图中" : "代表玩家"} {visibleCount} 人</b>
+        {filterCount > 0 && <span>符合筛选 {matching.length} 人</span>}
+        <span>榜单 {board.players.length} 人</span>
         {current ? <><b>#{current.rank} {current.playerName || current.playerTag}</b><span>{current.playerTag}</span>
           <span>{primaryLabel(current)} · 总体三星率 {rate === null ? "—" : percent.format(rate)}
           {rate !== null && `（${current.stats.attackCount} 场）`} · 日均进攻杯 {attack === null ? "—" : score.format(attack)} · 日均净杯 {net === null ? "—" : score.format(net)}
           {net !== null && `（${current.stats.completedDays} 日）`}</span>
           {useStyleRates && current.uses.filter(use => filters.styles.includes(use.strategy)).map(use =>
             <span key={use.strategy}>{use.strategy} {percent.format(use.threeStarCount / use.scoredCount)}（{use.threeStarCount}/{use.scoredCount}）</span>)}</>
-        : matching.length > 0 && <span className="network-edge-key"
+        : graph.edges.length > 0 && <span className="network-edge-key"
           title={byStyle ? "连线表示用过同一流派" : undefined}>
           {byStyle ? "共用流派" : mode === "rate" ? "同档三星率" : "同档净杯"}</span>}</div>
       <div className="network-actions"><label>节点大小 <select aria-label="节点大小" value={sizeBy} onChange={event => setSizeBy(event.target.value)}>
@@ -369,7 +413,8 @@ export default function StrategyNetwork({ rows, strategies, metricsByTag, onLook
       <PlayerPicker players={matching} onLookup={overlap ? openPlayer : onLookupPlayer} />
       {!!filters.styles.length && <button type="button" onClick={onOpenStrategies}>流派排行 ↗</button>}</div>
     </footer>
-    {overlap && usagePlayer && <PlayerUsageCard player={usagePlayer} pair={board.pair} emptyReason={primaryLabel(usagePlayer)}
+    {overlap && usagePlayer && <PlayerUsageCard player={usagePlayer} pair={board.pair}
+      emptyReason={usagePlayer.stats ? primaryLabel(usagePlayer) : metricStatuses?.has(usageTag) ? "战报暂缺" : "待取战报"}
       onDismiss={() => setUsageTag(null)} onReport={onLookupPlayer} />}
   </section>;
 }

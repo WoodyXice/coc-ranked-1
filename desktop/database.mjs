@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { mergePlayerHistory, playerHistoryWithWeeklyBoards } from "../collector.mjs";
+import { previousLegendDayStart } from "../insights.mjs";
 import { migrations as defaultMigrations } from "./migrations.mjs";
 
 // Runs fn inside one write transaction and rolls back if it throws.
@@ -157,6 +158,10 @@ function createWeeklyLedgerStore(db) {
 
 function createPlayerHistoryStore(db, weeklyLedgers) {
   const select = db.prepare("SELECT direction, battle_type, id, data FROM player_history WHERE player_tag = ?");
+  const selectRecentLegend = db.prepare(`
+    SELECT direction, data FROM player_history WHERE player_tag = ? AND battle_type = 'LEGEND'
+      AND julianday(COALESCE(NULLIF(data ->> 'battleTimestamp', ''), data ->> 'timestamp')) >= julianday(?)
+  `);
   const upsert = db.prepare(`
     INSERT INTO player_history (player_tag, direction, battle_type, id, updated_at, data) VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT (player_tag, direction, battle_type, id) DO UPDATE SET updated_at = excluded.updated_at, data = excluded.data
@@ -175,6 +180,14 @@ function createPlayerHistoryStore(db, weeklyLedgers) {
   }
 
   return {
+    readRecentLegend(playerTag, epoch = Date.now()) {
+      const history = { attacks: [], defenses: [] };
+      const since = new Date(previousLegendDayStart(epoch)).toISOString();
+      for (const { direction, data } of selectRecentLegend.all(normalizePlayerTag(playerTag), since)) {
+        history[direction].push(JSON.parse(data));
+      }
+      return history;
+    },
     read(playerTag) {
       const player = normalizePlayerTag(playerTag);
       return playerHistoryWithWeeklyBoards(readRows(player), weeklyLedgers?.read(player) ?? []);

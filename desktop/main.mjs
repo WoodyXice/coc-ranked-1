@@ -91,7 +91,7 @@ function createWindow(database, storageWarnings) {
   });
   const accountStore = createAccountStore(database, safeStorage);
   const defenseNotes = createDefenseNoteStore(database.db);
-  const legendMetrics = createLegendMetricsService({ readHistory: database.playerHistory.read });
+  const legendMetrics = createLegendMetricsService({ readHistory: database.playerHistory.readRecentLegend });
   window.once("closed", legendMetrics.reset);
   const temporaryGroups = createTemporaryGroupService({ snapshots: database.snapshots });
   window.once("closed", temporaryGroups.reset);
@@ -212,7 +212,7 @@ function createWindow(database, storageWarnings) {
     return loadLegendBoard(token, input?.location, input?.force === true, input?.limit);
   });
   bind(window, "coc:legend-player-metrics", async (input) =>
-    legendMetrics.fetchBatch(await savedDeveloperToken(), input?.playerTags, input?.location, input?.limit));
+    legendMetrics.fetchBatch(await savedDeveloperToken(), input?.playerTags, input?.location, input?.limit, input?.progressive === true));
   bind(window, "coc:legend-locations", async () => fetchLegendLocations({ token: await savedDeveloperToken() }));
   bind(window, "coc:temporary-query-history", database.temporaryQueries.list);
   bind(window, "coc:temporary-group-details", async (input) => {

@@ -56,6 +56,25 @@ test("partially overlapping player history is preserved across a database reopen
   }
 });
 
+test("leaderboard history reads only the player's Legend battles from the two league days", (t) => {
+  const database = openDatabase(":memory:");
+  t.after(() => database.close());
+  const now = Date.parse("2026-11-25T05:00:00Z");
+  const first = "2026-11-24T05:00:00.000Z";
+  const older = "2026-11-24T04:59:59.999Z";
+  const legend = (id, timestamp, extra) => personalBattle(id, timestamp, { battleType: "LEGEND", ...extra });
+  database.playerHistory.merge("#MOCK1", {
+    attacks: [legend("in", first), personalBattle("ranked", first), legend("out", older, { opponentTag: "#OTHER" })],
+    defenses: [legend("defense", older, { battleTimestamp: first })],
+  });
+  database.playerHistory.merge("#MOCK2", { attacks: [legend("unrelated", first)] });
+  const archive = database.playerHistory.readRecentLegend("mock1", now);
+  assert.deepEqual(archive.attacks.map(row => row.id), ["in"]);
+  assert.deepEqual(archive.defenses.map(row => row.id), ["defense"]);
+  assert.deepEqual(database.playerHistory.readRecentLegend("#MOCK1", now + 86_400_000), { attacks: [], defenses: [] });
+  assert.equal(database.playerHistory.read("#MOCK1").attacks.length, 3);
+});
+
 test("recent village queries persist, deduplicate and retain the 50 latest distinct tags", async (context) => {
   const directory = await mkdtemp(join(tmpdir(), "coc-ranked-queries-test-"));
   context.after(() => rm(directory, { recursive: true, force: true }));

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildStrategyMap, regionContains } from "../src/strategy-map-layout.mjs";
 import { buildPopulationLayer } from "../src/atlas-population.mjs";
+import { partitionOverlapPlayers } from "../src/strategy-map-board.mjs";
 
 const keys = ["left", "both", "right", "other", null];
 const groups = keys.map(key => ({ key }));
@@ -14,11 +15,13 @@ function playersWithCounts(counts) {
   }));
 }
 
-test("overlap map draws the occupied exclusive, shared and outside regions, with one identity per point", () => {
+test("only players using the selected styles occupy the map, with one identity per point", () => {
   for (const [width, counts] of [[240, [1, 1, 1, 100, 97]], [320, [12, 1, 110, 67, 10]],
     [1000, [45, 50, 65, 29, 11]], [320, [8, 171, 1, 19, 1]], [1000, [600, 1400, 4000, 3900, 100]],
     [320, [3, 9980, 2, 8, 7]], [320, [1, 1, 1, 2, 9995]]]) {
-    const players = playersWithCounts(counts);
+    const all = playersWithCounts(counts);
+    const { compared: players, outside } = partitionOverlapPlayers(all);
+    assert.equal(players.length + [...outside.values()].flat().length, all.length);
     const { nodes, regions, styleShapes, height } = buildStrategyMap(players, groups, width, "rank", "overlap", "all");
     const anchors = nodes.map(node => ({ ...node, radius: node.rank < 4 ? 12 : 5 }));
     const population = buildPopulationLayer(players, anchors, width, height, regions);
@@ -42,11 +45,11 @@ test("zero shared members, subset sets, identical sets, a single set and no usab
   for (const counts of [[111, 0, 63, 26, 0], [1, 192, 0, 0, 7], [0, 1, 1, 2, 196], [0, 200, 0, 0, 0],
     [199, 1, 0, 0, 0], [0, 0, 154, 0, 46], [0, 0, 0, 0, 200], [0, 0, 0, 20, 180],
     [0, 1, 0, 0, 0], [0, 0, 1, 0, 0], [1, 0, 1, 0, 0]]) {
-    const players = playersWithCounts(counts);
+    const { compared: players } = partitionOverlapPlayers(playersWithCounts(counts));
     const { nodes, regions, styleShapes, height } = buildStrategyMap(players, groups, 240, "rank", "overlap", "all");
     const remaining = buildPopulationLayer(players, nodes, 240, height, regions);
     assert.equal(nodes.length + remaining.points.length, players.length);
-    assert.deepEqual(regions.map(region => region.key).sort(), keys.filter((_, i) => counts[i]).sort());
+    assert.deepEqual(regions.map(region => region.key).sort(), keys.slice(0, 3).filter((_, i) => counts[i]).sort());
     assert.deepEqual(styleShapes.map(s => s.key).sort(),
       ["left", "right"].filter((_, i) => (i ? counts[2] : counts[0]) || counts[1]));
     const left = regions.find(r => r.key === "left");
@@ -58,4 +61,13 @@ test("zero shared members, subset sets, identical sets, a single set and no usab
       assert.deepEqual(regions.filter(r => regionContains(r, p.x, p.y)).map(r => r.key), [key]);
     }
   }
+});
+
+test("outside reports never resize the two style contours", () => {
+  function plot(outsideCounts) {
+    const { compared } = partitionOverlapPlayers(playersWithCounts([42, 1, 9, ...outsideCounts]));
+    const { height, regions, styleShapes } = buildStrategyMap(compared, groups, 1320, "rank", "overlap", "all");
+    return { height, regions, styleShapes };
+  }
+  assert.deepEqual(plot([46, 102]), plot([64, 65]));
 });

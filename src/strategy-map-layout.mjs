@@ -380,6 +380,7 @@ export function buildStrategyMap(players, groups, width, sizeBy = "rank", mode =
   const canvasHeight = density === "all" ? Math.min(160, Math.max(0, players.length - limit) / 2) : 0;
   let height = players.length <= 3 ? 140 + 20 * players.length :
     Math.round(clamp(width * .34, 320, 450) + Math.max(extraHeight, canvasHeight));
+  if (mode === "overlap") height = Math.round(clamp(width * .28, 290, 365));
   if (!players.length) return { nodes: [], regions: [], height, zones: [], edges: [], styleShapes: [] };
   const ranked = [...players].sort(byRank);
   const counts = new Map();

@@ -6,6 +6,7 @@ const lifetime = 10 * 60_000;
 const failureLifetime = 60_000;
 const batchLimit = 20;
 const concurrentLimit = 4;
+const displayInterval = 650;
 
 export function createLegendMetricsService({ readHistory, makeCollector = createLegendMetricsCollector, now = Date.now } = {}) {
   let session;
@@ -89,17 +90,33 @@ export function createLegendMetricsService({ readHistory, makeCollector = create
     return task;
   }
 
-  async function fetchBatch(token, playerTags, location, limit) {
+  async function fetchBatch(token, playerTags, location, limit, progressive = false) {
     const state = session;
     if (!state || state.token !== token || !Array.isArray(playerTags)) return { entries: [] };
     const key = legendBoardKey(location, limit);
     const board = state.boards.get(key);
     if (!board) return { entries: [] };
     const tags = [...new Set(playerTags.slice(0, batchLimit))].filter((tag) => board.has(tag));
-    const entries = await Promise.all(tags.map(async (playerTag) => ({ playerTag, metrics: await lookup(state, playerTag) })));
+    const ready = new Map();
+    const jobs = tags.map(async (tag) => { ready.set(tag, await lookup(state, tag)); });
+    const all = Promise.all(jobs);
+    if (progressive && jobs.length > 1) {
+      await Promise.race(jobs);
+      if (ready.size < jobs.length) {
+        // Flush several nearby completions together. The next batch joins remaining jobs
+        // through lookup(), freeing new slots without waiting for a slow player.
+        let timer;
+        await Promise.race([all, new Promise(resolve => { timer = setTimeout(resolve, displayInterval); })]);
+        clearTimeout(timer);
+      }
+    } else {
+      await all;
+    }
     if (state !== session) return { entries: [] };
     const current = state.boards.get(key);
-    return { entries: entries.filter(({ playerTag }) => current.has(playerTag)) };
+    const listed = tags.filter(tag => current.has(tag));
+    const entries = listed.filter(tag => ready.has(tag)).map(playerTag => ({ playerTag, metrics: ready.get(playerTag) }));
+    return entries.length < listed.length ? { entries, partial: true } : { entries };
   }
 
   return { setRows, reset, fetchBatch };

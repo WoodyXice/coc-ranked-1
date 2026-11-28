@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { legendPlayerMetrics, legendStrategyLeaderboard } from "../insights.mjs";
 import { matchesNetworkFilters } from "../src/network-metrics.mjs";
-import { prepareBoard, unknownStyle } from "../src/strategy-map-board.mjs";
+import { partitionOverlapPlayers, prepareBoard, unknownStyle } from "../src/strategy-map-board.mjs";
 import { styleColors } from "../src/strategy-search.mjs";
 
 test("recognized armies define a primary even if only a secondary style has scored attacks", () => {
@@ -80,12 +80,40 @@ test("default pair maximizes distinct shared players and switching sides preserv
   assert.deepEqual(board.players.map(p => p.cluster), ["both", "both", "both", "left", "right", "other", "other", "other", "other", "other", null]);
   const reversed = prepareBoard(rows, metrics, [], "overlap", [b, a]);
   assert.deepEqual(reversed.players.slice(2, 5).map(p => p.cluster), ["both", "right", "left"]);
-  assert.deepEqual(prepareBoard(rows, metrics, [], "overlap", ["旧流派", a]).pair, [b, a]);
   assert.deepEqual(prepareBoard(rows, metrics, [], "overlap", [a, a]).pair, [a, b]);
   assert.deepEqual(prepareBoard([], new Map(), [], "overlap").pair, []);
+  assert.deepEqual(prepareBoard([rows[3]], metrics, [], "overlap").pair, [a]);
   const solo = prepareBoard([rows[3]], metrics, [], "overlap", [a, b]);
-  assert.deepEqual(solo.pair, [a]);
+  assert.deepEqual(solo.pair, [a, b]);
   assert.equal(solo.players[0].cluster, "left");
+});
+
+test("a board retains its first complete pair as later reports favour a different intersection", () => {
+  const [a, b, c] = ["气球冰狗", "巨矛投手", "龙流"];
+  const tags = ["#AB", "#AC1", "#AC2", "#AC3"];
+  const rows = tags.map((playerTag, i) => ({ rank: i + 1, playerTag }));
+  const sample = (...names) => ({ strategies: names.map(strategy => ({ strategy, count: 1 })) });
+  const metrics = new Map([[tags[0], sample(a, b)]]);
+  const first = prepareBoard(rows, metrics, [], "overlap").pair;
+  for (const tag of tags.slice(1)) metrics.set(tag, sample(a, c));
+  assert.deepEqual(new Set(prepareBoard(rows, metrics, [], "overlap").pair), new Set([a, c]));
+  assert.deepEqual(prepareBoard(rows, metrics, [], "overlap", first).pair, first);
+  assert.deepEqual(prepareBoard(rows, new Map(), [], "overlap", first).pair, first);
+});
+
+test("outside rosters identify other styles, empty and unclassified samples, pending and unavailable reports", () => {
+  const rows = ["#BOTH", "#OTHER", "#EMPTY", "#UNKNOWN", "#PENDING", "#FAILED"].map((playerTag, i) => ({ rank: i + 1, playerTag }));
+  const metrics = new Map([
+    ["#BOTH", { strategies: ["龙流", "蓝胖"].map(strategy => ({ strategy, count: 1 })) }],
+    ["#OTHER", { strategy: "雷龙" }], ["#EMPTY", { strategyStatus: "no-attacks" }], ["#UNKNOWN", { strategyStatus: "no-army" }],
+  ]);
+  const statuses = new Map([["#FAILED", { metrics: null }]]);
+  const board = prepareBoard(rows, metrics, [], "overlap", ["龙流", "蓝胖"]);
+  const { compared, outside } = partitionOverlapPlayers(board.players, statuses);
+  assert.deepEqual(compared.map(p => p.playerTag), ["#BOTH"]);
+  assert.deepEqual([...outside].map(([name, players]) => [name, ...players.map(p => p.playerTag)]), [
+    ["其他流派", "#OTHER"], ["暂无近期进攻", "#EMPTY"], ["流派未识别", "#UNKNOWN"], ["待取战报", "#PENDING"], ["战报暂缺", "#FAILED"],
+  ]);
 });
 
 test("legacy scored-only metrics use known primary totals without inventing secondary totals", () => {

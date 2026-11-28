@@ -234,9 +234,11 @@ test("Legend board collectors request battle logs only and recover archived Lege
 
   const missing = await collect({ playerTag: "#MISSING", archive });
   assert.deepEqual(missing.attacks.map(({ id }) => id), ["archived"]);
+  await assert.rejects(collect({ playerTag: "#NOTFOUND", archive: { attacks: [], defenses: [] } }), { status: 404 });
   await assert.rejects(collect({ playerTag: "#LOCKED" }), { status: 403 });
   await assert.rejects(collect({ playerTag: "../injected" }), { status: 400 });
-  assert.deepEqual(calls.map(({ path }) => path), [battleLogPath, "/v1/players/%23MISSING/battlelog", "/v1/players/%23LOCKED/battlelog"]);
+  assert.deepEqual(calls.map(({ path }) => path), [battleLogPath, "/v1/players/%23MISSING/battlelog",
+    "/v1/players/%23NOTFOUND/battlelog", "/v1/players/%23LOCKED/battlelog"]);
 });
 
 test("an arbitrary Legend I player gets strictly Legend logs across week reset with precision dedup", async () => {

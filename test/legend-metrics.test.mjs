@@ -57,6 +57,42 @@ test("legend metrics batch caps work, coalesces overlapping calls, and handles i
   assert.equal(maxRunning, 4);
 });
 
+test("progressive batches publish completed players and refill the queue past a slow log", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const tags = Array.from({ length: 24 }, (_, i) => `#MOCK${i}`);
+  const slow = Promise.withResolvers();
+  const calls = [];
+  const service = createLegendMetricsService({
+    makeCollector: () => async tag => {
+      calls.push(tag);
+      if (tag === tags[0]) return slow.promise;
+      if (tag === tags[1]) throw new Error("fixture missing");
+      return { tag };
+    },
+  });
+  service.setRows("key", tags.map(playerTag => ({ playerTag })));
+  const fetch = batch => service.fetchBatch("key", batch, "global", 200, true);
+  async function flush() {
+    await new Promise(setImmediate);
+    t.mock.timers.tick(1000);
+  }
+  const first = fetch(tags);
+  await flush();
+  const partial = await first;
+  assert.equal(partial.partial, true);
+  assert.deepEqual(partial.entries.map(entry => entry.playerTag), tags.slice(1, 20));
+  assert.equal(partial.entries[0].metrics, null);
+  const next = fetch([tags[0], ...tags.slice(20)]);
+  await flush();
+  assert.deepEqual((await next).entries.map(entry => entry.playerTag), tags.slice(20));
+  slow.resolve({ tag: tags[0] });
+  assert.deepEqual(await fetch([tags[0]]), { entries: [{ playerTag: tags[0], metrics: { tag: tags[0] } }] });
+  const warm = await fetch(tags.slice(0, 20));
+  assert.equal(warm.partial, undefined);
+  assert.equal(warm.entries.length, 20);
+  assert.deepEqual(calls, tags);
+});
+
 test("each board admits only its own rows and shares overlapping players across boards", async () => {
   const requested = [];
   const service = createLegendMetricsService({

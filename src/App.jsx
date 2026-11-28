@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import AccountPanel from "./AccountPanel.jsx";
 import LegendLeaderboard from "./LegendLeaderboard.jsx";
 import ReportDialog from "./ReportDialog.jsx";
@@ -31,7 +31,8 @@ export default function App() {
   const [entries, setEntries] = useState([]);
   const [accounts, setAccounts] = useState(emptyAccounts);
   const [accountLoading, setAccountLoading] = useState(true);
-  const [cached, setCached] = useState(null);
+  const [cached, setCached] = useState(undefined);
+  const readingReport = useRef(null);
   const [tokenRevision, setTokenRevision] = useState(0);
   const [busy, setBusy] = useState("");
   const [feedback, setFeedback] = useState(null);
@@ -43,17 +44,22 @@ export default function App() {
   const canLookup = accounts.hasDeveloperToken && !accountLoading;
   const lookup = useTemporaryPlayerLookup({ enabled: canLookup, tokenRevision });
 
-  async function readCached(tag) {
-    if (!tag) return null;
-    try { return await window.cocApp.cachedReport(tag); } catch { return null; }
-  }
+  const readCached = useCallback(tag => {
+    if (!tag) return Promise.resolve(null);
+    if (readingReport.current?.tag === tag) return readingReport.current.promise;
+    const promise = Promise.resolve().then(() => window.cocApp.cachedReport(tag)).catch(() => null)
+      .finally(() => {
+        if (readingReport.current?.promise === promise) readingReport.current = null;
+      });
+    readingReport.current = { tag, promise };
+    return promise;
+  }, []);
   useEffect(() => {
     let active = true;
     async function init() {
       try {
         const result = await window.cocApp.listAccounts();
-        const saved = await readCached(result.selectedTag);
-        if (active) { setAccounts(result); setCached(saved); }
+        if (active) setAccounts(result);
       } catch (error) {
         if (active) setFeedback({ message: errorMessage(error), error: true });
       } finally { if (active) setAccountLoading(false); }
@@ -61,6 +67,14 @@ export default function App() {
     void init();
     return () => { active = false; };
   }, []);
+
+  // The overview only needs credentials. Rebuilding a saved weekly report can be expensive.
+  useEffect(() => {
+    if (cached !== undefined || !accounts.selectedTag || (page !== "villages" && page !== "global")) return;
+    let active = true;
+    void readCached(accounts.selectedTag).then(report => { if (active) setCached(report); });
+    return () => { active = false; };
+  }, [accounts.selectedTag, cached, page, readCached]);
 
   function startNavigation(keepLookup = false) {
     if (!keepLookup) lookup.dismiss();
@@ -122,7 +136,7 @@ export default function App() {
   async function applyAccounts(result) {
     setAccounts({ ...result, storageWarnings: accounts.storageWarnings });
     if (result.selectedTag === accounts.selectedTag) return cached;
-    setCached(null);
+    setCached(undefined);
     const saved = await readCached(result.selectedTag);
     setCached(saved);
     return saved;
@@ -134,6 +148,10 @@ export default function App() {
     void run(refresh ? "正在更新本周排位…" : "正在读取村庄战报…", async () => {
       let payload = cached;
       if (tag !== accounts.selectedTag) payload = await applyAccounts(await window.cocApp.selectAccount(tag));
+      else if (payload === undefined) {
+        payload = await readCached(tag);
+        setCached(payload);
+      }
       let failure;
       if (canLookup && (!payload || refresh)) {
         try {

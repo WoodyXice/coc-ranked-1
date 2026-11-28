@@ -8,9 +8,17 @@ const netScore = new Intl.NumberFormat("zh-CN", { signDisplay: "exceptZero", max
 const count = new Intl.NumberFormat("zh-CN");
 
 function bestPlayer(rows, metricsByTag, metric, sample) {
-  return rows.map(player => ({ player, stats: metricsByTag.get(player.playerTag) }))
-    .filter(({ stats }) => Number.isFinite(stats?.[metric]))
-    .sort((a, b) => b.stats[metric] - a.stats[metric] || b.stats[sample] - a.stats[sample] || a.player.rank - b.player.rank)[0];
+  let best;
+  for (const player of rows) {
+    const stats = metricsByTag.get(player.playerTag);
+    if (!Number.isFinite(stats?.[metric])) continue;
+    if (best) {
+      const order = stats[metric] - best.stats[metric] || stats[sample] - best.stats[sample] || best.player.rank - player.rank;
+      if (order <= 0) continue;
+    }
+    best = { player, stats };
+  }
+  return best;
 }
 
 function Metric({ label, value, name, sample, onClick }) {
@@ -23,7 +31,7 @@ function Metric({ label, value, name, sample, onClick }) {
   </Element>;
 }
 
-export default function RankedOverview({ rows, strategies, metricsByTag, board, waiting, pending, unavailable,
+export default function RankedOverview({ rows, strategies, metricsByTag, metricStatuses, chartScope, pairMemory, board, waiting, pending, unavailable,
   accountLoading, enabled, onRefresh, onOpenVillages, onLookupPlayer, onOpenStrategies, scopeControl, limit = 200 }) {
   const byUsage = useMemo(() => strategies.toSorted((a, b) => b.scoredCount - a.scoredCount || b.playerCount - a.playerCount
     || a.strategy.localeCompare(b.strategy, "zh-CN")), [strategies]);
@@ -72,8 +80,8 @@ export default function RankedOverview({ rows, strategies, metricsByTag, board, 
           sample={net && `杯/日 · ${net.stats.completedDays} 个完整联赛日`}
           onClick={net && onLookupPlayer && (() => onLookupPlayer(net.player.playerTag))} />
     </div>
-    <div hidden={!rows.length}><StrategyNetwork rows={rows} strategies={byUsage} metricsByTag={metricsByTag}
-      onLookupPlayer={onLookupPlayer} onOpenStrategies={onOpenStrategies} /></div>
+    {!!rows.length && <StrategyNetwork key={chartScope} rows={rows} strategies={byUsage} metricsByTag={metricsByTag}
+      metricStatuses={metricStatuses} pairMemory={pairMemory} onLookupPlayer={onLookupPlayer} onOpenStrategies={onOpenStrategies} />}
     {!!byUsage.length && <section className="overview-styles" aria-label="常用流派对照">
       <header><h3>流派统计</h3><button type="button" onClick={onOpenStrategies}>流派排行 ↗</button></header>
       <table><thead><tr><th scope="col">流派</th><th scope="col">出场率</th><th scope="col">三星率</th><th scope="col">流派第一</th></tr></thead>

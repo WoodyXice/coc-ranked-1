@@ -1,5 +1,6 @@
 import { isIP } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
+import { previousLegendDayStart } from './insights.mjs';
 
 const apiRoot = 'https://api.clashofclans.com/v1';
 const day = 86_400_000;
@@ -1387,15 +1388,16 @@ export function createLegendBattleLogCollector(
   return async function collect({ playerTag: rawTag, archive } = {}) {
     const playerTag = normalizeTag(rawTag);
     if (!playerTag) throw clientError(400, '请输入有效的村庄标签。');
+    const legendRows = (rows) => (Array.isArray(rows) ? rows : []).filter((row) => battleMode(row?.battleType) === 'LEGEND');
+    const archived = { attacks: legendRows(archive?.attacks), defenses: legendRows(archive?.defenses) };
+    const hasArchive = archived.attacks.length > 0 || archived.defenses.length > 0;
     const logs = await requestBattleLog(request, playerTag).catch((error) => {
-      if (error.status !== 404) throw error;
+      if (error.status !== 404 || !hasArchive) throw error;
       return [];
     });
     const epoch = (now ?? new Date()).getTime();
-    const recent = recentHistory(logs, { playerTag }, { battleType: 'LEGEND', end: epoch + 1 });
-    if (!archive) return recent;
-    const legendRows = (rows) => (Array.isArray(rows) ? rows : []).filter((row) => battleMode(row?.battleType) === 'LEGEND');
-    return mergePlayerHistory(recent, { attacks: legendRows(archive.attacks), defenses: legendRows(archive.defenses) });
+    const recent = recentHistory(logs, { playerTag }, { battleType: 'LEGEND', start: previousLegendDayStart(epoch), end: epoch + 1 });
+    return hasArchive ? mergePlayerHistory(recent, archived) : recent;
   };
 }
 

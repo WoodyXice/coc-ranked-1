@@ -238,10 +238,12 @@ export default function LegendLeaderboard({ scope, active = true, overview = fal
   const strategyView = view === "strategies";
   const loadAll = overview || strategyView || playerColumns.some((column) => column.key === playerSort.key && column.metric);
   const hasTier = board.data?.hasTierData === true;
-  const { statuses, observeRow } = useLegendPlayerMetrics(rows, {
+  const { statuses, observeRow, day } = useLegendPlayerMetrics(rows, {
     active: active && enabled, location, loadAll, limit,
     refreshKey: board.data?.fetchedAt,
   });
+  const chartScope = `${location}:${limit}:${day}`;
+  const pairMemory = useMemo(() => ({ current: [] }), [chartScope]);
   const metricsByTag = useMemo(() => new Map([...statuses].filter(([, entry]) => entry.metrics)
     .map(([tag, entry]) => [tag, entry.metrics])), [statuses]);
   const players = useMemo(() => {
@@ -286,6 +288,7 @@ export default function LegendLeaderboard({ scope, active = true, overview = fal
   }
 
   if (overview) return <RankedOverview rows={rows} strategies={strategies} metricsByTag={metricsByTag}
+    metricStatuses={statuses} chartScope={chartScope} pairMemory={pairMemory}
     board={board} waiting={waiting} pending={metricsPending} unavailable={unavailable} scopeControl={scopeControl} limit={limit}
     accountLoading={accountLoading} enabled={enabled} onRefresh={refresh}
     onOpenVillages={onOpenVillages} onLookupPlayer={onLookupPlayer}

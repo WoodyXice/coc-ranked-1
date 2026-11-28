@@ -115,6 +115,10 @@ export function nextLegendDayStart(epoch) {
   return (legendDayNumber(epoch) + 1) * leagueDayMs + legendResetOffsetMs;
 }
 
+export function previousLegendDayStart(epoch) {
+  return (legendDayNumber(epoch) - 1) * leagueDayMs + legendResetOffsetMs;
+}
+
 export function freshLegendSnapshot(capturedAt, now = Date.now()) {
   const epoch = typeof capturedAt === "number" ? capturedAt : Date.parse(capturedAt);
   return Number.isFinite(epoch) && epoch <= now && now - epoch < 10 * 60_000
@@ -222,19 +226,27 @@ export function legendStrategyLeaderboard(rows, metricsByTag) {
   for (const { playerTag, playerName, rank } of rows) {
     for (const { strategy, scoredCount, threeStarCount } of metricsByTag.get(playerTag)?.strategies ?? []) {
       if (!(scoredCount > 0)) continue;
-      const group = groups.get(strategy) ?? { strategy, scoredCount: 0, threeStarCount: 0, players: [] };
+      let group = groups.get(strategy);
+      if (!group) {
+        group = { strategy, scoredCount: 0, threeStarCount: 0, playerCount: 0, topPlayers: [] };
+        groups.set(strategy, group);
+      }
       group.scoredCount += scoredCount;
       group.threeStarCount += threeStarCount;
-      group.players.push({ playerTag, playerName, rank, scoredCount, threeStarCount, threeStarRate: threeStarCount / scoredCount });
-      groups.set(strategy, group);
+      group.playerCount++;
+      const player = { playerTag, playerName, rank, scoredCount, threeStarCount, threeStarRate: threeStarCount / scoredCount };
+      const leaders = group.topPlayers;
+      const position = leaders.findIndex(other =>
+        (compareStrategyResults(player, other) || player.rank - other.rank || playerTag.localeCompare(other.playerTag)) < 0);
+      if (position >= 0) {
+        leaders.splice(position, 0, player);
+        if (leaders.length > 3) leaders.pop();
+      } else if (leaders.length < 3) leaders.push(player);
     }
   }
-  return [...groups.values()].map(({ players, ...group }) => ({
+  return [...groups.values()].map(group => ({
     ...group,
     threeStarRate: group.threeStarCount / group.scoredCount,
-    playerCount: players.length,
-    topPlayers: players.sort((a, b) => compareStrategyResults(a, b)
-      || a.rank - b.rank || a.playerTag.localeCompare(b.playerTag)).slice(0, 3),
   })).sort((a, b) => compareStrategyResults(a, b) || a.strategy.localeCompare(b.strategy, "zh-CN"));
 }
 

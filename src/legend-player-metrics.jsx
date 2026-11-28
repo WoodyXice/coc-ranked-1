@@ -90,9 +90,9 @@ export function useLegendPlayerMetrics(rows, { active, refreshKey, location, loa
     if (!tags.length) return;
     pending.current.add(location);
 
-    function finish(results) {
+    function finish(result) {
       const byTag = new Map();
-      for (const entry of Array.isArray(results) ? results : []) {
+      for (const entry of Array.isArray(result?.entries) ? result.entries : []) {
         if (entry?.playerTag) byTag.set(entry.playerTag, entry.metrics);
       }
       const checkedAt = Date.now();
@@ -105,6 +105,7 @@ export function useLegendPlayerMetrics(rows, { active, refreshKey, location, loa
           if (entry.day !== requestDay) entries.delete(tag);
         }
         for (const tag of tags) {
+          if (result?.partial && !byTag.has(tag)) continue;
           const metrics = byTag.get(tag) ?? null;
           entries.set(tag, { metrics, checkedAt, refreshKey, day: requestDay,
             expiresAt: checkedAt + (metrics === null ? retryDelay : cacheLifetime) });
@@ -114,9 +115,9 @@ export function useLegendPlayerMetrics(rows, { active, refreshKey, location, loa
       });
     }
 
-    void Promise.resolve().then(() => api.fetchLegendPlayerMetrics({ location, limit, playerTags: tags }))
-      .then((result) => finish(result?.entries), () => finish(null));
+    void Promise.resolve().then(() => api.fetchLegendPlayerMetrics({ location, limit, playerTags: tags, progressive: true }))
+      .then(finish, () => finish(null));
   }, [active, loadAll, location, limit, nearby, refreshKey, rows, statuses, boards]);
 
-  return { statuses, observeRow };
+  return { statuses, observeRow, day };
 }

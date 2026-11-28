@@ -66,6 +66,23 @@ export function overlapGroupKey(player, [left, right]) {
   return "other";
 }
 
+export function partitionOverlapPlayers(players, statuses) {
+  const compared = [];
+  const outside = new Map();
+  for (const player of players) {
+    if (player.cluster !== "other" && player.cluster !== null) {
+      compared.push(player);
+      continue;
+    }
+    let group = "其他流派";
+    if (!player.stats) group = statuses?.has(player.playerTag) ? "战报暂缺" : "待取战报";
+    else if (!player.uses.length) group = player.stats.strategyStatus === "no-attacks" ? "暂无近期进攻" : "流派未识别";
+    if (!outside.has(group)) outside.set(group, []);
+    outside.get(group).push(player);
+  }
+  return { compared, outside };
+}
+
 function overlapGroups([left, right]) {
   const groups = [];
   if (left) groups.push({ key: "left", name: left, ...styleColors(left) });
@@ -77,7 +94,6 @@ function overlapGroups([left, right]) {
       pointColor: `color-mix(in srgb, ${leftColors.pointColor}, ${rightColors.pointColor})` });
     groups.push({ key: "right", name: right, ...rightColors });
   }
-  groups.push({ key: "other", name: "其他流派", color: "#d8e4e9", pointColor: "#567788" });
   return groups;
 }
 
@@ -94,6 +110,10 @@ export function prepareBoard(rows, metrics, strategies, mode, requestedPair = []
       return { ...row, stats, uses, primary, tier };
     }).sort((a, b) => a.rank - b.rank);
   const styles = [...styleNames];
+  // A pair chosen for this board remains selectable while a fresh batch loads.
+  if (mode === "overlap") {
+    for (const name of requestedPair) if (name && !styles.includes(name)) styles.push(name);
+  }
   const pair = mode === "overlap" ? chooseOverlapPair(players, styles, requestedPair) : [];
   const groups = mode === "overlap" ? overlapGroups(pair) : mode === "style"
     ? styles.map(name => ({ key: name, name, ...styleColors(name) }))

@@ -22,27 +22,8 @@ function ovalContains(o, x, y, inset) {
 }
 
 export function overlapContains(region, x, y, pad) {
-  if (region.inOvals) return region.inOvals.every(o => ovalContains(o, x, y, pad))
+  return region.inOvals.every(o => ovalContains(o, x, y, pad))
     && !region.outOvals.some(o => ovalContains(o, x, y, -pad));
-  const b = region.bounds;
-  const corner = region.corner;
-  if (x < b.x + pad || x > b.x + b.width - pad || y < b.y + pad || y > b.y + b.height - pad) return false;
-  const dx = x - clamp(x, b.x + corner, b.x + b.width - corner);
-  const dy = y - clamp(y, b.y + corner, b.y + b.height - corner);
-  return Math.hypot(dx, dy) <= Math.max(0, corner - pad);
-}
-
-function outsideRegion(key, count, x, y, width, height) {
-  const r = Math.min(15, width / 4, height / 4);
-  const x2 = x + width, y2 = y + height;
-  const round = (px, py) => `A ${coord(r, r)} 0 0 1 ${coord(px, py)}`;
-  const d = [
-    `M ${coord(x + r, y)} H ${number(x2 - r)}`, round(x2, y + r),
-    `V ${number(y2 - r)}`, round(x2 - r, y2),
-    `H ${number(x + r)}`, round(x, y2 - r),
-    `V ${number(y + r)}`, round(x + r, y), "Z",
-  ].join(" ");
-  return { key, count, d, corner: r, bounds: { x, y, width, height }, x: x + width / 2, y: y + height * .28 };
 }
 
 // One area for each actually observed combination. Full set paths are painted
@@ -52,11 +33,8 @@ export function intersectionRegions(counts, width, height) {
   const count = key => counts.get(key) ?? 0;
   const [a, shared, b] = ["left", "both", "right"].map(count);
   const known = a + shared + b;
-  const outside = count("other") + count(null);
-  const gap = 8, left = gap, top = gap, w = width - 2 * gap, h = height - 2 * gap;
-  const outsideH = outside && (known ? clamp(outside / (outside + known), .19, .68) * (h - gap) : h);
-  const lensH = known ? h - (outside ? outsideH + gap : 0) : 0;
-  const cy = top + lensH / 2, ry = lensH / 2;
+  const gap = 8, left = width * .035, w = width - 2 * left;
+  const cy = height / 2, ry = height * .44;
 
   function add(key, d, inside, excluded, bounds, seedX, captionY = cy - ry * .47) {
     regions.push({ key, d, count: count(key), inOvals: inside, outOvals: excluded, bounds,
@@ -117,16 +95,5 @@ export function intersectionRegions(counts, width, height) {
     add("right", path(arc(B, 1, 1, x, y2), arc(A, 0, 0, x, y1)), [B], [A], ovalBounds(B), left + w - r / 2);
   }
 
-  if (outside) {
-    const keys = ["other", null].filter(key => count(key));
-    const y = top + h - outsideH;
-    const usable = w - (keys.length - 1) * gap;
-    let x = left;
-    for (const key of keys) {
-      const size = keys.length === 1 ? w : usable * clamp(count(key) / outside, .2, .8);
-      regions.push(outsideRegion(key, count(key), x, y, size, outsideH));
-      x += size + gap;
-    }
-  }
   return { regions, styleShapes };
 }

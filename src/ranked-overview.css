@@ -116,7 +116,7 @@
 .atlas-hover-card { position: absolute; pointer-events: none; display: grid; max-width: min(190px, 95%); padding: 5px 9px; background: #fff; color: #173a4c; border: 1px solid #bfd0d6; border-radius: 5px; box-shadow: 0 2px 8px #173e511a; font-size: 12px; }
 .atlas-hover-card b, .atlas-hover-card span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .strategy-network-map { display: block; width: 100%; overflow: hidden; }
-.network-empty { margin: 0; min-height: 160px; display: grid; place-items: center; color: var(--overview-muted); }
+.network-empty { margin: 0; min-height: 80px; display: grid; place-items: center; color: var(--overview-muted); }
 .network-zone, .network-player { cursor: pointer; }
 .network-zone path { fill-opacity: .43; stroke: none; transition: fill-opacity .15s; }
 .network-zone text { fill: #304451; font-size: 11px; font-weight: 650; letter-spacing: .02em; }
@@ -135,6 +135,16 @@
 .network-legend button { color: var(--overview-ink); border: 1px solid transparent; background: transparent; min-height: 25px; padding: 2px 4px; }
 .network-legend button:hover, .network-legend button[aria-pressed=true] { background: #edf5f6; border-color: #bbd0d5; }
 .network-legend i { width: 8px; height: 8px; border-radius: 50%; }
+.atlas-outside { border-top: 1px solid #e4ecee; padding: 6px 16px; }
+.atlas-outside-groups { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 12px; font-size: 12px; color: var(--overview-muted); }
+.atlas-outside-groups button { min-height: 26px; padding: 2px 4px; border: 0; background: transparent; font-size: inherit; }
+.atlas-outside-groups button b { color: var(--overview-ink); font-weight: 600; }
+.atlas-outside-groups button span { display: inline-block; margin-left: 5px; }
+.atlas-outside-groups button[aria-expanded=true] { background: #edf5f6; }
+.atlas-outside-groups button[aria-expanded=true] span { transform: rotate(180deg); }
+.atlas-outside-panel { max-width: 680px; padding: 8px 0; }
+.atlas-outside-panel input { width: min(270px, 100%); min-height: 30px; font-size: 13px; }
+.atlas-outside-panel .legend-pages { justify-content: flex-start; }
 .atlas-usage-card {
   width: min(430px, calc(100% - 20px)); max-height: calc(100dvh - 24px); box-sizing: border-box;
   margin: auto; padding: 0; overflow: auto; border: 1px solid #c1d2db; border-radius: 10px;
@@ -181,9 +191,10 @@
 }
 .atlas-player-panel input { width: 100%; min-height: 32px; font-size: 13px; }
 .atlas-player-list { overflow: auto; max-height: min(200px, 32vh); margin-block: 5px; }
-.network-actions .atlas-player-list button {
+.atlas-outside-panel .atlas-player-list button, .network-actions .atlas-player-list button {
   display: flex; width: 100%; justify-content: space-between; gap: 8px; padding: 5px;
-  border: 0; border-bottom: 1px solid #e7ecef; border-radius: 0; white-space: normal; text-align: left;
+  min-height: 27px; border: 0; border-bottom: 1px solid #e7ecef; border-radius: 0;
+  background: transparent; font-size: 12px; white-space: normal; text-align: left;
 }
 .atlas-player-list button span { overflow-wrap: anywhere; }
 .atlas-player-list button small { color: var(--overview-muted); }
