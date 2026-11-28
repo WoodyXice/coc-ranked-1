@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import BattleLog from "./BattleLog.jsx";
 import PlayerStrategyStats from "./PlayerStrategyStats.jsx";
 import GroupReport from "./GroupReport.jsx";
@@ -401,7 +401,10 @@ export function useTemporaryPlayerLookup({ enabled, tokenRevision }) {
   return { tag, editTag, query, dismiss, waiting, validation, history, error: currentReply?.error, result: currentReply?.result };
 }
 
-export function TemporaryPlayerSearch({ lookup, accounts, disabled, onLookupPlayer, onSelectSaved, onManageVillages }) {
+const searchPageSize = 10;
+const noBoardRows = [];
+
+export function TemporaryPlayerSearch({ lookup, accounts, boardRows = noBoardRows, disabled, onLookupPlayer, onSelectSaved, onManageVillages }) {
   const feedbackId = useId();
   const historyId = useId();
   const field = useRef(null);
@@ -409,6 +412,7 @@ export function TemporaryPlayerSearch({ lookup, accounts, disabled, onLookupPlay
   const [historyOpen, setHistoryOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [filtering, setFiltering] = useState(false);
+  const [boardPage, setBoardPage] = useState(0);
   const { tag, editTag, waiting, validation, error, history = [] } = lookup;
   const message = validation || error;
   const live = accounts?.hasDeveloperToken ?? true;
@@ -419,11 +423,31 @@ export function TemporaryPlayerSearch({ lookup, accounts, disabled, onLookupPlay
   const matchingHistory = history.filter(({ playerName, playerTag }) => matches(playerName, playerTag));
   const visibleHistory = expanded ? matchingHistory : matchingHistory.slice(0, 5);
   const visibleSaved = saved.filter(({ tag: key }) => !visibleHistory.some(({ playerTag }) => playerTag === key));
+  const boardMatches = useMemo(() => {
+    if (!showHistory || !query) return [];
+    const exact = [], partial = [];
+    const seen = new Set();
+    for (const row of boardRows) {
+      const key = normalizeTag(row.playerTag);
+      if (!key || seen.has(key)) continue;
+      const name = row.playerName?.trim().toUpperCase() ?? "";
+      if (!name.includes(query) && !key.includes(query)) continue;
+      seen.add(key);
+      (name === query || key === normalizeTag(query) ? exact : partial).push(row);
+    }
+    return exact.concat(partial);
+  }, [boardRows, query, showHistory]);
+  const shownTags = new Set([...visibleSaved.map(a => normalizeTag(a.tag)), ...visibleHistory.map(a => normalizeTag(a.playerTag))]);
+  const boardChoices = boardMatches.filter(row => !shownTags.has(normalizeTag(row.playerTag)));
+  const boardPages = Math.ceil(boardChoices.length / searchPageSize);
+  const currentBoardPage = Math.min(boardPage, Math.max(0, boardPages - 1));
+  const visibleBoard = boardChoices.slice(currentBoardPage * searchPageSize, (currentBoardPage + 1) * searchPageSize);
 
   function closeHistory() {
     setHistoryOpen(false);
     setExpanded(false);
     setFiltering(false);
+    setBoardPage(0);
   }
 
   useEffect(() => {
@@ -444,12 +468,32 @@ export function TemporaryPlayerSearch({ lookup, accounts, disabled, onLookupPlay
   }
 
   function submitInput() {
-    const exactName = (value) => value?.trim().toUpperCase() === tag.trim().toUpperCase();
-    if (tag.trim()) {
-      const savedMatch = saved.find(a => exactName(a.name) || a.tag === normalizeTag(tag));
-      if (savedMatch && (!live || exactName(savedMatch.name))) return submit(savedMatch.tag, savedMatch.tag);
-      const recent = matchingHistory.find(entry => exactName(entry.playerName));
-      if (recent) return submit(recent.playerTag);
+    const term = tag.trim().toUpperCase();
+    if (term) {
+      const exactTag = normalizeTag(tag);
+      const savedTag = saved.find(a => normalizeTag(a.tag) === exactTag);
+      if (exactTag && (savedTag || matchingHistory.some(row => normalizeTag(row.playerTag) === exactTag)
+        || boardMatches.some(row => normalizeTag(row.playerTag) === exactTag))) {
+        return submit(exactTag, !live && savedTag?.tag);
+      }
+      const names = new Map();
+      for (const { tag: key, name } of saved) {
+        if (name?.trim().toUpperCase() === term) names.set(normalizeTag(key), key);
+      }
+      for (const { playerTag, playerName } of [...matchingHistory, ...boardMatches]) {
+        const key = normalizeTag(playerTag);
+        if (playerName?.trim().toUpperCase() === term && !names.has(key)) names.set(key, null);
+      }
+      if (names.size === 1) {
+        const [key, savedKey] = names.entries().next().value;
+        return submit(key, savedKey);
+      }
+      if (names.size > 1 || (!exactTag && (visibleBoard.length || saved.length || matchingHistory.length))) {
+        setFiltering(true);
+        setHistoryOpen(true);
+        input.current?.focus();
+        return;
+      }
     }
     submit(tag);
   }
@@ -478,7 +522,7 @@ export function TemporaryPlayerSearch({ lookup, accounts, disabled, onLookupPlay
           <label className="legend-tag-field">
             <span className="legend-tag-prefix" aria-hidden="true">#</span>
             <input id="temporary-village-tag" ref={input} value={tag}
-              onChange={(event) => { editTag(event.target.value); setFiltering(true); setExpanded(false); setHistoryOpen(true); }}
+              onChange={(event) => { editTag(event.target.value); setFiltering(true); setExpanded(false); setBoardPage(0); setHistoryOpen(true); }}
               placeholder="搜索村庄" aria-label="搜索村庄名称或玩家标签" maxLength={64} disabled={disabled}
               onFocus={(event) => { setHistoryOpen(true); event.target.select(); }} onClick={() => setHistoryOpen(true)}
               autoComplete="off" spellCheck={false} aria-invalid={Boolean(validation)}
@@ -511,8 +555,19 @@ export function TemporaryPlayerSearch({ lookup, accounts, disabled, onLookupPlay
                 <span className="legend-query-history-tag">{a.tag}</span>
               </button>
             </li>)}</ul></>}
+          {visibleBoard.length > 0 && <><p className="legend-query-history-heading">榜单玩家</p>
+            <ul className="legend-query-history-list" aria-label="匹配的榜单玩家">{visibleBoard.map(row =>
+              <li key={row.playerTag}><button type="button" disabled={!live} onClick={() => submit(row.playerTag)}>
+                <span className="legend-query-history-name" title={row.playerName}>#{row.rank} {row.playerName}</span>
+                <span className="legend-query-history-tag">{row.playerTag}</span>
+              </button></li>)}</ul>
+            {boardPages > 1 && <div className="legend-query-history-footer">
+              <button type="button" className="text-button" disabled={!currentBoardPage} onClick={() => setBoardPage(currentBoardPage - 1)}>上一页</button>
+              <span>{currentBoardPage + 1} / {boardPages}</span>
+              <button type="button" className="text-button" disabled={currentBoardPage + 1 === boardPages} onClick={() => setBoardPage(currentBoardPage + 1)}>下一页</button>
+            </div>}</>}
           {!live && <button className="lookup-settings" type="button" onClick={() => { closeHistory(); onManageVillages?.(); }}>设置 API 令牌</button>}
-          {live && !visibleSaved.length && !visibleHistory.length && (!query
+          {live && !visibleSaved.length && !visibleHistory.length && !visibleBoard.length && (!query
             ? <p className="legend-query-history-empty">暂无查询记录</p>
             : normalizeTag(tag) ? <button className="lookup-settings" type="button" onClick={() => submit(tag)}>查询 {normalizeTag(tag)}</button>
               : <p className="legend-query-history-empty">无匹配村庄</p>)}

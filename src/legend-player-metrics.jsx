@@ -1,17 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { legendDayNumber, nextLegendDayStart } from "../insights.mjs";
-import { nextLegendMetricBatch } from "./legend-metric-batch.mjs";
+import { applyLegendMetricResults, legendMetricView, nextLegendMetricBatch, restoredLegendMetrics } from "./legend-metric-batch.mjs";
 
-const cacheLifetime = 10 * 60 * 1000;
-const retryDelay = 60 * 1000;
-
-export function useLegendPlayerMetrics(rows, { active, refreshKey, location, loadAll, limit = 200 }) {
+export function useLegendPlayerMetrics(rows, { active, refreshKey, location, loadAll, limit = 200, cachedMetrics }) {
   const [boards, setBoards] = useState(() => new Map());
   const [nearby, setNearby] = useState(new Set());
   const observer = useRef(null);
   const observed = useRef(new Set());
   const pending = useRef(new Set());
   const [day, setDay] = useState(() => legendDayNumber(Date.now()));
+  const [expiryRevision, setExpiryRevision] = useState(0);
   useEffect(() => {
     if (!active) return;
     const now = Date.now();
@@ -21,19 +19,10 @@ export function useLegendPlayerMetrics(rows, { active, refreshKey, location, loa
   }, [active, day]);
 
   // Hold the freshness cutoff for one pass, including slow batches in a large leaderboard.
-  const asOf = useMemo(() => Date.now(), [active, location, refreshKey, loadAll, nearby, day]);
-  const statuses = useMemo(() => {
-    const entries = boards.get(location);
-    const fresh = new Map();
-    const leagueDay = legendDayNumber(asOf);
-    for (const { playerTag } of rows) {
-      const entry = entries?.get(playerTag);
-      if (!entry || entry.expiresAt <= asOf || entry.day !== leagueDay
-        || (entry.metrics === null && entry.refreshKey !== refreshKey)) continue;
-      fresh.set(playerTag, entry);
-    }
-    return fresh;
-  }, [boards, location, rows, refreshKey, asOf]);
+  const asOf = useMemo(() => Date.now(), [active, location, refreshKey, loadAll, nearby, day, expiryRevision]);
+  const saved = useMemo(() => restoredLegendMetrics(cachedMetrics, Date.now()), [cachedMetrics, day]);
+  const view = useMemo(() => legendMetricView(rows, boards.get(location), saved, asOf, refreshKey),
+    [rows, boards, location, saved, asOf, refreshKey]);
 
   const observeRow = useCallback((node) => {
     if (!node) return;
@@ -86,38 +75,34 @@ export function useLegendPlayerMetrics(rows, { active, refreshKey, location, loa
     const candidates = loadAll || typeof IntersectionObserver !== "function"
       ? rows : rows.filter(({ playerTag }) => nearTags.has(playerTag));
     const requestDay = legendDayNumber(Date.now());
-    const tags = nextLegendMetricBatch(candidates, statuses, boards.get(location), requestDay);
-    if (!tags.length) return;
+    const tags = nextLegendMetricBatch(candidates, view.settled, boards.get(location), requestDay, saved);
+    if (!tags.length) {
+      // A warm disk snapshot can expire while the board stays open.
+      let firstExpiry = Infinity;
+      for (const { playerTag } of candidates) {
+        const until = view.statuses.get(playerTag)?.restoredUntil;
+        if (until != null) firstExpiry = Math.min(firstExpiry, until);
+      }
+      if (!Number.isFinite(firstExpiry)) return;
+      const timer = setTimeout(() => setExpiryRevision(revision => revision + 1), Math.max(1, firstExpiry - Date.now()));
+      return () => clearTimeout(timer);
+    }
     pending.current.add(location);
 
     function finish(result) {
-      const byTag = new Map();
-      for (const entry of Array.isArray(result?.entries) ? result.entries : []) {
-        if (entry?.playerTag) byTag.set(entry.playerTag, entry.metrics);
-      }
-      const checkedAt = Date.now();
+      const receivedAt = Date.now();
       pending.current.delete(location);
       setBoards((previous) => {
         const next = new Map(previous);
-        const entries = new Map(next.get(location));
-        for (const [tag, entry] of entries) {
-          // Keep today's attempts for scheduling even after their metrics have expired for display.
-          if (entry.day !== requestDay) entries.delete(tag);
-        }
-        for (const tag of tags) {
-          if (result?.partial && !byTag.has(tag)) continue;
-          const metrics = byTag.get(tag) ?? null;
-          entries.set(tag, { metrics, checkedAt, refreshKey, day: requestDay,
-            expiresAt: checkedAt + (metrics === null ? retryDelay : cacheLifetime) });
-        }
-        next.set(location, entries);
+        next.set(location, applyLegendMetricResults(previous.get(location), tags, result, requestDay, refreshKey, receivedAt));
         return next;
       });
     }
 
     void Promise.resolve().then(() => api.fetchLegendPlayerMetrics({ location, limit, playerTags: tags, progressive: true }))
       .then(finish, () => finish(null));
-  }, [active, loadAll, location, limit, nearby, refreshKey, rows, statuses, boards]);
+  }, [active, loadAll, location, limit, nearby, refreshKey, rows, view, boards, saved]);
 
-  return { statuses, observeRow, day };
+  const { statuses, pendingCount, staleCount, staleFailedCount } = view;
+  return { statuses, pendingCount, staleCount, staleFailedCount, observeRow, day };
 }

@@ -86,11 +86,67 @@ test("progressive batches publish completed players and refill the queue past a 
   await flush();
   assert.deepEqual((await next).entries.map(entry => entry.playerTag), tags.slice(20));
   slow.resolve({ tag: tags[0] });
-  assert.deepEqual(await fetch([tags[0]]), { entries: [{ playerTag: tags[0], metrics: { tag: tags[0] } }] });
+  const finished = (await fetch([tags[0]])).entries[0];
+  assert.deepEqual(finished.metrics, { tag: tags[0] });
+  assert.ok(Number.isFinite(finished.checkedAt));
   const warm = await fetch(tags.slice(0, 20));
   assert.equal(warm.partial, undefined);
   assert.equal(warm.entries.length, 20);
   assert.deepEqual(calls, tags);
+});
+
+test("Excel samples warm only current roster members and preserve their original ten-minute deadline", async () => {
+  let time = Date.parse("2026-11-27T05:07:00Z");
+  const captured = time - 6 * 60_000;
+  const written = [];
+  const service = createLegendMetricsService({ now: () => time,
+    makeCollector: () => async tag => tag === "#FAILED" ? null : { sample: "new" },
+    onCollected: (...args) => { written.push(args); },
+  });
+  const tags = ["#FRESH", "#YESTERDAY", "#FAILED", "#FUTURE"];
+  const entries = [
+    { playerTag: "#FRESH", checkedAt: captured, metrics: { sample: "disk" } },
+    { playerTag: "#OTHER", checkedAt: captured, metrics: { sample: "another board" } },
+    { playerTag: "#YESTERDAY", checkedAt: time - 8 * 60_000, metrics: { sample: "previous day" } },
+    { playerTag: "#FUTURE", checkedAt: time + 1, metrics: { sample: "future" } },
+  ];
+  const setRows = () => service.setRows("test", tags.map(playerTag => ({ playerTag })), "global", 200, entries);
+  const get = async tags => (await service.fetchBatch("test", tags, "global", 200, true)).entries;
+  setRows();
+  assert.deepEqual(await get(["#FRESH", "#OTHER"]), [entries[0]]);
+  assert.deepEqual(written, []);
+  const collected = await get(tags.slice(1));
+  assert.deepEqual(collected.map(entry => entry.metrics?.sample ?? null), ["new", null, "new"]);
+  assert.deepEqual(written.map(entry => entry[0]), ["#YESTERDAY", "#FUTURE"]);
+  time = captured + 600_000;
+  setRows();
+  const [refreshed] = await get(["#FRESH"]);
+  assert.deepEqual(refreshed, { playerTag: "#FRESH", metrics: { sample: "new" }, checkedAt: time });
+  assert.deepEqual(written.at(-1), ["#FRESH", refreshed.metrics, time]);
+  setRows();
+  assert.deepEqual(await get(["#FRESH"]), [refreshed]);
+  assert.equal(written.length, 3);
+});
+
+test("a collection finishing after a credential switch or league-day reset never reaches the workbook", async () => {
+  let time = Date.parse("2026-11-27T04:59:59Z");
+  let pending = Promise.withResolvers();
+  const writes = [];
+  const tracked = createLegendMetricsService({ now: () => time, makeCollector: () => () => pending.promise,
+    onCollected: (...args) => writes.push(args) });
+  const rows = [{ playerTag: "#MOCK" }];
+  tracked.setRows("first", rows);
+  const beforeReset = tracked.fetchBatch("first", ["#MOCK"]);
+  time += 1000;
+  pending.resolve({ value: 1 });
+  assert.equal((await beforeReset).entries[0].metrics, null);
+  pending = Promise.withResolvers();
+  const beforeSwitch = tracked.fetchBatch("first", ["#MOCK"]);
+  tracked.setRows("second", rows);
+  pending.resolve({ value: 2 });
+  assert.deepEqual((await beforeSwitch).entries, []);
+  assert.deepEqual(writes, []);
+
 });
 
 test("each board admits only its own rows and shares overlapping players across boards", async () => {

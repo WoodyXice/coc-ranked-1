@@ -31,7 +31,7 @@ function Metric({ label, value, name, sample, onClick }) {
   </Element>;
 }
 
-export default function RankedOverview({ rows, strategies, metricsByTag, metricStatuses, chartScope, pairMemory, board, waiting, pending, unavailable,
+export default function RankedOverview({ rows, strategies, metricsByTag, metricStatuses, chartScope, pairMemory, cacheStatus, board, waiting, pending, unavailable,
   accountLoading, enabled, onRefresh, onOpenVillages, onLookupPlayer, onOpenStrategies, scopeControl, limit = 200 }) {
   const byUsage = useMemo(() => strategies.toSorted((a, b) => b.scoredCount - a.scoredCount || b.playerCount - a.playerCount
     || a.strategy.localeCompare(b.strategy, "zh-CN")), [strategies]);
@@ -45,7 +45,7 @@ export default function RankedOverview({ rows, strategies, metricsByTag, metricS
   if (accountLoading) status = "正在读取本机设置…";
   else if (!enabled) status = "查询全球榜需要开发者 API 令牌。";
   else if (board.status === "error") status = board.error;
-  else if (waiting) status = "正在读取全球榜…";
+  else if (waiting) status = rows.length ? "正在更新全球榜…" : "正在读取全球榜…";
   else if (!rows.length) status = "本次榜单没有成员。";
   else if (!pending && !unavailable && !popular && !stars && !net) status = "近两个联赛日暂无有效攻防记录。";
 
@@ -55,6 +55,7 @@ export default function RankedOverview({ rows, strategies, metricsByTag, metricS
       <p>近两个联赛日{board.data && <>
         <span> · 榜单实收 {count.format(rows.length)} 人</span>
         <span> · 战报 {count.format(metricsByTag.size)} / {count.format(rows.length)} 人{pending ? "（收集中）" : ""}</span>
+        {cacheStatus && <span> · {cacheStatus}</span>}
         {unavailable > 0 && <span> · {count.format(unavailable)} 人暂缺</span>}
       </>}{board.data?.fetchedAt && <><span> · </span><time dateTime={board.data.fetchedAt}>{formatTime(board.data.fetchedAt)}（北京时间）</time></>}</p>
     </div><div className="overview-tools">

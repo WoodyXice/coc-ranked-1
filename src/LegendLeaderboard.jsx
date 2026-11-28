@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { compareRows, legendStrategyLeaderboard, nextLegendDayStart, sortLegendPlayers } from "../insights.mjs";
 import { CompactSort, scoreText, SortHeader } from "./Standings.jsx";
 import { formatTime } from "./battle-time.mjs";
@@ -145,7 +145,8 @@ function PlayerTable({ label, rows, statuses, sort, onSort, observeRow, selected
           <RankCell rank={row.rank} previousRank={row.previousRank} />
           <th scope="row">
             <PlayerLink player={row} onLookupPlayer={onLookupPlayer} />
-            <small>{[row.playerTag, own && "当前村庄"].filter(Boolean).join(" · ")}</small>
+            <small title={metrics?.stale ? formatTime(new Date(metrics.checkedAt).toISOString()) : undefined}>
+              {[row.playerTag, own && "当前村庄", metrics?.stale && (metrics.refreshFailed ? "缓存 · 更新暂缺" : "缓存")].filter(Boolean).join(" · ")}</small>
             <small className="legend-compact-clan">{[clan, row.townHallLevel && `${row.townHallLevel} 本`].filter(Boolean).join(" · ")}</small>
             <LegendMetrics result={metrics} compact />
           </th>
@@ -210,12 +211,10 @@ function PagedPlayers({ rows, ...props }) {
 }
 
 export default function LegendLeaderboard({ scope, active = true, overview = false, hasDeveloperToken, accountLoading,
-  selectedTag, selectedStanding, onLookupPlayer, onOpenGlobal, onOpenVillages }) {
+  selectedTag, selectedStanding, onBoardRows, onLookupPlayer, onOpenGlobal, onOpenVillages }) {
   const regional = scope === "regional";
   const headingId = useId();
   const regionId = useId();
-  const searchId = useId();
-  const [search, setSearch] = useState("");
   const [limit, setLimit] = useState(200);
   const [draftLimit, setDraftLimit] = useState("200");
   const [limitError, setLimitError] = useState("");
@@ -234,13 +233,13 @@ export default function LegendLeaderboard({ scope, active = true, overview = fal
   const activeQuery = regional && !region ? locations : board;
   const waiting = enabled && (activeQuery.status === "idle" || activeQuery.status === "loading");
   const rows = board.data?.rows ?? emptyRows;
-  const query = regional ? search.trim().toLowerCase() : "";
+  useLayoutEffect(() => { onBoardRows?.(rows); }, [onBoardRows, rows]);
   const strategyView = view === "strategies";
   const loadAll = overview || strategyView || playerColumns.some((column) => column.key === playerSort.key && column.metric);
   const hasTier = board.data?.hasTierData === true;
-  const { statuses, observeRow, day } = useLegendPlayerMetrics(rows, {
+  const { statuses, observeRow, day, pendingCount, staleCount, staleFailedCount } = useLegendPlayerMetrics(rows, {
     active: active && enabled, location, loadAll, limit,
-    refreshKey: board.data?.fetchedAt,
+    refreshKey: board.data?.fetchedAt, cachedMetrics: board.data?.cachedMetrics,
   });
   const chartScope = `${location}:${limit}:${day}`;
   const pairMemory = useMemo(() => ({ current: [] }), [chartScope]);
@@ -248,14 +247,14 @@ export default function LegendLeaderboard({ scope, active = true, overview = fal
     .map(([tag, entry]) => [tag, entry.metrics])), [statuses]);
   const players = useMemo(() => {
     if (overview || strategyView) return emptyRows;
-    const matches = query ? rows.filter(({ playerName, playerTag }) => playerName?.toLowerCase().includes(query)
-      || playerTag?.toLowerCase().includes(query)) : rows;
-    return sortLegendPlayers(matches, metricsByTag, playerSort.key, playerSort.ascending ? "asc" : "desc");
-  }, [rows, metricsByTag, query, playerSort, strategyView, overview]);
+    return sortLegendPlayers(rows, metricsByTag, playerSort.key, playerSort.ascending ? "asc" : "desc");
+  }, [rows, metricsByTag, playerSort, strategyView, overview]);
   const strategies = useMemo(() => overview || strategyView ? legendStrategyLeaderboard(rows, metricsByTag) : emptyRows,
     [rows, metricsByTag, strategyView, overview]);
   const unavailable = statuses.size - metricsByTag.size;
-  const metricsPending = statuses.size < rows.length;
+  const metricsPending = pendingCount > 0;
+  const cacheStatus = [board.data?.fromWorkbook && "本地榜单", staleCount > 0 && `${staleCount} 人沿用缓存`,
+    staleFailedCount > 0 && `${staleFailedCount} 人更新暂缺`].filter(Boolean).join(" · ");
   const ownInTable = selectedTag && rows.some((row) => row.playerTag === selectedTag);
   const profileRank = Number.isSafeInteger(selectedStanding?.rank) && selectedStanding.rank > 0 ? selectedStanding.rank : null;
   const profileTrophies = selectedStanding?.trophies;
@@ -288,7 +287,7 @@ export default function LegendLeaderboard({ scope, active = true, overview = fal
   }
 
   if (overview) return <RankedOverview rows={rows} strategies={strategies} metricsByTag={metricsByTag}
-    metricStatuses={statuses} chartScope={chartScope} pairMemory={pairMemory}
+    metricStatuses={statuses} chartScope={chartScope} pairMemory={pairMemory} cacheStatus={cacheStatus}
     board={board} waiting={waiting} pending={metricsPending} unavailable={unavailable} scopeControl={scopeControl} limit={limit}
     accountLoading={accountLoading} enabled={enabled} onRefresh={refresh}
     onOpenVillages={onOpenVillages} onLookupPlayer={onLookupPlayer}
@@ -311,6 +310,7 @@ export default function LegendLeaderboard({ scope, active = true, overview = fal
             <span>{scoreText(rows.length)} 名玩家</span>
             <span title="今日和上一个联赛日，北京时间每日 13:00 换日">近两个联赛日</span>
             {board.data.fetchedAt && <time dateTime={board.data.fetchedAt}>更新于 {formatTime(board.data.fetchedAt)}（北京时间）</time>}
+            {cacheStatus && <span>{cacheStatus}</span>}
             {board.data.hasTierData === false && <span>接口未返回段位</span>}
             {board.data.paginationInterrupted ? <span>榜单分页中断，可刷新重试</span>
               : !regional && rows.length < limit && <span>已显示本次接口返回的全部可用玩家</span>}
@@ -337,15 +337,7 @@ export default function LegendLeaderboard({ scope, active = true, overview = fal
       {activeQuery.status === "error" && rows.length > 0 && <p className="legend-board-message legend-board-error" role="alert">
         刷新失败，保留上次结果。{activeQuery.error}
       </p>}
-      {rows.length > 0 && !strategyView && <div className="legend-board-tools">
-        {regional && <div className="legend-board-search">
-          <label htmlFor={searchId}>榜内搜索</label>
-          <input id={searchId} type="search" value={search} onChange={(event) => setSearch(event.target.value)}
-            placeholder="玩家名或 Tag" autoComplete="off" />
-          {query && <span role="status">找到 {scoreText(players.length)} 名玩家</span>}
-        </div>}
-        <CompactSort columns={playerColumns} sort={playerSort} onSort={setPlayerSort} />
-      </div>}
+      {rows.length > 0 && !strategyView && <CompactSort columns={playerColumns} sort={playerSort} onSort={setPlayerSort} />}
       {loadAll && (metricsPending || unavailable > 0) && <p className="legend-board-message legend-metric-coverage" role="status">
         {metricsPending && "正在读取战报 · "}已取得 {metricsByTag.size}/{rows.length} 人
         {unavailable > 0 && ` · ${unavailable} 人暂缺`}
@@ -356,12 +348,11 @@ export default function LegendLeaderboard({ scope, active = true, overview = fal
           : <div className="empty-card" role="status"><p>{metricsPending ? "正在汇总各流派的进攻记录…"
             : "近两个联赛日暂无已识别流派的有效进攻记录。"}</p></div>
       ) : players.length ? (
-        <PagedPlayers key={`${location}:${limit}:${playerSort.key}:${playerSort.ascending}:${query}`} label={`${range}排名表`} rows={players} statuses={statuses} observeRow={observeRow}
+        <PagedPlayers key={`${location}:${limit}:${playerSort.key}:${playerSort.ascending}`} label={`${range}排名表`} rows={players} statuses={statuses} observeRow={observeRow}
           selectedTag={selectedTag} sort={playerSort} onSort={setPlayerSort} onLookupPlayer={onLookupPlayer} />
       ) : (
         <div className="empty-card" role={activeQuery.status === "error" ? "alert" : "status"}>
-          <p>{rows.length ? "榜内没有匹配的玩家。"
-            : accountLoading ? "正在读取本机设置…" : !enabled ? "在「管理令牌」保存开发者 API 令牌，即可查询榜单。"
+          <p>{accountLoading ? "正在读取本机设置…" : !enabled ? "在「管理令牌」保存开发者 API 令牌，即可查询榜单。"
             : activeQuery.status === "error" ? activeQuery.error
             : waiting ? regional && !region ? "正在查询可用地区…" : "正在查询榜单…"
             : regional && !region ? "官方接口本次未返回可用地区。" : "官方接口本次未返回榜单成员。"}</p>

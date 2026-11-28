@@ -1,4 +1,4 @@
-import { freshLegendSnapshot } from "../insights.mjs";
+import { freshLegendSnapshot, legendDayNumber } from "../insights.mjs";
 
 const emptyRequest = Object.freeze({ status: "idle", data: null, error: "", fetchedAt: null, pending: null });
 
@@ -28,10 +28,12 @@ export function createLegendRequestCache(load, now = Date.now) {
       (data) => {
         const capture = Date.parse(data?.fetchedAt);
         update(key, { status: "ready", data, fetchedAt: Number.isFinite(capture) ? capture : now(), pending: null });
+        if (data?.revalidate && !force) return request(key, true);
       },
       (error) => update(key, { status: "error", error: error?.message || "查询失败，请重试。", pending: null }),
     );
-    update(key, { status: "loading", pending, error: "" });
+    const oldDay = previous.fetchedAt !== null && legendDayNumber(previous.fetchedAt) !== legendDayNumber(now());
+    update(key, { status: "loading", pending, error: "", ...(oldDay && { data: null, fetchedAt: null }) });
     return pending;
   }
 

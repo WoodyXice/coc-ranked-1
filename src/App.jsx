@@ -28,6 +28,7 @@ function Feedback({ busy, feedback }) {
 
 export default function App() {
   const [page, setPage] = useState("overview");
+  const [boardRows, setBoardRows] = useState([]);
   const [entries, setEntries] = useState([]);
   const [accounts, setAccounts] = useState(emptyAccounts);
   const [accountLoading, setAccountLoading] = useState(true);
@@ -198,7 +199,7 @@ export default function App() {
     }, token ? "已保存开发者 API 令牌。" : "已清除开发者 API 令牌。", [token]);
   }
 
-  const search = <TemporaryPlayerSearch lookup={lookup} accounts={accounts} disabled={accountLoading || !!busy}
+  const search = <TemporaryPlayerSearch lookup={lookup} accounts={accounts} boardRows={page === "villages" ? undefined : boardRows} disabled={accountLoading || !!busy}
     onLookupPlayer={openPlayer} onSelectSaved={openSaved} onManageVillages={() => choosePage("villages")} />;
   const status = <Feedback busy={busy} feedback={feedback}/>;
   const battles = cached?.raw?.battleViews;
@@ -224,7 +225,7 @@ export default function App() {
         return <div key={scope + tokenRevision} hidden={!visible}>
           <LegendLeaderboard scope={scope} active={visible && !top} overview={scope === "global" && page === "overview"}
             hasDeveloperToken={accounts.hasDeveloperToken} accountLoading={accountLoading} selectedTag={accounts.selectedTag}
-            selectedStanding={selectedStanding} onLookupPlayer={openPlayer} onOpenGlobal={() => choosePage("global")}
+            selectedStanding={selectedStanding} onBoardRows={visible ? setBoardRows : undefined} onLookupPlayer={openPlayer} onOpenGlobal={() => choosePage("global")}
             onOpenVillages={() => choosePage("villages")}/>
         </div>;
       })}

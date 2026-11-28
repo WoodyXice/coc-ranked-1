@@ -1,5 +1,6 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, protocol, safeStorage, session, shell } from "electron";
 import { mkdirSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import { basename, isAbsolute, relative, resolve, sep } from "node:path";
@@ -7,13 +8,15 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { getReport } from "../analytics.mjs";
 import { fetchLegendLeaderboard, fetchLegendLocations, legendBoardKey } from "../collector.mjs";
 import { workbookBytes } from "../files.mjs";
-import { freshLegendSnapshot } from "../insights.mjs";
+import { freshLegendSnapshot, legendDayNumber } from "../insights.mjs";
 import { cachedReport, collectData, collectGroupedPlayer, collectTemporaryPlayer, createTemporaryGroupService, developerPortal, getPublicIp, sampleReport } from "./service.mjs";
 import { createAccountStore, importAccountsJson, validateDeveloperToken } from "./accounts.mjs";
 import { openDatabase } from "./database.mjs";
 import { createDefenseNoteStore } from "./defense-notes.mjs";
 import { createReportSources } from "./report-sources.mjs";
 import { createLegendMetricsService } from "./legend-metrics.mjs";
+import { createLegendSnapshots } from "./legend-snapshots.mjs";
+import { readWorkbook, writeWorkbook } from "./legend-workbook-io.mjs";
 import { importLegacyJson } from "./legacy-import.mjs";
 import { createUpdater, releasePage } from "./updater.mjs";
 
@@ -91,12 +94,40 @@ function createWindow(database, storageWarnings) {
   });
   const accountStore = createAccountStore(database, safeStorage);
   const defenseNotes = createDefenseNoteStore(database.db);
-  const legendMetrics = createLegendMetricsService({ readHistory: database.playerHistory.readRecentLegend });
+  function newCacheGeneration() {
+    const generation = randomUUID();
+    database.setMeta("legend_cache_generation", generation);
+    return generation;
+  }
+  const workbooks = createLegendSnapshots({
+    directory: resolve(app.getPath("userData"), "榜单缓存"),
+    generation: database.getMeta("legend_cache_generation") || newCacheGeneration(),
+    read: readWorkbook, write: writeWorkbook,
+  });
+  const legendMetrics = createLegendMetricsService({ readHistory: database.playerHistory.readRecentLegend, onCollected: workbooks.record });
   window.once("closed", legendMetrics.reset);
+  let quitting = false, flushed = false;
+  app.on("before-quit", event => {
+    if (flushed || !workbooks.hasWork()) return;
+    event.preventDefault();
+    if (!quitting) {
+      quitting = true;
+      legendMetrics.reset();
+      // A locked workbook must not keep an update installer waiting for the application.
+      let timer;
+      const deadline = new Promise(resolve => { timer = setTimeout(resolve, 8000); });
+      void Promise.race([workbooks.flush(), deadline]).finally(() => {
+        clearTimeout(timer);
+        flushed = true;
+        app.quit();
+      });
+    }
+  });
   const temporaryGroups = createTemporaryGroupService({ snapshots: database.snapshots });
   window.once("closed", temporaryGroups.reset);
   let temporaryLookupId = 0;
   const legendBoards = new Map();
+  const lastScope = new Map();
   let legendTokenRevision = 0;
   const reportSources = createReportSources(database.reports.load);
   async function savedDeveloperToken() {
@@ -107,21 +138,39 @@ function createWindow(database, storageWarnings) {
 
   function loadLegendBoard(token, location = "global", force = false, limit = 200) {
     const key = legendBoardKey(location, limit);
+    const scope = key.split(":")[0];
+    lastScope.set(scope, key);
     let state = legendBoards.get(key);
     if (state?.token !== token) {
       state = { token, data: null, pending: null };
       legendBoards.set(key, state);
     }
     if (state.pending) return state.pending;
-    if (!force && state.data && freshLegendSnapshot(state.data.fetchedAt)) return Promise.resolve(state.data);
-    state.pending = fetchLegendLeaderboard({ token, location, limit }).then((board) => {
+    function stillCurrent() {
       if (window.isDestroyed() || legendBoards.get(key) !== state) {
         throw new Error("榜单查询已过期，请重新查询。");
       }
-      legendMetrics.setRows(token, board.rows, location, limit);
+    }
+    if (!force && state.data && freshLegendSnapshot(state.data.fetchedAt)) {
+      return Promise.resolve({ ...state.data, cachedMetrics: workbooks.samples(state.data) });
+    }
+    state.pending = (async () => {
+      const saved = await workbooks.restore(location);
+      stillCurrent();
+      if (!force && !state.data && saved?.requestedLimit === limit) {
+        const cachedMetrics = workbooks.samples(saved);
+        legendMetrics.setRows(token, saved.rows, location, limit, cachedMetrics);
+        state.data = saved;
+        return { ...saved, cachedMetrics, fromWorkbook: true, revalidate: !freshLegendSnapshot(saved.fetchedAt) };
+      }
+      const board = await fetchLegendLeaderboard({ token, location, limit });
+      stillCurrent();
+      const cachedMetrics = workbooks.samples(board);
+      legendMetrics.setRows(token, board.rows, location, limit, cachedMetrics);
+      if (lastScope.get(scope) === key) workbooks.capture(board);
       state.data = board;
-      return board;
-    }).finally(() => {
+      return { ...board, cachedMetrics };
+    })().finally(() => {
       state.pending = null;
       if (!state.data && legendBoards.get(key) === state) legendBoards.delete(key);
     });
@@ -166,6 +215,7 @@ function createWindow(database, storageWarnings) {
     const saved = await accountStore.saveDeveloperToken(value);
     legendTokenRevision += 1;
     legendBoards.clear();
+    workbooks.reset(newCacheGeneration());
     legendMetrics.reset();
     temporaryGroups.reset();
     return saved;
@@ -213,7 +263,16 @@ function createWindow(database, storageWarnings) {
   });
   bind(window, "coc:legend-player-metrics", async (input) =>
     legendMetrics.fetchBatch(await savedDeveloperToken(), input?.playerTags, input?.location, input?.limit, input?.progressive === true));
-  bind(window, "coc:legend-locations", async () => fetchLegendLocations({ token: await savedDeveloperToken() }));
+  bind(window, "coc:legend-locations", async () => {
+    const token = await savedDeveloperToken();
+    const day = legendDayNumber(Date.now());
+    let saved;
+    try { saved = JSON.parse(database.getMeta("legend_region_list") ?? "null"); } catch {}
+    if (saved?.day === day && Array.isArray(saved.locations) && saved.locations.length) return saved.locations;
+    const locations = await fetchLegendLocations({ token });
+    database.setMeta("legend_region_list", JSON.stringify({ day, locations }));
+    return locations;
+  });
   bind(window, "coc:temporary-query-history", database.temporaryQueries.list);
   bind(window, "coc:temporary-group-details", async (input) => {
     const revision = legendTokenRevision;

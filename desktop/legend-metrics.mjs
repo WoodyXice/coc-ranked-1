@@ -1,5 +1,5 @@
 import { legendBoardKey } from "../collector.mjs";
-import { legendDayNumber } from "../insights.mjs";
+import { freshLegendSnapshot, legendDayNumber } from "../insights.mjs";
 import { createLegendMetricsCollector } from "./service.mjs";
 
 const lifetime = 10 * 60_000;
@@ -8,7 +8,7 @@ const batchLimit = 20;
 const concurrentLimit = 4;
 const displayInterval = 650;
 
-export function createLegendMetricsService({ readHistory, makeCollector = createLegendMetricsCollector, now = Date.now } = {}) {
+export function createLegendMetricsService({ readHistory, onCollected, makeCollector = createLegendMetricsCollector, now = Date.now } = {}) {
   let session;
 
   function reset() {
@@ -28,20 +28,28 @@ export function createLegendMetricsService({ readHistory, makeCollector = create
     return false;
   }
 
-  function setRows(token, rows, location, limit) {
+  function setRows(token, rows, location, limit, savedEntries = []) {
     const key = legendBoardKey(location, limit);
     if (session?.token !== token) {
       reset();
       session = { token, collect: makeCollector(token), boards: new Map(), cache: new Map(), pending: new Map(), queue: [], running: 0 };
     }
     const previous = session.boards.get(key);
-    session.boards.set(key, new Set(rows.map(({ playerTag }) => playerTag)));
+    const roster = new Set(rows.map(({ playerTag }) => playerTag));
+    session.boards.set(key, roster);
+    const time = now();
+    for (const { playerTag, checkedAt, metrics } of savedEntries) {
+      if (!roster.has(playerTag) || !metrics || !Number.isFinite(checkedAt) || !freshLegendSnapshot(checkedAt, time)) continue;
+      if (session.cache.get(playerTag)?.checkedAt >= checkedAt) continue;
+      session.cache.set(playerTag, { metrics, checkedAt, day: legendDayNumber(checkedAt), expiresAt: checkedAt + lifetime });
+    }
     for (const tag of previous ?? []) {
       if (!isListed(session, tag)) session.cache.delete(tag);
     }
   }
 
   async function run(state, { playerTag, resolve }) {
+    const startedDay = legendDayNumber(now());
     let archive;
     let metrics = null;
     try {
@@ -55,13 +63,22 @@ export function createLegendMetricsService({ readHistory, makeCollector = create
       // One unavailable battle log must not hide the other players' results.
     }
 
-    if (state === session && isListed(state, playerTag)) {
-      const checkedAt = now();
-      state.cache.set(playerTag, { metrics, day: legendDayNumber(checkedAt), expiresAt: checkedAt + (metrics == null ? failureLifetime : lifetime) });
+    const checkedAt = now();
+    let entry = null;
+    if (state === session && isListed(state, playerTag) && legendDayNumber(checkedAt) === startedDay) {
+      entry = { metrics, checkedAt, day: startedDay, expiresAt: checkedAt + (metrics == null ? failureLifetime : lifetime) };
+      state.cache.set(playerTag, entry);
+      if (metrics && onCollected) {
+        try {
+          Promise.resolve(onCollected(playerTag, metrics, checkedAt)).catch(() => {});
+        } catch {
+          // The live result is still usable when the local workbook cannot be updated.
+        }
+      }
     }
     state.pending.delete(playerTag);
     state.running -= 1;
-    resolve(state === session ? metrics : null);
+    resolve(entry);
     if (state === session) drain(state);
   }
 
@@ -81,7 +98,7 @@ export function createLegendMetricsService({ readHistory, makeCollector = create
   function lookup(state, playerTag) {
     const cached = state.cache.get(playerTag);
     const time = now();
-    if (cached && cached.expiresAt > time && cached.day === legendDayNumber(time)) return cached.metrics;
+    if (cached && cached.expiresAt > time && cached.day === legendDayNumber(time)) return cached;
     const pending = state.pending.get(playerTag);
     if (pending) return pending;
     const task = new Promise((resolve) => { state.queue.push({ playerTag, resolve }); });
@@ -115,7 +132,10 @@ export function createLegendMetricsService({ readHistory, makeCollector = create
     if (state !== session) return { entries: [] };
     const current = state.boards.get(key);
     const listed = tags.filter(tag => current.has(tag));
-    const entries = listed.filter(tag => ready.has(tag)).map(playerTag => ({ playerTag, metrics: ready.get(playerTag) }));
+    const entries = listed.filter(tag => ready.has(tag)).map(playerTag => {
+      const entry = ready.get(playerTag);
+      return { playerTag, metrics: entry?.metrics ?? null, ...(progressive && entry && { checkedAt: entry.checkedAt }) };
+    });
     return entries.length < listed.length ? { entries, partial: true } : { entries };
   }
 

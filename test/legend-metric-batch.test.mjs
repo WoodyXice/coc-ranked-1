@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { nextLegendMetricBatch } from "../src/legend-metric-batch.mjs";
+import { applyLegendMetricResults, legendMetricView, nextLegendMetricBatch, restoredLegendMetrics } from "../src/legend-metric-batch.mjs";
+import { legendDayNumber } from "../insights.mjs";
 
 test("resuming a slow ten-thousand-player sweep reaches new players before refreshing earlier expired attempts", () => {
   const rows = Array.from({ length: 10000 }, (_, i) => ({ playerTag: `#P${i + 1}` }));
@@ -24,4 +25,46 @@ test("visible candidates define the scope, an unavailable attempt counts for tod
   assert.deepEqual(nextLegendMetricBatch(visible, fresh, history, 5), ["#C", "#D", "#A"]);
   assert.deepEqual(nextLegendMetricBatch(visible, new Map(), history, 6), ["#A", "#B", "#C", "#D"]);
   assert.deepEqual(nextLegendMetricBatch([], fresh, history, 5), []);
+});
+
+test("show Excel samples immediately; overdue samples remain visible during refresh and after isolated failures", () => {
+  const now = Date.parse("2026-11-27T06:20:00Z");
+  const day = legendDayNumber(now);
+  const rows = ["#WARM", "#STALE", "#MISSING", "#OTHERDAY"].map(playerTag => ({ playerTag }));
+  const expired = now - 600_000;
+  const saved = restoredLegendMetrics([
+    { playerTag: "#WARM", metrics: { n: 1 }, checkedAt: expired + 1 },
+    { playerTag: "#STALE", metrics: { n: 2 }, checkedAt: expired },
+    { playerTag: "#OTHERDAY", metrics: { n: 3 }, checkedAt: now - 86_400_000 },
+    { playerTag: "#MISSING", metrics: null, checkedAt: now },
+    { playerTag: "#MISSING", metrics: { n: 4 }, checkedAt: now + 1 },
+  ], now);
+  const initial = legendMetricView(rows, undefined, saved, now, "roster");
+  assert.equal(initial.staleCount, 1);
+  assert.equal(initial.pendingCount, 3);
+  assert.equal(initial.statuses.size, 2);
+  assert.equal(initial.statuses.get("#WARM").restoredUntil, now + 1);
+  assert.deepEqual(nextLegendMetricBatch(rows, initial.settled, undefined, day, saved), ["#MISSING", "#OTHERDAY", "#STALE"]);
+
+  const tags = rows.map(row => row.playerTag);
+  const failure = applyLegendMetricResults(undefined, tags, { partial: true,
+    entries: [{ playerTag: "#STALE", metrics: null, checkedAt: now }, { playerTag: "#MISSING", metrics: null, checkedAt: now }] },
+  day, "roster", now);
+  const afterFailure = legendMetricView(rows, failure, saved, now, "roster");
+  assert.equal(afterFailure.pendingCount, 1);
+  assert.equal(afterFailure.staleFailedCount, 1);
+  assert.equal(afterFailure.statuses.get("#STALE").checkedAt, expired);
+  assert.deepEqual(afterFailure.statuses.get("#STALE").metrics, { n: 2 });
+  assert.equal(afterFailure.statuses.get("#MISSING").metrics, null);
+  assert.ok(!afterFailure.statuses.has("#OTHERDAY"));
+
+  const retried = legendMetricView(rows, failure, saved, now + 60_000, "roster");
+  assert.equal(retried.pendingCount, 4);
+  const success = applyLegendMetricResults(failure, ["#STALE"], { entries: [
+    { playerTag: "#STALE", metrics: { n: 5 }, checkedAt: now + 30_000 },
+  ] }, day, "roster", now + 60_000);
+  const updated = legendMetricView(rows, success, saved, now + 60_000, "roster");
+  assert.deepEqual(updated.statuses.get("#STALE"), { metrics: { n: 5 }, checkedAt: now + 30_000, stale: false, refreshFailed: false, restoredUntil: null });
+  assert.equal(updated.staleFailedCount, 0);
+  assert.equal(legendMetricView(rows, success, saved, now + 86_400_000, "roster").statuses.size, 0);
 });
