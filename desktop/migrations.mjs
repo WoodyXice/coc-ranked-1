@@ -89,4 +89,48 @@ export const migrations = [
       `);
     },
   },
+  {
+    version: 3,
+    name: "player battle history",
+    up(db) {
+      db.exec(`
+        CREATE TABLE player_history (
+          player_tag TEXT NOT NULL,
+          direction TEXT NOT NULL CHECK (direction IN ('attacks', 'defenses')),
+          battle_type TEXT NOT NULL CHECK (battle_type IN ('RANKED', 'LEGEND')),
+          id TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          data TEXT NOT NULL,
+          PRIMARY KEY (player_tag, direction, battle_type, id)
+        );
+      `);
+    },
+  },
+  {
+    version: 4,
+    name: "temporary village queries",
+    up(db) {
+      db.exec(`
+        CREATE TABLE temporary_queries (
+          id INTEGER PRIMARY KEY,
+          player_tag TEXT NOT NULL UNIQUE,
+          player_name TEXT NOT NULL,
+          last_queried_at TEXT NOT NULL
+        );
+      `);
+    },
+  },
+  {
+    version: 5,
+    name: "weekly player battle ledgers",
+    up(db) {
+      db.exec(`
+        CREATE TABLE player_weekly_ledgers (
+          player_tag TEXT NOT NULL, week TEXT NOT NULL, group_tag TEXT NOT NULL, season_id INTEGER NOT NULL,
+          updated_at TEXT NOT NULL, data TEXT NOT NULL,
+          PRIMARY KEY (player_tag, week, group_tag, season_id)
+        );
+      `);
+    },
+  },
 ];

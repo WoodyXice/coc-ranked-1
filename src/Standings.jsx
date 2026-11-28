@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import ArmyLineup, { ArmyAttribution, hasLineup } from "./ArmyLineup.jsx";
 import { formatDuration, formatShortTime, formatTime } from "./battle-time.mjs";
-import { DEFENSE_TOP_N, defenseRanks, myAttacksByOpponent } from "../insights.mjs";
+import { DEFENSE_TOP_N, attackEquipmentIds, compareRows, defenseRanks, myAttacksByOpponent } from "../insights.mjs";
 
 const number = new Intl.NumberFormat("zh-CN");
 const signed = new Intl.NumberFormat("zh-CN", { signDisplay: "exceptZero" });
@@ -13,7 +14,7 @@ function destructionText(value) {
   return Number.isFinite(value) ? `${value.toFixed(1)}%` : "—";
 }
 
-function AttackProgress({ limit, completed }) {
+function AttackProgress({ limit, completed, className }) {
   const knownLimit = Number.isSafeInteger(limit) && limit >= 0;
   const knownCompleted = Number.isSafeInteger(completed) && completed >= 0;
   const allowed = knownLimit ? scoreText(limit) : "—";
@@ -22,7 +23,7 @@ function AttackProgress({ limit, completed }) {
     knownLimit ? `可进攻 ${allowed} 场` : "可进攻场次未知",
     knownCompleted ? `已完成 ${played} 场` : "已完成场次未知",
   ].join("，");
-  return <td title={meaning} aria-label={meaning}>{knownLimit || knownCompleted ? `${allowed}/${played}` : "—"}</td>;
+  return <td className={className} title={meaning} aria-label={meaning}>{knownLimit || knownCompleted ? `${allowed}/${played}` : "—"}</td>;
 }
 
 function officialLeagueIcon(value) {
@@ -81,18 +82,7 @@ export function StandingSummary({ battleViews, standing, showPlayer = true }) {
   );
 }
 
-export function compareRows(a, b, key, ascending) {
-  const first = a[key];
-  const second = b[key];
-  if (typeof first === "string" && typeof second === "string" && first && second) {
-    return ascending ? first.localeCompare(second, "zh-CN") : second.localeCompare(first, "zh-CN");
-  }
-  if (typeof first === "string" && first) return -1;
-  if (typeof second === "string" && second) return 1;
-  if (!Number.isFinite(first)) return Number.isFinite(second) ? 1 : 0;
-  if (!Number.isFinite(second)) return -1;
-  return ascending ? first - second : second - first;
-}
+export { compareRows };
 
 export function SortHeader({ column: { key, label, title, ascendingFirst = false, className }, sort, onSort }) {
   const active = sort.key === key;
@@ -113,6 +103,84 @@ function DirectionTiming({ timestamp, average, count }) {
   </>;
 }
 
+function ArmyHistory({ history, player, focusEquipment }) {
+  return (
+    <div className="group-army-history">
+      <h3>{player.playerName || player.playerTag} 已获取的进攻阵容</h3>
+      {history.map((battle, index) => {
+        const timestamp = battle.battleTimestamp || battle.timestamp;
+        const strategy = battle.strategy || "已获取阵容";
+        const gear = focusEquipment ? attackEquipmentIds(battle.army) : null;
+        const carried = !!focusEquipment?.ids?.length && focusEquipment.ids.every((id) => gear.has(id));
+        const facts = [
+          Number.isFinite(battle.durationSeconds) && `用时 ${formatDuration(battle.durationSeconds)}`,
+          Number.isInteger(battle.stars) && `${battle.stars} 星`,
+          Number.isFinite(battle.destruction) && `${battle.destruction}%`,
+        ].filter(Boolean);
+        return (
+          <div className={"army-history-row" + (carried ? " army-history-focus" : "")} key={battle.id || index}>
+            <div className="army-history-label">
+              <strong title={strategy}>{strategy}</strong>
+              {carried && <span className="gear-badge">带{focusEquipment.name}</span>}
+              <span>
+                {timestamp && <> · <time dateTime={timestamp} title={formatTime(timestamp)}>{formatShortTime(timestamp)}</time></>}
+                {facts.length > 0 && " · " + facts.join(" · ")}
+              </span>
+            </div>
+            <ArmyLineup army={battle.army} label={[battle.strategy, "进攻阵容"].filter(Boolean).join(" · ")} />
+          </div>
+        );
+      })}
+      <ArmyAttribution />
+    </div>
+  );
+}
+
+const emptyAttacks = [];
+const initialSort = { key: "rank", ascending: true };
+const compactWidth = 1160;
+const coreClass = {
+  rank: "standings-core standings-rank",
+  player: "standings-core standings-player",
+  progress: "standings-core standings-progress",
+  attack: "standings-core standings-attack",
+  defense: "standings-core standings-defense",
+  total: "standings-core standings-total",
+  defenseRank: "standings-core standings-defense-rank",
+};
+const rankColumn = { key: "rank", label: "排名", ascendingFirst: true, className: coreClass.rank };
+const defenseRankColumn = { key: "defenseRank", label: "防守排名", ascendingFirst: true, className: coreClass.defenseRank,
+  title: "按防守得杯排名，并列时平均被打星少的靠前" };
+const detailColumns = [
+  { key: "defenseCount", label: "防守场次", widthClass: "stat-column", value: (row) => scoreText(row.defenseCount) },
+  { key: "attackStars", label: "进攻总星", widthClass: "stat-column", value: (row) => scoreText(row.attackStars) },
+  { key: "attackDestruction", label: "进攻摧毁率", widthClass: "destruction-column",
+    title: "该玩家进攻时造成的平均摧毁率", value: (row) => destructionText(row.attackDestruction) },
+  { key: "defenseDestruction", label: "平均被摧毁率", widthClass: "destruction-column", ascendingFirst: true,
+    title: "该玩家防守时对手造成的平均摧毁率，越低防守表现越好", value: (row) => destructionText(row.defenseDestruction) },
+  { key: "attackDurationAverage", label: "平均进攻用时", widthClass: "timing-column",
+    value: (row) => <DirectionTiming timestamp={row.lastAttackAt} average={row.attackDurationAverage} count={row.attackDurationCount} /> },
+  { key: "defenseDurationAverage", label: "平均防守用时", widthClass: "timing-column",
+    value: (row) => <DirectionTiming timestamp={row.lastDefenseAt} average={row.defenseDurationAverage} count={row.defenseDurationCount} /> },
+];
+
+export function CompactSort({ columns, sort, onSort }) {
+  return (
+    <label className="standings-compact-sort">
+      <span>排序方式</span>
+      <select value={`${sort.key}:${sort.ascending ? "asc" : "desc"}`} onChange={(event) => {
+        const [key, direction] = event.target.value.split(":");
+        onSort({ key, ascending: direction === "asc" });
+      }}>
+        {columns.flatMap((column) => [Boolean(column.ascendingFirst), !column.ascendingFirst].map((ascending) => {
+          const value = `${column.key}:${ascending ? "asc" : "desc"}`;
+          return <option key={value} value={value}>{column.label} · {ascending ? "升序" : "降序"}</option>;
+        }))}
+      </select>
+    </label>
+  );
+}
+
 function MyResult({ results }) {
   return results.map((result, index) => (
     <span className="my-result" key={index} title={result.timestamp ? formatTime(result.timestamp) : undefined}>
@@ -121,47 +189,81 @@ function MyResult({ results }) {
   ));
 }
 
-export default function Standings({ rows, battleViews, groupTag, week, leagueTier, isSample, onOpenLegend, onOpenPlayer }) {
-  const [sort, setSort] = useState({ key: "rank", ascending: true });
+export default function Standings({ rows, battleViews, groupTag, week, leagueTier, isSample,
+  attacks = emptyAttacks, classifiedAttacks = emptyAttacks, onOpenLegend, onLookupPlayer, focus = null,
+  showOwnResults = true, requireFullDefenseRanks = false }) {
+  const [sort, setSort] = useState(initialSort);
+  const [openPanel, setOpenPanel] = useState(null);
+  const [compact, setCompact] = useState(false);
+  const sectionRef = useRef(null);
+  const panelPrefix = useId();
   const mode = battleViews?.defenseTrophyMode;
   const lost = mode === "lost";
   const selected = battleViews?.playerTag;
   const ranks = useMemo(() => defenseRanks(rows, mode), [rows, mode]);
-  const mine = useMemo(() => myAttacksByOpponent(battleViews), [battleViews]);
-  const showDefenseRank = !battleViews?.personalOnly && ranks.size > 0;
+  const mine = useMemo(() => showOwnResults ? myAttacksByOpponent(battleViews) : null, [battleViews, showOwnResults]);
+  const showDefenseRank = !battleViews?.personalOnly && ranks.size > 0 && (!requireFullDefenseRanks || ranks.size === rows.length);
+  const showMyResult = showOwnResults && showDefenseRank;
   const rankedRows = rows.map((row) => ({ ...row, defenseRank: ranks.get(row.playerTag) ?? null }));
 
+  useLayoutEffect(() => {
+    const section = sectionRef.current;
+    const update = (width) => setCompact(width < compactWidth);
+    update(section.clientWidth);
+    const observer = new ResizeObserver(([entry]) => update(entry.contentRect.width));
+    observer.observe(section);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!focus?.playerTag) return;
+    setOpenPanel({ playerTag: focus.playerTag, panel: "lineup" });
+    const frame = requestAnimationFrame(() => {
+      document.getElementById(`${panelPrefix}-row-${focus.playerTag.replace(/^#/, "")}`)
+        ?.scrollIntoView({ block: "center", inline: "nearest" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focus, panelPrefix]);
+  const attackHistory = useMemo(() => {
+    const grouped = new Map();
+    const labels = new Map(classifiedAttacks.map(({ id, strategy }) => [id, strategy]));
+    for (const battle of attacks) {
+      if (!battle.playerTag || !hasLineup(battle.army)) continue;
+      if (!grouped.has(battle.playerTag)) grouped.set(battle.playerTag, []);
+      grouped.get(battle.playerTag).push({ ...battle, strategy: labels.get(battle.id) || battle.strategy });
+    }
+    for (const history of grouped.values()) {
+      history.sort((a, b) => (b.battleTimestamp || b.timestamp || "").localeCompare(a.battleTimestamp || a.timestamp || ""));
+    }
+    return grouped;
+  }, [attacks, classifiedAttacks]);
   const scoreColumns = [
-    { key: "attackCount", label: "进攻进度", title: "可进攻场次 / 已完成进攻场次，按已完成场次排序" },
-    { key: "attackTrophies", label: "进攻得杯" },
-    { key: "defenseTrophies", label: lost ? "防守扣杯" : "防守得杯" },
-    { key: "trophies", label: lost ? "本周净杯" : "最终杯数" },
+    { key: "attackCount", label: "进攻进度", className: coreClass.progress, title: "可进攻场次 / 已完成进攻场次，按已完成场次排序" },
+    { key: "attackTrophies", label: "进攻得杯", className: coreClass.attack },
+    { key: "defenseTrophies", label: lost ? "防守扣杯" : "防守得杯", className: coreClass.defense },
+    { key: "trophies", label: lost ? "本周净杯" : "最终杯数", className: coreClass.total },
   ];
-  const defenseRankColumn = { key: "defenseRank", label: "防守排名", ascendingFirst: true,
-    title: "按防守得杯排名，并列时平均被打星少的靠前" };
-  const detailColumns = [
-    { key: "defenseCount", label: "防守场次" },
-    { key: "attackStars", label: "进攻总星" },
-    { key: "attackDestruction", label: "进攻摧毁率", title: "该玩家进攻时造成的平均摧毁率" },
-    { key: "defenseDestruction", label: "平均被摧毁率", title: "该玩家防守时对手造成的平均摧毁率，越低防守表现越好", ascendingFirst: true },
-    { key: "attackDurationAverage", label: "平均进攻用时" },
-    { key: "defenseDurationAverage", label: "平均防守用时" },
-  ];
-  const sorted = [...rankedRows].sort((a, b) => compareRows(a, b, sort.key, sort.ascending) || compareRows(a, b, "rank", true));
+  const sortColumns = [rankColumn, ...scoreColumns, ...(showDefenseRank ? [defenseRankColumn] : []), ...detailColumns];
+  const activeSort = sort.key === "defenseRank" && !showDefenseRank ? initialSort : sort;
+  const coreCount = 2 + scoreColumns.length + Number(showDefenseRank);
+  const extraCount = detailColumns.length + Number(showMyResult);
+  const visibleCount = coreCount + (compact ? 0 : extraCount);
+  const sorted = rankedRows.sort((a, b) => compareRows(a, b, activeSort.key, activeSort.ascending) || compareRows(a, b, "rank", true));
 
   function sortHeader(column) {
-    return <SortHeader key={column.key} column={column} sort={sort} onSort={setSort} />;
+    return <SortHeader key={column.key} column={column} sort={activeSort} onSort={setSort} />;
   }
 
   return (
-    <section className="standings" aria-labelledby="standings-title">
+    <section ref={sectionRef} className={compact ? "standings standings-compact" : "standings"} aria-labelledby={panelPrefix + "-title"}>
       <header className="report-header">
         <div className="standings-heading">
-          <h2 id="standings-title">本周排位排名</h2>
+          <h2 id={panelPrefix + "-title"}>本周排位排名</h2>
           <LeagueBadge tier={leagueTier} />
         </div>
         <p>{[groupTag && `小组 ${groupTag}`, week && `${week} 周`, rows.length > 0 && "时间为北京时间"].filter(Boolean).join(" · ")}</p>
       </header>
+      {compact && rows.length > 0 && <CompactSort columns={sortColumns} sort={activeSort} onSort={setSort} />}
       {rows.length === 0 ? (
         <div className="empty-card">
           {battleViews?.personalOnly ? (
@@ -169,71 +271,84 @@ export default function Standings({ rows, battleViews, groupTag, week, leagueTie
               <p>传奇 I 的名次在全球榜和地区榜中显示，本周战绩可在进攻和防守页查看。</p>
               {onOpenLegend && <button type="button" onClick={onOpenLegend}>查看传奇 I 全球榜</button>}
             </div>
-          ) : <p>{isSample ? "示例未包含小组排名。查询村庄后可查看排名。" : "官方 API 本次未返回该小组的成员排名。"}</p>}
+          ) : <p>{isSample ? "示例未包含小组排名。" : "官方 API 本次未返回该小组的成员排名。"}</p>}
         </div>
       ) : (
         <div className="battle-card standings-card">
           <table className="battle-table standings-table">
             <colgroup>
-              <col className="rank-column" />
-              <col className="player-column" />
-              <col className="stat-column" span={scoreColumns.length} />
-              {showDefenseRank && <>
-                <col className="defense-rank-column" />
-                <col className="my-result-column" />
-              </>}
-              <col className="stat-column" span={2} />
-              <col className="destruction-column" span={2} />
-              <col className="timing-column" />
-              <col className="timing-column" />
+              <col className={`rank-column ${coreClass.rank}`} />
+              <col className={`player-column ${coreClass.player}`} />
+              {scoreColumns.map((column) => <col key={column.key} className={`stat-column ${column.className}`} />)}
+              {showDefenseRank && <col className={`defense-rank-column ${coreClass.defenseRank}`} />}
+              {showMyResult && !compact && <col className="standings-extra my-result-column" />}
+              {!compact && detailColumns.map((column) => <col key={column.key} className={`standings-extra ${column.widthClass}`} />)}
             </colgroup>
             <thead><tr>
-              {sortHeader({ key: "rank", label: "排名", ascendingFirst: true })}
-              <th scope="col">村庄</th>
+              {sortHeader(rankColumn)}
+              <th scope="col" className={coreClass.player}>村庄</th>
               {scoreColumns.map(sortHeader)}
-              {showDefenseRank && <>
-                {sortHeader(defenseRankColumn)}
-                <th scope="col" title="本人本周对该玩家的进攻">我打过</th>
-              </>}
-              {detailColumns.map(sortHeader)}
+              {showDefenseRank && sortHeader(defenseRankColumn)}
+              {showMyResult && !compact && <th scope="col" className="standings-extra" title="本人本周对该玩家的进攻">我打过</th>}
+              {!compact && detailColumns.map((column) => sortHeader({ ...column, className: "standings-extra" }))}
             </tr></thead>
             <tbody>{sorted.map((row) => {
+              const history = attackHistory.get(row.playerTag) ?? [];
+              const open = openPanel?.playerTag === row.playerTag ? openPanel.panel : null;
+              const detailsExpanded = compact && open === "details";
+              const lineupExpanded = history.length > 0 && open === "lineup";
+              const panelId = `${panelPrefix}-${row.playerTag.replace(/^#/, "")}`;
               const name = row.playerName || row.playerTag;
-              const results = mine.get(row.playerTag) ?? [];
-              const topHit = showDefenseRank && results.length > 0 && row.defenseRank !== null && row.defenseRank <= DEFENSE_TOP_N;
+              const lookupName = name === row.playerTag ? name : `${name} ${row.playerTag}`;
+              const results = mine?.get(row.playerTag) ?? [];
+              const myResult = selected === row.playerTag ? "本人" : results.length ? <MyResult results={results} /> : "—";
+              const topHit = showMyResult && results.length > 0 && row.defenseRank !== null && row.defenseRank <= DEFENSE_TOP_N;
               const rowClass = [selected === row.playerTag && "standing-selected", topHit && "defense-top-hit"].filter(Boolean).join(" ");
-              const canOpen = typeof onOpenPlayer === "function";
+              const togglePanel = (panel) => setOpenPanel(open === panel ? null : { playerTag: row.playerTag, panel });
               return (
-                <tr key={row.playerTag} className={rowClass || undefined}>
-                  <td>{scoreText(row.rank)}</td>
-                  <th scope="row">
-                    {canOpen ? <button type="button" className="battle-opponent-lookup standings-player-name" title={`查看 ${name} 的进攻和防守记录`}
-                      onClick={() => onOpenPlayer(row.playerTag, "attacks")}>{name}</button>
-                      : <span className="standings-player-name" title={name}>{name}</span>}
-                    {row.playerName && <small>{row.playerTag}</small>}
-                  </th>
-                  <AttackProgress limit={leagueTier?.attackLimit} completed={row.attackCount} />
-                  <td><Trophy value={row.attackTrophies} /></td>
-                  <td><Trophy value={row.defenseTrophies} loss={lost} /></td>
-                  <td className="total-trophies"><Trophy value={row.trophies} change={lost} /></td>
-                  {showDefenseRank && <td>{row.defenseRank ? `第 ${row.defenseRank} 名` : "—"}</td>}
-                  {showDefenseRank && <td className="my-result-cell">{selected === row.playerTag ? "本人"
-                    : results.length ? <MyResult results={results} /> : "—"}</td>}
-                  <td>{canOpen && row.defenseCount > 0
-                    ? <button type="button" className="battle-opponent-lookup standings-defense-lookup" title={`查看 ${name} 的防守记录`}
-                      onClick={() => onOpenPlayer(row.playerTag, "defenses")}>{scoreText(row.defenseCount)}</button>
-                    : scoreText(row.defenseCount)}</td>
-                  <td>{scoreText(row.attackStars)}</td>
-                  <td>{destructionText(row.attackDestruction)}</td>
-                  <td>{destructionText(row.defenseDestruction)}</td>
-                  <td><DirectionTiming timestamp={row.lastAttackAt} average={row.attackDurationAverage} count={row.attackDurationCount} /></td>
-                  <td><DirectionTiming timestamp={row.lastDefenseAt} average={row.defenseDurationAverage} count={row.defenseDurationCount} /></td>
-                </tr>
+                <Fragment key={row.playerTag}>
+                  <tr className={rowClass || undefined} id={`${panelPrefix}-row-${row.playerTag.replace(/^#/, "")}`}>
+                    <td className={coreClass.rank}>{scoreText(row.rank)}</td>
+                    <th scope="row" className={coreClass.player}>
+                      {row.playerTag && onLookupPlayer ? <button type="button" className="standings-player-name battle-opponent-lookup"
+                        aria-label={`查看 ${lookupName} 的攻防战报`} title={name}
+                        onClick={() => onLookupPlayer(row.playerTag)}>{name}</button>
+                        : <span className="standings-player-name" title={name}>{name}</span>}
+                      {row.playerName && <small>{row.playerTag}</small>}
+                      {(compact || history.length > 0) && <div className="standings-row-actions">
+                        {compact && <button type="button" className="standings-detail-toggle" aria-label={`${name} 数据详情`}
+                          aria-expanded={detailsExpanded} aria-controls={detailsExpanded ? panelId : undefined}
+                          onClick={() => togglePanel("details")}>数据详情</button>}
+                        {history.length > 0 && <button type="button" className="lineup-button group-lineup-button" aria-expanded={lineupExpanded}
+                          aria-controls={lineupExpanded ? panelId : undefined} onClick={() => togglePanel("lineup")}>
+                          <span className="lineup-button-label">{scoreText(history.length)} 场阵容</span>
+                        </button>}
+                      </div>}
+                    </th>
+                    <AttackProgress className={coreClass.progress} limit={leagueTier?.attackLimit} completed={row.attackCount} />
+                    <td className={coreClass.attack}><Trophy value={row.attackTrophies} /></td>
+                    <td className={coreClass.defense}><Trophy value={row.defenseTrophies} loss={lost} /></td>
+                    <td className={`total-trophies ${coreClass.total}`}><Trophy value={row.trophies} change={lost} /></td>
+                    {showDefenseRank && <td className={coreClass.defenseRank}>{row.defenseRank ? `第 ${row.defenseRank} 名` : "—"}</td>}
+                    {showMyResult && !compact && <td className="standings-extra my-result-cell">{myResult}</td>}
+                    {!compact && detailColumns.map((column) => <td key={column.key} className="standings-extra">{column.value(row)}</td>)}
+                  </tr>
+                  {(detailsExpanded || lineupExpanded) && <tr className={detailsExpanded ? "army-expanded-row standings-detail-row" : "army-expanded-row"}><td colSpan={visibleCount} id={panelId}>
+                    {detailsExpanded ? <section className="standings-detail-panel" aria-label={`${name} 数据详情`}>
+                      <dl className="standings-detail-stats">
+                        {showOwnResults && (showDefenseRank || results.length > 0) && <div><dt>我打过</dt><dd>{myResult}</dd></div>}
+                        {detailColumns.map((column) => <div key={column.key}><dt>{column.label}</dt><dd>{column.value(row)}</dd></div>)}
+                      </dl>
+                    </section> : <ArmyHistory history={history} player={row}
+                      focusEquipment={focus?.playerTag === row.playerTag ? focus.equipment : null} />}
+                  </td></tr>}
+                </Fragment>
               );
             })}</tbody>
           </table>
-          <p className="battle-note">点击玩家名字查看其进攻和防守记录与阵容。平均用时只计入已知用时的对战。「最近」是最近一场的对战时间。
-            {showDefenseRank && ` 防守排名按防守得杯，并列时平均被打星少的靠前；打过防守前 ${DEFENSE_TOP_N} 的行标黄。`}</p>
+          <p className="battle-note">平均用时只计入已知用时的对战。「最近」是最近一场的对战时间。
+            {showDefenseRank && " 防守排名按防守得杯，并列时平均被打星少的靠前。"}
+            {showMyResult && `打过防守前 ${DEFENSE_TOP_N} 的行标黄。`}</p>
         </div>
       )}
     </section>

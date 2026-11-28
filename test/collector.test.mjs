@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fetchRankedReport } from "../collector.mjs";
+import { buildGroupedPlayerReport, fetchRankedReport } from "../collector.mjs";
 import { openDatabase } from "../desktop/database.mjs";
 
 const groupTag = "#MOCKG";
@@ -200,6 +200,104 @@ test("a partial official ledger can still recover a distinct archived match", as
   const result = await fixture.fetch({ attackTimes: [times.roundedAttacks[0]] });
   assertDistinctAttackHistory(result);
   assert.equal((await fixture.saved()).attacks.length, 2);
+});
+
+test("a player opened from the group shows the same official totals and complete captured logs", async (context) => {
+  const database = openDatabase(":memory:");
+  context.after(() => database.close());
+  const league = { groupTag, week, seasonId };
+  const firstBattle = Date.parse("2026-11-24T09:00:00Z");
+  const battleTime = (index) => new Date(firstBattle + index * 60_000).toISOString();
+  const attacks = Array.from({ length: 30 }, (_, index) => cachedBattle(battleTime(index), {
+    trophies: index < 3 ? 40 : 36, armyShareCode: index < 16 ? attackArmyCodes[0] : "",
+  }));
+  const defenses = Array.from({ length: 19 }, (_, index) => cachedBattle(battleTime(40 + index), {
+    defense: true, trophies: index === 0 ? 19 : 17, armyShareCode: index < 11 ? defenseArmyCode : "",
+  }));
+  const standing = {
+    playerTag, playerName: "Group player", rank: 3, attackCount: 30, defenseCount: 19,
+    attackTrophies: 1092, defenseTrophies: 325, trophies: 1417, lastDefenseAt: defenses.at(-1).timestamp,
+  };
+  const exactStamp = new Date(Date.parse(defenses.at(-1).timestamp) + 200).toISOString();
+  const morePreciseDefense = cachedBattle(exactStamp, { defense: true, durationSeconds: 146, trophies: 17 });
+  const laterAttack = cachedBattle(battleTime(61));
+  const laterDefense = cachedBattle(battleTime(60), { defense: true });
+  const wrongWeekDefense = cachedBattle("2026-11-22T09:00:00Z", { defense: true });
+  database.snapshots.write(league, [...attacks, laterAttack], [...defenses, morePreciseDefense, laterDefense, wrongWeekDefense]);
+  database.snapshots.write({ ...league, groupTag: "#OTHER" }, [], [cachedBattle(battleTime(20), { defense: true })]);
+  const raw = {
+    ...league, source: "api", attacks,
+    standings: [standing], battleViews: { playerTag: opponentTag, playerName: "Saved report owner", defenses: [] },
+  };
+  const result = await buildGroupedPlayerReport({
+    raw, snapshots: database.snapshots, playerTag: "mock1", fetchedAt: battleTime(62),
+  });
+  assert.deepEqual(result.groupReport, { groupTag, week });
+  assert.equal(result.weekStart, week);
+  assert.deepEqual(result.battleViews.standing, standing);
+  assert.equal(result.battleViews.attacks.length, 30);
+  assert.equal(result.battleViews.defenses.length, 19);
+  assert.equal(result.battleViews.telemetry.attacks.recorded, 30);
+  assert.equal(result.battleViews.telemetry.attacks.withArmy, 16);
+  assert.equal(result.battleViews.telemetry.defenses.recorded, 19);
+  assert.equal(result.battleViews.telemetry.defenses.withArmy, 11);
+  assert.equal(result.battleViews.defenseTrophyMode, "earned");
+  assert.equal(result.battleViews.attacks.reduce((sum, battle) => sum + battle.trophyDelta, 0), 1092);
+  assert.equal(result.battleViews.defenses.reduce((sum, battle) => sum + battle.trophyDelta, 0), 325);
+  assert(result.battleViews.defenses.every((battle) => battle.opponentTag === opponentTag));
+  assert.equal(result.battleViews.defenses[0].durationSeconds, 146);
+  assert.deepEqual(result.battleViews.defenses[0].previousIds, [defenses.at(-1).id]);
+});
+
+test("a missing archive preserves official group totals and the selected player's saved rows", async () => {
+  const attack = cachedBattle(times.fractionalAttacks[0]);
+  const archivedDefense = cachedBattle(times.fractionalDefense, { defense: true, armyShareCode: defenseArmyCode });
+  const standing = { playerTag, playerName: "Report owner", attackCount: 4, defenseCount: 2, trophies: 237,
+    attackTrophies: null, defenseTrophies: 50 };
+  const raw = {
+    groupTag, seasonId, week, source: "api", attacks: [attack], standings: [standing],
+    battleViews: { playerTag, defenses: [{ ...archivedDefense, opponentTag }] },
+  };
+  const result = await buildGroupedPlayerReport({
+    raw, playerTag, fetchedAt: "2026-11-25T00:00:00Z",
+    snapshots: { read() { throw Error("archive unreadable"); } },
+  });
+  assert.deepEqual(result.battleViews.standing, standing);
+  assert.equal(result.battleViews.telemetry.attacks.expected, 4);
+  assert.equal(result.battleViews.telemetry.defenses.expected, 2);
+  assert.equal(result.battleViews.telemetry.defenses.logFailures, 1);
+  assert.deepEqual(result.battleViews.attacks.map(({ id }) => id), [attack.id]);
+  assert.deepEqual(result.battleViews.defenses.map(({ id, opponentTag: attacker, armyShareCode, trophies }) =>
+    [id, attacker, armyShareCode, trophies]), [[archivedDefense.id, opponentTag, defenseArmyCode, 27]]);
+});
+
+test("group lookup requires a verified member and matching ranked week", async () => {
+  const raw = { groupTag, seasonId, week, source: "api", standings: [{ playerTag }] };
+  const snapshots = { read() { assert.fail("should not read an unrelated archive"); } };
+  const options = { raw, snapshots, playerTag, fetchedAt: "2026-11-25T00:00:00Z" };
+  assert.equal(await buildGroupedPlayerReport({ ...options, playerTag: opponentTag }), null);
+  assert.equal(await buildGroupedPlayerReport({ ...options, raw: { ...raw, week: "2026-11-16" } }), null);
+  assert.equal(await buildGroupedPlayerReport({ ...options, raw: { ...raw, source: "sample" } }), null);
+  assert.equal(await buildGroupedPlayerReport({ ...options, raw: { ...raw, groupTag: "" } }), null);
+});
+
+test("an older report without stored group attacks can use its own season archive", async () => {
+  const attack = cachedBattle(times.fractionalAttacks[0], { armyShareCode: attackArmyCodes[0] });
+  const otherPlayerAttack = cachedBattle(times.fractionalDefense, { defense: true });
+  const raw = {
+    groupTag, seasonId, week, source: "api",
+    standings: [{ playerTag, attackCount: 1, defenseCount: 0 }],
+  };
+  const snapshots = {
+    read(league) {
+      assert.deepEqual(league, { groupTag, seasonId, week });
+      return { attacks: [attack, otherPlayerAttack], defenses: [] };
+    },
+  };
+  const result = await buildGroupedPlayerReport({ raw, snapshots, playerTag, fetchedAt: "2026-11-25T00:00:00Z" });
+  assert.deepEqual(result.battleViews.attacks.map(({ id }) => id), [attack.id]);
+  assert.equal(result.battleViews.attacks[0].armyShareCode, attackArmyCodes[0]);
+  assert.equal(result.battleViews.defenses.length, 0);
 });
 
 const officialIconSmall = "https://api-assets.clashofclans.com/leagues/72/fixture.png";

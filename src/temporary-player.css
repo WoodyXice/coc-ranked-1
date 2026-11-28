@@ -3,7 +3,7 @@
   font-size: 22px;
 }
 
-.legend-player-search, .legend-player-day-bar {
+.legend-player-day-bar {
   display: grid;
   justify-content: start;
   align-items: end;
@@ -11,18 +11,20 @@
 }
 
 .legend-player-search {
-  grid-template-columns: minmax(0, 260px) auto;
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
+  position: relative; display: flex; align-items: center; min-width: 0; width: min(100%, 250px);
+  margin: 0;
 }
-.legend-player-search .legend-lookup-error { color: #ffb09f; }
+.legend-player-search .legend-lookup-error { color: var(--negative, #a33527); }
 
-.legend-player-search .editor-help, .legend-player-day-bar p {
+.legend-player-day-bar p {
   grid-column: 1 / -1;
 }
 
-.legend-tag-field { position: relative; }
+.legend-player-day-bar p {
+  overflow-wrap: anywhere;
+}
+
+.legend-tag-field { position: relative; flex: 1; min-width: 0; }
 .legend-tag-prefix {
   position: absolute;
   inset-inline-start: 11px;
@@ -32,7 +34,58 @@
   pointer-events: none;
   user-select: none;
 }
-.legend-player-search .legend-tag-field input:not([type="checkbox"]) { padding-inline-start: 26px; }
+.legend-player-search input {
+  width: 100%; min-width: 0; min-height: 38px; padding: 7px 38px 7px 27px;
+  border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: inherit; font: inherit; font-size: 14px;
+}
+.legend-player-search input::placeholder { color: var(--muted); opacity: 1; }
+.legend-player-search .village-submit {
+  display: grid; place-items: center; position: absolute; inset-inline-end: 1px; top: 1px; bottom: 1px;
+  width: 36px; min-height: 0; padding: 0; border: 0; background: transparent; color: var(--blue);
+}
+.village-search-icon { display: block; position: relative; width: 13px; height: 13px; border: 1.7px solid currentColor; border-radius: 50%; }
+.village-search-icon::after { content: ""; position: absolute; width: 6px; height: 1.7px; background: currentColor; inset-inline-end: -5px; bottom: -2px; transform: rotate(45deg); }
+.lookup-popover {
+  position: absolute;
+  z-index: 12;
+  inset-inline-end: 0;
+  top: calc(100% + 6px);
+  width: min(max(100%, 230px), calc(100vw - 32px));
+  max-height: min(390px, 55vh); overflow-y: auto; overscroll-behavior: contain;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 9px 24px #15284028;
+}
+.lookup-status, .legend-query-history-heading, .legend-query-history-empty { margin: 0; padding: 8px 10px; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.legend-query-history-list {
+  list-style: none;
+  padding: 2px 6px;
+  margin: 0;
+}
+.legend-query-history-list button {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  padding: 7px 8px;
+  background: transparent;
+  border-color: transparent;
+  text-align: start;
+  white-space: normal;
+}
+.legend-query-history-list button:hover:enabled { background: color-mix(in srgb, var(--blue) 10%, var(--surface)); }
+.legend-query-history-list button:focus-visible { outline-offset: -2px; }
+.legend-query-history-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.legend-query-history-tag { color: var(--soft); font-size: 13px; overflow-wrap: anywhere; }
+.legend-query-history-footer { border-top: 1px solid var(--line); padding-inline: 10px; }
+.lookup-settings, .legend-query-history-footer .text-button { background: transparent; border-color: transparent; color: var(--blue); }
+@media (pointer: coarse) {
+  .legend-player-search input { font-size: 16px; min-height: 44px; }
+  .legend-player-search .village-submit { width: 44px; }
+}
 
 .legend-player-profile {
   display: flex;
@@ -46,6 +99,8 @@
   border-radius: 12px;
   background: var(--surface);
 }
+
+.legend-player-profile > * { min-width: 0; }
 
 .legend-player-profile h3 {
   margin: 0;
@@ -61,6 +116,7 @@
 }
 
 .legend-player-profile-details { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.legend-player-profile-details > * { min-width: 0; overflow-wrap: anywhere; }
 
 .legend-player-profile dl {
   display: flex;
@@ -81,16 +137,50 @@
   font-variant-numeric: tabular-nums;
 }
 
+.legend-player-ranking {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  max-width: 100%;
+}
+.legend-player-ranking .legend-player-ranking-message {
+  flex: 0 1 100%;
+  margin: 0;
+  font-size: 13px;
+}
+.temporary-weekly-ranking { margin-top: 14px; }
+.temporary-weekly-ranking .group-view-tabs { margin-bottom: 8px; }
+.temporary-ranking-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .legend-player-day-bar {
   margin: 10px 0 16px;
   padding: 12px 16px;
-  grid-template-columns: minmax(150px, 205px) auto;
+  grid-template-columns: minmax(0, 205px) minmax(0, max-content);
 }
 
 .legend-player-week-bar { grid-template-columns: minmax(0, 1fr); justify-items: start; }
+.legend-player .legend-player-week-cups { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+.history-controls { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px 12px; min-width: 0; max-width: 100%; }
+.history-controls select { min-width: 118px; }
+.history-controls .legend-player-directions { margin-bottom: 0; }
+.history-coverage { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 5px 0 0; font-size: 13px; }
+.history-coverage > div { min-width: 0; padding-inline-start: 9px; border-inline-start: 2px solid var(--line); }
+.history-coverage dt { margin-bottom: 3px; color: var(--soft); font-weight: 600; }
+.history-coverage dd { margin: 0; color: var(--muted); line-height: 1.5; overflow-wrap: anywhere; }
 
 .legend-player-day-bar p { margin: 0; }
-.legend-player-directions { flex-wrap: wrap; min-width: 0; }
+.legend-player-directions { flex-wrap: wrap; justify-self: start; min-width: 0; max-width: 100%; }
+.legend-player-directions button { white-space: normal; }
 .legend-player-directions button span { font-variant-numeric: tabular-nums; }
 
 @media (max-width: 560px) {

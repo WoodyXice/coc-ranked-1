@@ -1,4 +1,4 @@
-import { decodeArmyShareCode } from './collector.mjs';
+import { decodeArmyShareCode, lookupArmyTroop } from './collector.mjs';
 
 const CATEGORIES = [
   { name: '蓝胖', color: '#3987e5' },
@@ -57,6 +57,14 @@ const UNITS = makeAliases([
   ['Invisibility Spell', '隐形法术', '隐身法术', '隐形', '隐身', 'invisibility'],
   ['Fireball', '火球', '火球装备', '巨大火球'],
   ['Archer Queen', '弓箭女皇', '女皇', 'queen'],
+  ['Grand Warden', '大守护者', '咏王'],
+  ['Frozen Arrow', '冰封箭矢'],
+  ['Healer Puppet', '天使木偶'],
+  ['Root Rider', '根蔓', '根骑', 'root riders'],
+  ['Valkyrie', '武神', 'valkyries'],
+  ['Miner', '矿工', 'miners'],
+  ['Hog Rider', '野猪', 'hog riders'],
+  ['Lava Hound', '熔岩狗', '天狗', 'lava hounds'],
   ['Dragon Duke', '飞龙公爵', '飛龍公爵'],
   ['Monolith Arrow', '擎天箭矢'],
   ['Electro Fangs', '雷电獠牙', '雷電獠牙'],
@@ -116,10 +124,11 @@ function getStrategy(name) {
 
 function getCategory(name) {
   if (BOWLER_VARIANTS.includes(name)) return '蓝胖';
+  if (name === '火球超女巫') return '火球拆阵';
   return CATEGORIES.some(category => category.name === name) ? name : '其他';
 }
 
-function normalizeUnits(value) {
+function normalizeUnits(value, troops = false) {
   let units = value;
   if (units && !Array.isArray(units) && typeof units === 'object') {
     units = Object.entries(units).map(([name, count]) => ({ name, count }));
@@ -130,7 +139,7 @@ function normalizeUnits(value) {
     const name = asText(typeof entry === 'string' ? entry : entry?.name ?? entry?.unit);
     const count = typeof entry === 'string' ? 1 : entry?.count ?? entry?.quantity ?? entry?.amount ?? 1;
     if (!name || !Number.isSafeInteger(count) || count <= 0) continue;
-    const unit = UNITS.get(lookupKey(name)) ?? name;
+    const unit = UNITS.get(lookupKey(name)) ?? (troops ? lookupArmyTroop(name)?.name : null) ?? name;
     counts.set(unit, (counts.get(unit) ?? 0) + count);
   }
   return [...counts].map(([name, count]) => ({ name, count }));
@@ -164,7 +173,7 @@ function normalizeArmy(attack, code) {
     equipment: normalizeUnits(equipmentByHero.get(hero.name)),
   }));
   return {
-    troops: normalizeUnits(payloadTroops ?? attack.troops ?? attack.units),
+    troops: normalizeUnits(payloadTroops ?? attack.troops ?? attack.units, true),
     spells: normalizeUnits(army?.spells ?? attack.spells),
     heroes,
     equipment: normalizeUnits([...equipment, ...heroes.flatMap(hero => hero.equipment)]),
@@ -180,6 +189,53 @@ function loadoutFor(army, name) {
   const assigned = new Set(army.heroes.flatMap(unit => unit.equipment.map(gear => gear.name)));
   const unassigned = army.equipment.filter(gear => !assigned.has(gear.name));
   return unassigned.length ? unassigned : null;
+}
+
+// Generic names describe the observed main force. Cleanup units, healers and wall breakers
+// can contribute to army size, but cannot supply a main-force name.
+const coreTroops = new Set([
+  'Root Rider', 'Valkyrie', 'Super Valkyrie', 'Miner', 'Super Miner', 'Miner Squad',
+  'Hog Rider', 'Super Hog Rider', 'Hog Rider Squad', 'Witch', 'Super Witch', 'Golem Witch Squad',
+  'Golem', 'Meteor Golem', 'P.E.K.K.A', 'Electro Titan', 'Yeti', 'Yeti Undertaker',
+  'Totem Thrower', 'Elephant Rider', 'Furnace', 'Dragon', 'Electro Dragon', 'Super Dragon',
+  'Dragon Rider', 'Inferno Dragon', 'Rocket Balloon', 'Balloon', 'Ruin Witch', 'Super Archer',
+]);
+
+function mainForceStrategy(counts, army) {
+  const space = new Map();
+  let total = 0;
+  for (const [name, count] of counts) {
+    const housing = lookupArmyTroop(name)?.housingSpace;
+    // Unknown/new troops may be the actual main force.
+    if (!housing) return '其他';
+    space.set(name, count * housing);
+    total += count * housing;
+  }
+  const housingOf = (...names) => names.reduce((sum, name) => sum + (space.get(name) ?? 0), 0);
+  const roots = housingOf('Root Rider');
+  const valkyries = housingOf('Valkyrie', 'Super Valkyrie');
+  if (roots >= 60 && valkyries >= 40 && roots + valkyries >= total / 2) return '根蔓武神';
+  const miners = housingOf('Miner', 'Super Miner', 'Miner Squad');
+  const hogs = housingOf('Hog Rider', 'Super Hog Rider', 'Hog Rider Squad');
+  if (miners >= 48 && hogs >= 40 && miners + hogs >= total / 2) {
+    const queen = loadoutFor(army, 'Archer Queen');
+    const queenGear = queen?.some(({ name }) => name === 'Frozen Arrow' || name === 'Healer Puppet');
+    return queenGear && (counts.get('Healer') ?? 0) >= 4 ? '天女矿猪' : '矿猪';
+  }
+  const lava = housingOf('Lava Hound');
+  const balloons = housingOf('Balloon', 'Rocket Balloon');
+  if (lava >= 30 && balloons >= 50 && lava + balloons >= total / 2) return '熔岩狗球';
+
+  const core = [...space].filter(([name]) => coreTroops.has(name))
+    .sort(([a, aSpace], [b, bSpace]) => bSpace - aSpace || a.localeCompare(b, 'en'));
+  const [first, second] = core;
+  if (!first || first[1] < 60) return '其他';
+  const label = ([name]) => lookupArmyTroop(name).displayName;
+  if (second && second[1] >= Math.max(40, first[1] / 2) && (first[1] + second[1]) >= total * 0.60) {
+    // Keep the same label when two players swap which component takes more space.
+    return [label(first), label(second)].sort((a, b) => a.localeCompare(b, 'zh-CN')).join('＋');
+  }
+  return first[1] >= Math.max(80, total / 2) ? label(first) + '流' : '其他';
 }
 
 function classify(army) {
@@ -208,11 +264,20 @@ function classify(army) {
   if (troop('Thrower') >= 5) return '巨矛投手';
   if (troop('Ice Hound') > 0 && troop('Balloon') >= 10) return '气球冰狗';
   if (dragons >= 5) return '龙流';
-  if (army.equipment.some(unit => unit.name === 'Fireball') && invisibility >= 2) return '火球拆阵';
+  const warden = loadoutFor(army, 'Grand Warden');
+  const gear = army.heroes.some(hero => hero.equipment.length) ? warden : army.equipment;
+  if (gear?.some(unit => unit.name === 'Fireball') && invisibility >= 2) {
+    return troop('Super Witch') >= 3 ? '火球超女巫' : '火球拆阵';
+  }
   if (troop('P.E.K.K.A') >= 2 && troop('Electro Titan') >= 2) return '皮卡泰坦';
-  if (troop('Balloon') >= 20 && dragons === 0) return '纯气球';
+  if (troop('Balloon') >= 20 && dragons === 0 && !troop('Lava Hound')) return '纯气球';
   if (troop('Ruin Witch') >= 3) return '废墟女巫';
-  return '其他';
+  return mainForceStrategy(counts, army);
+}
+
+export function classifyBattleArmy(army) {
+  const normalized = normalizeArmy({ army });
+  return normalized.troops.length ? classify(normalized) : null;
 }
 
 const RANKED_MODES = new Set(['ranked', 'rankedbattle', 'rankedbattles', 'rankedattack', 'rankedattacks', 'rankedleague', 'league', '排位', '排位进攻', '排位赛', '传奇排位']);

@@ -1,5 +1,6 @@
 import { isIP } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
+import { previousLegendDayStart } from './insights.mjs';
 
 const apiRoot = 'https://api.clashofclans.com/v1';
 const day = 86_400_000;
@@ -131,6 +132,19 @@ const chineseEquipment = {
   59: '雷电獠牙', 60: '反击卡组', 61: '传送吊坠',
 };
 
+// Use the share-code catalog for named/translated imports as well as decoded armies.
+const troopCatalog = new Map();
+for (const [id, [name, housingSpace]] of Object.entries(troopData)) {
+  const displayName = chineseTroops[id] ?? name;
+  const troop = { name, displayName, housingSpace };
+  troopCatalog.set(name.toLowerCase(), troop);
+  troopCatalog.set(displayName, troop);
+}
+
+export function lookupArmyTroop(name) {
+  return troopCatalog.get(name.toLowerCase());
+}
+
 function shareCode(value) {
   return typeof value === 'string' && value.trim().length <= 8192 ? value.trim() : '';
 }
@@ -232,8 +246,9 @@ function weekMonday(epoch) {
   return new Date(epoch - offset * day).toISOString().slice(0, 10);
 }
 
-function findLeagueGroup(player, week, requestedGroup) {
-  const choices = ['current', 'previous'].flatMap((period) => {
+function findLeagueGroup(player, week, requestedGroup, { currentOnly = false } = {}) {
+  const periods = currentOnly ? ['current'] : ['current', 'previous'];
+  const choices = periods.flatMap((period) => {
     const groupTag = normalizeTag(player[`${period}LeagueGroupTag`]);
     const seasonId = Number(player[`${period}LeagueSeasonId`]);
     if (!groupTag || !Number.isSafeInteger(seasonId) || seasonId < 1e9 || seasonId >= 1e10) return [];
@@ -339,8 +354,8 @@ function apiRequest(token, fetchImpl, interval) {
   let nextRequestAt = 0;
   let retryAt = 0;
 
-  return async function request(path) {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+  return async function request(path, { maxAttempts = 3, timeoutMs = 12_000 } = {}) {
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       const now = Date.now();
       const start = Math.max(now, nextRequestAt, retryAt);
       nextRequestAt = start + interval;
@@ -351,10 +366,10 @@ function apiRequest(token, fetchImpl, interval) {
         response = await fetchImpl(apiRoot + path, {
           headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
           redirect: 'error',
-          signal: AbortSignal.timeout(12_000),
+          signal: AbortSignal.timeout(timeoutMs),
         });
       } catch {
-        if (attempt === 2) throw clientError(502, '无法连接 Clash of Clans 官方 API。');
+        if (attempt + 1 === maxAttempts) throw clientError(502, '无法连接 Clash of Clans 官方 API。');
         await delay(500 * (attempt + 1));
         continue;
       }
@@ -379,7 +394,7 @@ function apiRequest(token, fetchImpl, interval) {
       if (status === 404) throw clientError(404, '官方 API 找不到该玩家、排位小组或战斗日志。');
       if (status === 400) throw clientError(400, '官方 API 拒绝了玩家或排位小组参数。');
       if (status === 429 || status >= 500) {
-        if (attempt === 2) {
+        if (attempt + 1 === maxAttempts) {
           if (status === 429) throw clientError(429, '官方 API 请求频率受限，请稍后重新抓取。');
           throw clientError(502, '官方 API 暂时不可用，请稍后重试。');
         }
@@ -415,6 +430,36 @@ async function inBatches(items, fn) {
 
 function groupBattlePath(groupTag, seasonId, playerTag) {
   return `/leaguegroup/${encodeURIComponent(groupTag)}/${seasonId}?playerTag=${encodeURIComponent(playerTag)}`;
+}
+
+function groupMembers(group) {
+  if (!Array.isArray(group.members)) throw clientError(502, '官方 API 未返回小组成员名单。');
+  const members = new Map();
+  for (const [index, member] of group.members.entries()) {
+    const tag = normalizeTag(member?.playerTag);
+    // The official list is already sorted, including its own tiebreaks.
+    if (tag && !members.has(tag)) members.set(tag, { ...member, playerTag: tag, rank: index + 1 });
+  }
+  return [...members.values()];
+}
+
+async function collectGroupLedgers(members, playerTag, group, scoped, readLedger = readGroupBattles) {
+  const results = await inBatches(members, (member) =>
+    member.playerTag === playerTag ? group : scoped(member.playerTag));
+  const groupLedgers = new Map();
+  let malformedAttacks = 0;
+  let groupLogFailures = 0;
+  for (const [index, { value, status }] of results.entries()) {
+    const member = members[index];
+    if (status || (!Array.isArray(value?.attackLogs) && memberAttackCount(member) > 0)) {
+      groupLogFailures += 1;
+    }
+    const attacks = readLedger(value?.attackLogs, member, false);
+    const defenses = readLedger(value?.defenseLogs, member, true);
+    groupLedgers.set(member.playerTag, { attacks, defenses });
+    malformedAttacks += attacks.malformed;
+  }
+  return { groupLedgers, malformedAttacks, groupLogFailures };
 }
 
 function playerPath(playerTag) {
@@ -615,9 +660,9 @@ function indexBattleViews(items, owner, indexes) {
   }
 }
 
-function nearest(target, entries) {
+function nearest(target, entries, window = matchWindow) {
   let best;
-  let bestDistance = matchWindow + 1;
+  let bestDistance = window + 1;
   for (const entry of entries) {
     const distance = Math.abs(target - entry.epoch);
     if (distance === bestDistance) {
@@ -656,9 +701,12 @@ function mergeBattleDetails(recorded, candidate) {
   const army = betterArmy(candidate, recorded)
     ? { armyShareCode: candidate.armyShareCode, armySource: candidate.armySource }
     : {};
+  const decodedArmy = army.armyShareCode ? candidate.army ?? decodeArmyShareCode(army.armyShareCode)
+    : recorded.army ?? (candidate.armyShareCode === recorded.armyShareCode || !recorded.armyShareCode ? candidate.army : undefined);
   return {
     ...recorded,
     ...army,
+    ...(decodedArmy ? { army: decodedArmy } : {}),
     durationSeconds: recorded.durationSeconds ?? candidate.durationSeconds ?? null,
     battleTimestamp: recorded.battleTimestamp ?? candidate.battleTimestamp,
   };
@@ -676,26 +724,34 @@ function joinBattleDetails(battles, views) {
   }
 }
 
-function reuseGroupBattleDetails(battles, groupAttacks) {
+function reuseGroupBattleDetails(battles, groupAttacks, window = matchWindow) {
   const group = groupByPair(groupAttacks);
   for (const [key, bucket] of groupByPair(battles)) {
     for (const entry of bucket) {
-      const match = nearest(entry.epoch, group.get(key) ?? []);
-      if (!match || nearest(match.epoch, bucket) !== entry) continue;
+      const match = nearest(entry.epoch, group.get(key) ?? [], window);
+      if (!match || nearest(match.epoch, bucket, window) !== entry) continue;
       Object.assign(entry.battle, mergeBattleDetails(entry.battle, match.battle));
     }
   }
+}
+
+const trophySourceRank = { calculated: 1, api: 2, group: 3 };
+
+function trophyEvidence(battle) {
+  return Number.isFinite(battle.trophies) ? (trophySourceRank[battle.trophySource] ?? 0) : -1;
 }
 
 function mergeSameBattle(primary, other) {
   const previousIds = [...new Set([
     ...(primary.previousIds ?? []), other.id, ...(other.previousIds ?? []),
   ])].filter((id) => id !== primary.id);
+  const bestTrophies = trophyEvidence(other) > trophyEvidence(primary) ? other : primary;
   return {
     ...mergeBattleDetails(primary, other),
     playerName: primary.playerName || other.playerName,
     opponentName: primary.opponentName || other.opponentName,
-    trophies: primary.trophies ?? other.trophies ?? null,
+    trophies: bestTrophies.trophies ?? null,
+    trophySource: bestTrophies.trophySource,
     ...(previousIds.length ? { previousIds } : {}),
   };
 }
@@ -708,21 +764,29 @@ function mergeBattles(current, cached) {
     complete.set(battle.id, update ? mergeSameBattle(update, battle) : battle);
   }
 
-  // The group API has returned the same creation time in both millisecond
-  // precision and rounded to a whole second. Preserve the exact time and ID.
+  // Some sources round milliseconds, others truncate. Keep the precise ID,
+  // but only when neither timestamp could identify a second nearby battle.
   const timed = [...complete.values()].map((battle) => ({ battle, epoch: Date.parse(battle.timestamp) }))
     .filter(({ epoch }) => Number.isFinite(epoch));
-  const bySecond = Map.groupBy(timed, ({ battle, epoch }) => `${pairKey(battle)}|${Math.round(epoch / 1000)}`);
-  for (const entries of bySecond.values()) {
-    if (entries.length !== 2) continue;
-    const whole = entries.find(({ epoch }) => epoch % 1000 === 0);
-    const precise = entries.find(({ epoch }) => epoch % 1000 !== 0);
-    if (!whole || !precise) continue;
-    const firstCups = whole.battle.trophies;
-    const secondCups = precise.battle.trophies;
-    if (Number.isFinite(firstCups) && Number.isFinite(secondCups) && firstCups !== secondCups) continue;
-    complete.set(precise.battle.id, mergeSameBattle(precise.battle, whole.battle));
-    complete.delete(whole.battle.id);
+  const wholeTimes = Map.groupBy(timed.filter(({ epoch }) => epoch % 1000 === 0),
+    ({ battle, epoch }) => `${pairKey(battle)}|${epoch / 1000}`);
+  const candidates = new Map();
+  const ambiguous = new Set();
+  for (const { battle, epoch } of timed) {
+    if (epoch % 1000 === 0) continue;
+    const seconds = new Set([Math.floor(epoch / 1000), Math.round(epoch / 1000)]);
+    const matches = [...seconds].flatMap(second => wholeTimes.get(`${pairKey(battle)}|${second}`) ?? [])
+      .map(entry => entry.battle).filter(whole => !Number.isFinite(whole.trophies) || !Number.isFinite(battle.trophies)
+        || whole.trophies === battle.trophies || trophyEvidence(whole) !== trophyEvidence(battle));
+    for (const whole of matches) {
+      if (matches.length > 1 || candidates.has(whole.id)) ambiguous.add(whole.id);
+      candidates.set(whole.id, battle);
+    }
+  }
+  for (const [id, precise] of candidates) {
+    if (ambiguous.has(id)) continue;
+    complete.set(precise.id, mergeSameBattle(precise, complete.get(id)));
+    complete.delete(id);
   }
 
   const rows = [...complete.values()];
@@ -781,25 +845,32 @@ function newestFirst(a, b) {
   return b.timestamp.localeCompare(a.timestamp) || a.id.localeCompare(b.id);
 }
 
-function battleRows(battles, isDefense) {
-  return [...battles].sort(newestFirst).map((battle) => ({
+function projectBattle(battle, isDefense, opponentTag, opponentName) {
+  return {
     id: battle.id,
     ...(battle.previousIds?.length ? { previousIds: battle.previousIds } : {}),
     timestamp: battle.timestamp,
     battleTimestamp: battle.battleTimestamp ?? null,
     durationSeconds: battle.durationSeconds ?? null,
-    opponentTag: isDefense ? battle.playerTag : battle.opponentTag,
-    opponentName: (isDefense ? battle.playerName : battle.opponentName) ?? '',
+    opponentTag,
+    opponentName: opponentName ?? '',
     stars: battle.stars,
     destruction: battle.destruction,
     trophies: battle.trophies ?? null,
     trophyDelta: battle.trophies == null ? null
-      : (isDefense && battle.battleType === 'LEGEND' ? -battle.trophies : battle.trophies),
-    armyShareCode: battle.armyShareCode,
+      : (isDefense && battle.battleType === 'LEGEND' && battle.trophies > 0 ? -battle.trophies : battle.trophies),
+    armyShareCode: battle.armyShareCode ?? '',
     armySource: battle.armySource ?? '',
-    army: decodeArmyShareCode(battle.armyShareCode),
+    army: decodeArmyShareCode(battle.armyShareCode) ?? battle.army ?? null,
     ...(battle.battleType ? { battleType: battle.battleType } : {}),
-  }));
+    ...(battle.trophySource ? { trophySource: battle.trophySource } : {}),
+  };
+}
+
+function battleRows(battles, isDefense) {
+  return [...battles].sort(newestFirst).map((battle) => isDefense
+    ? projectBattle(battle, true, battle.playerTag, battle.playerName)
+    : projectBattle(battle, false, battle.opponentTag, battle.opponentName));
 }
 
 function buildBattleViews(member, playerAttacks, playerDefenses, attackTelemetry, defenseTelemetry) {
@@ -814,6 +885,102 @@ function buildBattleViews(member, playerAttacks, playerDefenses, attackTelemetry
       attacks: { ...attackTelemetry, recorded: attacks.length, withArmy: attacks.filter((row) => row.armyShareCode).length },
       defenses: { ...defenseTelemetry, recorded: defenses.length, withArmy: defenses.filter((row) => row.armyShareCode).length },
     },
+  };
+}
+
+function capturedGroupRows(rows, ownerField, memberTag, start, end) {
+  return (Array.isArray(rows) ? rows : []).flatMap((row) => {
+    if (normalizeTag(row?.[ownerField]) !== memberTag || typeof row.id !== 'string' || !row.id
+        || (row.battleType && battleMode(row.battleType) !== 'RANKED')) return [];
+    const epoch = timestamp(row.timestamp);
+    const playerTag = normalizeTag(row.playerTag);
+    const opponentTag = normalizeTag(row.opponentTag);
+    const score = battleScore({ stars: row.stars, destructionPercentage: row.destruction });
+    if (!Number.isFinite(epoch) || epoch < start || epoch >= end || !playerTag || !opponentTag || !score) return [];
+    return [{
+      ...row, playerTag, opponentTag, timestamp: new Date(epoch).toISOString(), battleType: 'RANKED',
+      trophies: rankedBattleTrophies(row.trophies),
+      trophySource: 'group',
+      previousIds: Array.isArray(row.previousIds) ? row.previousIds : undefined,
+    }];
+  });
+}
+
+function storedMemberRows(battleViews, member, defense, start, end) {
+  if (normalizeTag(battleViews?.playerTag) !== member.playerTag) return [];
+  const rows = defense ? battleViews.defenses : battleViews.attacks;
+  const oriented = (Array.isArray(rows) ? rows : []).map((row) => defense ? {
+    ...row,
+    playerTag: row?.opponentTag,
+    playerName: row?.opponentName,
+    opponentTag: member.playerTag,
+    opponentName: member.playerName,
+  } : { ...row, playerTag: member.playerTag, playerName: member.playerName });
+  return capturedGroupRows(oriented, defense ? 'opponentTag' : 'playerTag', member.playerTag, start, end);
+}
+
+export async function buildGroupedPlayerReport({ raw, snapshots, playerTag: rawTag, fetchedAt } = {}) {
+  const playerTag = normalizeTag(rawTag);
+  const groupTag = normalizeTag(raw?.groupTag);
+  const seasonId = Number(raw?.seasonId);
+  const week = raw?.week;
+  if (raw?.source !== 'api' || !playerTag || !groupTag || !Number.isSafeInteger(seasonId)
+      || seasonId < 1e9 || seasonId >= 1e10 || week !== weekMonday(seasonId * 1000)) return null;
+  const start = Date.parse(`${week}T05:00:00Z`);
+  const captureTime = timestamp(fetchedAt);
+  if (!Number.isFinite(captureTime) || captureTime < start) return null;
+  const end = Math.min(start + 7 * day, captureTime + 1);
+  const standing = Array.isArray(raw.standings)
+    ? raw.standings.find((row) => normalizeTag(row?.playerTag) === playerTag)
+    : null;
+  if (!standing) return null;
+
+  let snapshot;
+  let snapshotUnavailable = false;
+  if (snapshots) {
+    try {
+      snapshot = await snapshots.read({ groupTag, seasonId, week });
+    } catch {
+      snapshotUnavailable = true;
+    }
+  }
+  const playerName = standing.playerName || playerTag;
+  const member = { playerTag, playerName };
+  const expectedAttacks = nonnegativeInteger(standing.attackCount);
+  const expectedDefenses = nonnegativeInteger(standing.defenseCount);
+  const ownAttacks = storedMemberRows(raw.battleViews, member, false, start, end);
+  const ownDefenses = mergeBattles(storedMemberRows(raw.battleViews, member, true, start, end), []).rows;
+  const reportAttacks = capturedGroupRows(raw.attacks, 'playerTag', playerTag, start, end);
+  const archivedAttacks = capturedGroupRows(snapshot?.attacks, 'playerTag', playerTag, start, end);
+  const lastDefense = timestamp(standing.lastDefenseAt);
+  const defenseEnd = Number.isFinite(lastDefense) && lastDefense >= start
+    ? Math.min(end, Math.round(lastDefense / 1000) * 1000 + 500)
+    : end;
+  const archivedDefenses = capturedGroupRows(snapshot?.defenses, 'opponentTag', playerTag, start, defenseEnd);
+
+  // The report identifies which attacks were captured alongside the standings.
+  // For older reports without a group attack array, the same-season archive is the fallback.
+  const attacks = mergeBattles(Array.isArray(raw.attacks) ? reportAttacks : archivedAttacks, ownAttacks).rows;
+  const defenses = ownDefenses.length === expectedDefenses
+    ? ownDefenses
+    : mergeBattles(ownDefenses, archivedDefenses).rows;
+  reuseGroupBattleDetails(attacks, archivedAttacks, 500);
+  reuseGroupBattleDetails(defenses, archivedDefenses, 500);
+  const opposingAttacks = capturedGroupRows(raw.attacks, 'opponentTag', playerTag, start, defenseEnd);
+  reuseGroupBattleDetails(defenses, opposingAttacks, 500);
+  const battleViews = buildBattleViews(
+    member, attacks, defenses,
+    { expected: expectedAttacks, logFailures: Number(snapshotUnavailable && !Array.isArray(raw.attacks)) },
+    { expected: expectedDefenses, logFailures: Number(snapshotUnavailable) },
+  );
+  return {
+    battleViews: { ...battleViews, standing, defenseTrophyMode: 'earned' },
+    profile: { ...member, townHallLevel: null, trophies: null, clanName: '', clanTag: '', currentGroupTag: groupTag },
+    leagueTier: raw.leagueTier ?? null,
+    weekStart: week,
+    period: 'week',
+    fetchedAt,
+    groupReport: { groupTag, week },
   };
 }
 
@@ -834,13 +1001,15 @@ function recentPlayerBattles(logs, member, { start = -Infinity, end = Infinity, 
       continue;
     }
     if (battle.armyShareCode) battle.armySource = row.attack ? 'attack' : 'defense';
+    const trophySource = battle.trophies === null ? 'calculated' : 'api';
     if (battle.trophies === null) {
       const gained = attackerTrophies(battle.stars, battle.destruction);
       battle.trophies = !row.attack && mode === 'RANKED' ? 40 - gained : gained;
     }
-    const recorded = ledger[key].get(battle.id);
-    const current = { ...battle, battleType: mode, battleTimestamp: battle.timestamp };
-    ledger[key].set(battle.id, recorded ? mergeBattleDetails(current, recorded) : current);
+    const entryKey = `${mode}|${battle.id}`;
+    const recorded = ledger[key].get(entryKey);
+    const current = { ...battle, battleType: mode, battleTimestamp: battle.timestamp, trophySource };
+    ledger[key].set(entryKey, recorded ? mergeSameBattle(current, recorded) : current);
   }
 
   return { attackRows: [...ledger.attacks.values()], defenseRows: [...ledger.defenses.values()], malformed };
@@ -925,30 +1094,10 @@ export async function fetchRankedReport({
   if (!league) throw clientError(404, '该玩家在所选周未返回排位小组。官方玩家资料仅提供当前及上一届小组。');
   const scoped = (tag) => request(groupBattlePath(league.groupTag, league.seasonId, tag));
   const group = await scoped(playerTag);
-  if (!Array.isArray(group.members)) throw clientError(502, '官方 API 未返回小组成员名单。');
+  const members = groupMembers(group);
   const leagueTier = groupLeagueTier(request, player, playerTag, league);
 
-  const members = [...new Map(group.members.flatMap((member, index) => {
-    const tag = normalizeTag(member?.playerTag);
-    // The official member list is already sorted, including its own tiebreaks.
-    return tag ? [[tag, { ...member, playerTag: tag, rank: index + 1 }]] : [];
-  })).values()];
-  const groupResults = await inBatches(members, (member) =>
-    member.playerTag === playerTag ? group : scoped(member.playerTag));
-
-  const groupLedgers = new Map();
-  let malformedAttacks = 0;
-  let groupLogFailures = 0;
-  for (const [index, { value, status }] of groupResults.entries()) {
-    const member = members[index];
-    if (status || (!Array.isArray(value?.attackLogs) && memberAttackCount(member) > 0)) {
-      groupLogFailures += 1;
-    }
-    const attacks = readGroupBattles(value?.attackLogs, member);
-    const defenses = readGroupBattles(value?.defenseLogs, member, true);
-    groupLedgers.set(member.playerTag, { attacks, defenses });
-    malformedAttacks += attacks.malformed;
-  }
+  const { groupLedgers, malformedAttacks, groupLogFailures } = await collectGroupLedgers(members, playerTag, group, scoped);
 
   const selectedMember = members.find((member) => member.playerTag === playerTag)
     ?? { playerTag, playerName: player.name ?? playerTag };
@@ -1071,6 +1220,21 @@ function officialLocationId(value) {
   return Number.isSafeInteger(id) && id > 0 && id <= 2_147_483_647 ? id : null;
 }
 
+export function legendBoardLocation(value = 'global') {
+  const location = value === 'global' ? value : officialLocationId(value);
+  if (location === null) throw clientError(400, '请选择有效的传奇排行榜地区。');
+  return location;
+}
+
+export function legendBoardLimit(value = 200) {
+  if (!Number.isSafeInteger(value) || value < 1) throw clientError(400, '榜单人数须为正整数。');
+  return value;
+}
+
+export function legendBoardKey(location, limit) {
+  return `${legendBoardLocation(location)}:${legendBoardLimit(limit)}`;
+}
+
 function leaderboardRow(entry) {
   const rank = nonnegativeInteger(entry?.rank);
   const playerTag = normalizeTag(entry?.tag);
@@ -1091,33 +1255,69 @@ function leaderboardRow(entry) {
 }
 
 export async function fetchLegendLeaderboard(
-  { token, location: inputLocation = 'global' } = {},
+  { token, location: inputLocation = 'global', limit: inputLimit } = {},
   { fetchImpl = globalThis.fetch, requestIntervalMs = 100 } = {},
 ) {
-  const location = inputLocation === 'global' ? inputLocation : officialLocationId(inputLocation);
-  if (location === null) throw clientError(400, '请选择有效的传奇排行榜地区。');
+  const location = legendBoardLocation(inputLocation);
+  const requestedLimit = legendBoardLimit(inputLimit);
   const request = apiRequest(requiredApiToken(token), fetchImpl, requestIntervalMs);
-  const data = await request(`/locations/${location}/rankings/players?limit=200`).catch((error) => {
-    if (error.status === 404) throw clientError(404, '官方 API 暂未提供此地区的排行榜。');
-    throw error;
-  });
-  if (!Array.isArray(data.items)) throw clientError(502, '官方 API 未返回有效的传奇排行榜。');
-
-  const hasTierData = data.items.some((item) => item?.leagueTier?.id != null);
-  const candidates = data.items.flatMap((item) => {
-    const row = leaderboardRow(item);
-    return row ? [{ row, tierId: item.leagueTier?.id }] : [];
-  });
-  if (data.items.length && !candidates.length) {
-    throw clientError(502, '官方 API 未返回有效的传奇排行榜。');
+  const seenCursors = new Set();
+  const allRows = new Map();
+  const legendRows = new Map();
+  let hasTierData = false;
+  let paginationInterrupted = false;
+  let pageSize = requestedLimit;
+  let after = '';
+  for (;;) {
+    const params = new URLSearchParams({ limit: String(pageSize) });
+    if (after) params.set('after', after);
+    let items;
+    let next;
+    try {
+      const data = await request(`/locations/${location}/rankings/players?${params}`);
+      if (!Array.isArray(data.items)) throw clientError(502, '官方 API 未返回有效的传奇排行榜。');
+      items = data.items;
+      next = data.paging?.cursors?.after;
+    } catch (error) {
+      if (!after && pageSize > 200 && error.status === 400) {
+        pageSize = 200;
+        continue;
+      }
+      if (after && error.status !== 403) { paginationInterrupted = true; break; }
+      if (error.status === 404) throw clientError(404, '官方 API 暂未提供此地区的排行榜。');
+      throw error;
+    }
+    if (!items.length) {
+      paginationInterrupted = typeof next === 'string' && Boolean(next.trim());
+      break;
+    }
+    let furthestRank = 0;
+    const previousCount = allRows.size;
+    for (const item of items) {
+      const row = leaderboardRow(item);
+      if (!row) continue;
+      furthestRank = Math.max(furthestRank, row.rank);
+      if (row.rank > requestedLimit) continue;
+      if ((allRows.get(row.playerTag)?.rank ?? Infinity) > row.rank) allRows.set(row.playerTag, row);
+      const tierId = item.leagueTier?.id;
+      if (tierId != null) hasTierData = true;
+      if (tierId === legendOneTierId && (legendRows.get(row.playerTag)?.rank ?? Infinity) > row.rank) {
+        legendRows.set(row.playerTag, row);
+      }
+    }
+    if (!furthestRank) {
+      if (!after) throw clientError(502, '官方 API 未返回有效的传奇排行榜。');
+      paginationInterrupted = true;
+      break;
+    }
+    if (allRows.size >= requestedLimit || furthestRank >= requestedLimit || typeof next !== 'string' || !next.trim()) break;
+    if (seenCursors.has(next) || allRows.size === previousCount) { paginationInterrupted = true; break; }
+    seenCursors.add(next);
+    after = next;
   }
-  candidates.sort((a, b) => a.row.rank - b.row.rank);
-  const rows = new Map();
-  for (const { row, tierId } of candidates) {
-    if (hasTierData && tierId !== legendOneTierId) continue;
-    if (!rows.has(row.playerTag)) rows.set(row.playerTag, row);
-  }
-  return { location, fetchedAt: new Date().toISOString(), rows: [...rows.values()], hasTierData };
+  const selected = hasTierData ? legendRows : allRows;
+  const rows = [...selected.values()].sort((a, b) => a.rank - b.rank).slice(0, requestedLimit);
+  return { location, requestedLimit, fetchedAt: new Date().toISOString(), rows, hasTierData, paginationInterrupted };
 }
 
 export async function fetchLegendLocations(
@@ -1159,6 +1359,236 @@ function currentCompetitiveMode(logs, start, now) {
   return latestMode;
 }
 
+function recentHistory(logs, member, window) {
+  const { attackRows, defenseRows } = recentPlayerBattles(logs, member, window);
+  const deduplicate = (rows) => [...Map.groupBy(rows, (row) => row.battleType).values()]
+    .flatMap((matches) => mergeBattles(matches, []).rows);
+  const { attacks, defenses } = buildBattleViews(member, deduplicate(attackRows), deduplicate(defenseRows));
+  return { attacks, defenses };
+}
+
+export function mergePlayerHistory(recent, archived) {
+  function prepare(rows) {
+    return (Array.isArray(rows) ? rows : []).flatMap((row) => {
+      const battleType = battleMode(row?.battleType);
+      const opponentTag = normalizeTag(row?.opponentTag);
+      const epoch = timestamp(row?.timestamp || row?.battleTimestamp);
+      if ((battleType !== 'RANKED' && battleType !== 'LEGEND') || !opponentTag || !Number.isFinite(epoch)
+          || typeof row.id !== 'string' || !row.id
+          || !battleScore({ stars: row.stars, destructionPercentage: row.destruction })) return [];
+      return [{
+        ...row, battleType, opponentTag, timestamp: new Date(epoch).toISOString(),
+        trophies: rankedBattleTrophies(row.trophies ?? row.trophyDelta),
+        previousIds: Array.isArray(row.previousIds) ? row.previousIds : undefined,
+      }];
+    });
+  }
+
+  function merge(recentRows, archivedRows, defense) {
+    const current = Map.groupBy(prepare(recentRows), (row) => row.battleType);
+    const cached = Map.groupBy(prepare(archivedRows), (row) => row.battleType);
+    return ['RANKED', 'LEGEND']
+      .flatMap((mode) => mergeBattles(current.get(mode) ?? [], cached.get(mode) ?? []).rows)
+      .sort(newestFirst)
+      .map((row) => projectBattle(row, defense, row.opponentTag, row.opponentName));
+  }
+
+  return {
+    attacks: merge(recent?.attacks, archived?.attacks, false),
+    defenses: merge(recent?.defenses, archived?.defenses, true),
+  };
+}
+
+export function createLegendBattleLogCollector(
+  { token } = {},
+  { fetchImpl = globalThis.fetch, requestIntervalMs = 220, now } = {},
+) {
+  const request = apiRequest(requiredApiToken(token), fetchImpl, requestIntervalMs);
+  return async function collect({ playerTag: rawTag, archive } = {}) {
+    const playerTag = normalizeTag(rawTag);
+    if (!playerTag) throw clientError(400, '请输入有效的村庄标签。');
+    const legendRows = (rows) => (Array.isArray(rows) ? rows : []).filter((row) => battleMode(row?.battleType) === 'LEGEND');
+    const archived = { attacks: legendRows(archive?.attacks), defenses: legendRows(archive?.defenses) };
+    const hasArchive = archived.attacks.length > 0 || archived.defenses.length > 0;
+    const logs = await requestBattleLog(request, playerTag).catch((error) => {
+      if (error.status !== 404 || !hasArchive) throw error;
+      return [];
+    });
+    const epoch = (now ?? new Date()).getTime();
+    const recent = recentHistory(logs, { playerTag }, { battleType: 'LEGEND', start: previousLegendDayStart(epoch), end: epoch + 1 });
+    return hasArchive ? mergePlayerHistory(recent, archived) : recent;
+  };
+}
+
+function readWeeklyLedger(logs, member, defense, start, end) {
+  const ledger = readGroupBattles(logs, member, defense);
+  const rows = capturedGroupRows(ledger.rows, defense ? 'opponentTag' : 'playerTag', member.playerTag, start, end);
+  return { ...ledger, rows: mergeBattles(rows, []).rows };
+}
+
+function supplementWeeklyLedger(ledger, archived, owner, tag, expected, start, end) {
+  const known = capturedGroupRows(archived, owner, tag, start, end);
+  if (!known.length) return ledger;
+  return { ...ledger, rows: mergeBattles(ledger.rows, known).rows, present: ledger.present || expected !== null };
+}
+
+function temporaryStanding(member, attacks, defenses) {
+  return {
+    ...groupStanding(member, attacks, defenses),
+    clanTag: normalizeTag(member.clanTag),
+    clanName: typeof member.clanName === 'string' ? member.clanName.trim() : '',
+  };
+}
+
+// Group creation times and personal battle timestamps can differ by the duration of
+// a battle. Attach personal detail only to a mutually unique match in the same direction.
+export function weeklyPlayerBattleViews(board, history) {
+  const views = board.battleViews;
+  const start = Date.parse(`${board.week}T05:00:00Z`);
+  function records(direction, countKey) {
+    const group = views[direction] ?? [];
+    const expected = views.standing?.[countKey];
+    const personal = (history?.[direction] ?? []).filter(row => {
+      const time = Date.parse(row.battleTimestamp || row.timestamp);
+      return row.battleType === 'RANKED' && time >= start && time < start + 7 * day;
+    });
+    const indexed = groupByPair(personal);
+    const official = groupByPair(group);
+    const byId = new Map(personal.map(row => [row.id, row]));
+    const used = new Set();
+    const detailed = group.map(row => {
+      let match = byId.get(row.id);
+      if (!match) {
+        const key = pairKey(row);
+        const near = nearest(Date.parse(row.timestamp), indexed.get(key) ?? []);
+        if (near && nearest(near.epoch, official.get(key) ?? [])?.battle === row) match = near.battle;
+      }
+      if (!match || used.has(match.id)) return row;
+      used.add(match.id);
+      return { ...mergeBattleDetails(row, match), opponentName: row.opponentName || match.opponentName };
+    });
+    if (Number.isInteger(expected) && detailed.length === expected) return detailed.sort(newestFirst);
+    const additional = personal.filter(row => !used.has(row.id) && !(official.get(pairKey(row)) ?? [])
+      .some(entry => Math.abs(entry.epoch - Date.parse(row.timestamp)) <= matchWindow));
+    const combined = [...detailed, ...additional];
+    // An ambiguous time match must never inflate the detail count beyond the official count.
+    if (Number.isInteger(expected) && combined.length > expected) {
+      return personal.length > detailed.length && personal.length <= expected ? personal.sort(newestFirst) : detailed.sort(newestFirst);
+    }
+    return combined.sort(newestFirst);
+  }
+  return { ...views, attacks: records('attacks', 'attackCount'), defenses: records('defenses', 'defenseCount') };
+}
+
+// Keep both sources separately on disk. A later lookup can resolve a time ambiguity
+// without deleting either original observation or treating it as another battle.
+export function playerHistoryWithWeeklyBoards(personal, boards) {
+  if (!boards.length) return personal;
+  const weeks = new Map(boards.map(board => [board.week, { board, attacks: [], defenses: [] }]));
+  const history = { attacks: [], defenses: [] };
+  for (const direction of ['attacks', 'defenses']) {
+    for (const row of personal[direction] ?? []) {
+      const epoch = Date.parse(row.battleTimestamp || row.timestamp);
+      const scoped = row.battleType === 'RANKED' && Number.isFinite(epoch)
+        && weeks.get(weekMonday(epoch - rankedWeekStartOffset));
+      (scoped || history)[direction].push(row);
+    }
+  }
+  for (const scoped of weeks.values()) {
+    const { attacks, defenses } = weeklyPlayerBattleViews(scoped.board, scoped);
+    history.attacks.push(...attacks);
+    history.defenses.push(...defenses);
+  }
+  history.attacks.sort(newestFirst);
+  history.defenses.sort(newestFirst);
+  return history;
+}
+
+async function temporaryWeeklyLeaderboard(request, league, profile, start, end) {
+  if (!league) return { weeklyLeaderboardStatus: 'unavailable', weeklyLeaderboard: null };
+
+  try {
+    const group = await request(groupBattlePath(league.groupTag, league.seasonId, profile.playerTag), {
+      maxAttempts: 1, timeoutMs: 4_000,
+    });
+    const members = groupMembers(group);
+    const selected = members.find(({ playerTag }) => playerTag === profile.playerTag);
+    if (!selected) return { weeklyLeaderboardStatus: 'unavailable', weeklyLeaderboard: null };
+    const member = { ...selected, playerName: selected.playerName || profile.playerName };
+    const attacks = readWeeklyLedger(group.attackLogs, member, false, start, end);
+    const defenses = readWeeklyLedger(group.defenseLogs, member, true, start, end);
+    const emptyLedger = { rows: [], malformed: 0, present: false };
+    const own = temporaryStanding(member, attacks, defenses);
+    const rows = members.map((row) => row === selected ? own : temporaryStanding(row, emptyLedger, emptyLedger));
+    const battleViews = buildBattleViews(member, attacks.rows, defenses.rows,
+      { malformed: attacks.malformed }, { malformed: defenses.malformed });
+    return {
+      weeklyLeaderboardStatus: 'ready',
+      weeklyLeaderboard: {
+        ...league,
+        rows,
+        attacks: attacks.rows.map((attack) => ({ ...attack, army: decodeArmyShareCode(attack.armyShareCode) })),
+        battleViews: { ...battleViews, standing: own, defenseTrophyMode: 'earned' },
+      },
+    };
+  } catch (error) {
+    return { weeklyLeaderboardStatus: error.status === 404 ? 'unavailable' : 'error', weeklyLeaderboard: null };
+  }
+}
+
+// Only opening the full table requests the other members' official ledgers.
+// Scoring does not depend on fetching additional players outside this group.
+export async function fetchTemporaryGroupDetails(
+  { token, playerTag: rawTag, groupTag: rawGroup, week, seasonId } = {},
+  { fetchImpl = globalThis.fetch, requestIntervalMs = 100, snapshots, now = new Date() } = {},
+) {
+  const playerTag = normalizeTag(rawTag);
+  const groupTag = normalizeTag(rawGroup);
+  if (!playerTag || !groupTag || !Number.isSafeInteger(seasonId) || week !== weekMonday(now.getTime() - rankedWeekStartOffset)) {
+    throw clientError(400, '本周小组已变更，请重新查询村庄。');
+  }
+  const request = apiRequest(requiredApiToken(token), fetchImpl, requestIntervalMs);
+  const player = await request(playerPath(playerTag));
+  const league = findLeagueGroup(player, week, groupTag, { currentOnly: true });
+  if (player.leagueTier?.id === legendOneTierId || league?.seasonId !== seasonId) {
+    throw clientError(404, '该村庄当前的小组或周次已变更，请重新查询。');
+  }
+  const scoped = (tag) => request(groupBattlePath(groupTag, seasonId, tag));
+  const group = await scoped(playerTag);
+  const members = groupMembers(group);
+  const selected = members.find((member) => member.playerTag === playerTag);
+  if (!selected) throw clientError(404, '当前小组未返回该村庄，请重新查询。');
+  selected.playerName ||= player.name || playerTag;
+  const start = Date.parse(`${week}T05:00:00Z`);
+  const end = Math.min(start + 7 * day, now.getTime() + 1);
+  const { groupLedgers, groupLogFailures } = await collectGroupLedgers(members, playerTag, group, scoped,
+    (logs, member, defense) => readWeeklyLedger(logs, member, defense, start, end));
+  let cached;
+  try {
+    cached = await snapshots?.read(league);
+  } catch {
+    console.warn('Could not read cached weekly group ledgers.');
+  }
+  const cachedAttacks = groupByOwner(cached?.attacks ?? [], 'playerTag');
+  const cachedDefenses = groupByOwner(cached?.defenses ?? [], 'opponentTag');
+  const attacks = [];
+  const rows = members.map((member) => {
+    const tag = member.playerTag;
+    const ledgers = groupLedgers.get(tag);
+    const attack = supplementWeeklyLedger(ledgers.attacks, cachedAttacks.get(tag), 'playerTag', tag, memberAttackCount(member), start, end);
+    const defense = supplementWeeklyLedger(ledgers.defenses, cachedDefenses.get(tag), 'opponentTag', tag, memberDefenseCount(member), start, end);
+    attacks.push(...attack.rows);
+    return temporaryStanding(member, attack, defense);
+  });
+  return {
+    ...league,
+    rows,
+    attacks: attacks.sort(newestFirst),
+    leagueTier: leagueTierInfo(player.leagueTier),
+    partial: groupLogFailures > 0 || rows.some((row) => row.attackTrophies === null || row.defenseTrophies === null),
+  };
+}
+
 export async function fetchTemporaryPlayer(
   { token, playerTag: rawTag } = {},
   { fetchImpl = globalThis.fetch, requestIntervalMs = 100, now } = {},
@@ -1181,21 +1611,26 @@ export async function fetchTemporaryPlayer(
   const leagueTier = player.leagueTier?.id === firstLeagueTierId
     ? { id: firstLeagueTierId, name: '未进入联赛', iconUrl: null, attackLimit: null }
     : leagueTierInfo(player.leagueTier);
-  let logAvailable = true;
-  const logs = await requestBattleLog(request, playerTag).catch((error) => {
-    if (error.status !== 404) throw error;
-    logAvailable = false;
-    return [];
-  });
   const epoch = (now ?? new Date()).getTime();
   const weekStart = weekMonday(epoch - rankedWeekStartOffset);
   const start = Date.parse(`${weekStart}T05:00:00Z`);
+  const end = Math.min(start + 7 * day, epoch + 1);
   const confirmedLegend = leagueTier?.id === legendOneTierId;
+  const league = confirmedLegend ? null : findLeagueGroup(player, weekStart, undefined, { currentOnly: true });
+  let logAvailable = true;
+  const [logs, weekly] = await Promise.all([
+    requestBattleLog(request, playerTag).catch((error) => {
+      if (error.status !== 404) throw error;
+      logAvailable = false;
+      return [];
+    }),
+    temporaryWeeklyLeaderboard(request, league, profile, start, end),
+  ]);
   const legendMode = confirmedLegend || (!leagueTier && !profile.currentGroupTag
     && currentCompetitiveMode(logs, start, epoch) === 'LEGEND');
   const window = legendMode
-    ? { battleType: 'LEGEND' }
-    : { battleType: 'RANKED', start, end: Math.min(start + 7 * day, epoch + 1) };
+    ? { battleType: 'LEGEND', end: epoch + 1 }
+    : { battleType: 'RANKED', start, end };
   const { attackRows, defenseRows, malformed } = recentPlayerBattles(logs, profile, window);
   const attacks = mergeBattles(attackRows, []).rows;
   const defenses = mergeBattles(defenseRows, []).rows;
@@ -1212,6 +1647,8 @@ export async function fetchTemporaryPlayer(
   };
   if (legendMode) {
     Object.assign(battleViews, legendProfileStats(player, confirmedLegend ? profile.trophies : null));
+  } else if (weekly.weeklyLeaderboard) {
+    battleViews.standing = weekly.weeklyLeaderboard.battleViews.standing;
   } else if (logAvailable) {
     const attackSummary = summarizeStandingSide({ rows: attacks, present: true, malformed: 0 }, null);
     const defenseSummary = summarizeStandingSide({ rows: defenses, present: true, malformed: 0 }, null);
@@ -1224,6 +1661,8 @@ export async function fetchTemporaryPlayer(
   }
   return {
     battleViews,
+    ...weekly,
+    history: recentHistory(logs, profile, { end: epoch + 1 }),
     profile,
     leagueTier,
     weekStart,

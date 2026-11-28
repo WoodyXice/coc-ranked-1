@@ -1,6 +1,8 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { mergePlayerHistory, playerHistoryWithWeeklyBoards } from "../collector.mjs";
+import { previousLegendDayStart } from "../insights.mjs";
 import { migrations as defaultMigrations } from "./migrations.mjs";
 
 // Runs fn inside one write transaction and rolls back if it throws.
@@ -26,6 +28,12 @@ function text(value) {
 
 function leagueKey(league) {
   return [String(league.groupTag), String(league.seasonId)];
+}
+
+function normalizePlayerTag(value) {
+  const tag = text(value)?.trim().toUpperCase().replace(/^#/, "") ?? "";
+  if (!/^[A-Z0-9]{2,20}$/.test(tag)) throw new Error("请输入有效的村庄标签。");
+  return "#" + tag;
 }
 
 function createSnapshotStore(db) {
@@ -105,6 +113,132 @@ function createReportStore(db) {
   };
 }
 
+function historyRecord(row) {
+  const {
+    id, previousIds, timestamp, battleTimestamp, durationSeconds, opponentTag, opponentName,
+    stars, destruction, trophies, trophyDelta, armyShareCode, armySource, army, battleType, trophySource,
+  } = row;
+  return {
+    id, previousIds, timestamp, battleTimestamp, durationSeconds, opponentTag, opponentName,
+    stars, destruction, trophies, trophyDelta, armyShareCode, armySource, battleType, trophySource,
+    ...(!armyShareCode && army ? { army } : {}),
+  };
+}
+
+function createWeeklyLedgerStore(db) {
+  const select = db.prepare("SELECT week, group_tag, season_id, data FROM player_weekly_ledgers WHERE player_tag = ? ORDER BY updated_at");
+  const prior = db.prepare("SELECT data FROM player_weekly_ledgers WHERE player_tag = ? AND week = ? AND group_tag = ? AND season_id = ?");
+  const write = db.prepare(`
+    INSERT INTO player_weekly_ledgers (player_tag, week, group_tag, season_id, updated_at, data) VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT (player_tag, week, group_tag, season_id) DO UPDATE SET
+      updated_at = MAX(updated_at, excluded.updated_at), data = excluded.data
+  `);
+  return {
+    read(player) {
+      return select.all(player).map(row => ({ week: row.week, battleViews: JSON.parse(row.data) }));
+    },
+    save(player, board, fetchedAt) {
+      if (board?.battleViews?.playerTag !== player) return;
+      const views = board.battleViews;
+      const key = [player, board.week, board.groupTag, board.seasonId];
+      const stored = prior.get(...key);
+      const saved = stored ? JSON.parse(stored.data) : {};
+      const rows = mergePlayerHistory(views, saved);
+      const counts = {};
+      for (const field of ["attackCount", "defenseCount"]) {
+        const values = [saved.standing?.[field], views.standing?.[field]].filter(Number.isInteger);
+        counts[field] = values.length ? Math.max(...values) : null;
+      }
+      const data = JSON.stringify({ playerTag: player, standing: counts,
+        attacks: rows.attacks.map(historyRecord), defenses: rows.defenses.map(historyRecord) });
+      if (data !== stored?.data) write.run(...key, fetchedAt, data);
+    },
+  };
+}
+
+function createPlayerHistoryStore(db, weeklyLedgers) {
+  const select = db.prepare("SELECT direction, battle_type, id, data FROM player_history WHERE player_tag = ?");
+  const selectRecentLegend = db.prepare(`
+    SELECT direction, data FROM player_history WHERE player_tag = ? AND battle_type = 'LEGEND'
+      AND julianday(COALESCE(NULLIF(data ->> 'battleTimestamp', ''), data ->> 'timestamp')) >= julianday(?)
+  `);
+  const upsert = db.prepare(`
+    INSERT INTO player_history (player_tag, direction, battle_type, id, updated_at, data) VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT (player_tag, direction, battle_type, id) DO UPDATE SET updated_at = excluded.updated_at, data = excluded.data
+  `);
+  const remove = db.prepare(
+    "DELETE FROM player_history WHERE player_tag = ? AND direction = ? AND battle_type = ? AND id = ?",
+  );
+  const key = (direction, battleType, id) => JSON.stringify([direction, battleType, id]);
+  function readRows(player, stored) {
+    const history = { attacks: [], defenses: [] };
+    for (const entry of select.all(player)) {
+      stored?.set(key(entry.direction, entry.battle_type, entry.id), entry);
+      history[entry.direction].push(JSON.parse(entry.data));
+    }
+    return history;
+  }
+
+  return {
+    readRecentLegend(playerTag, epoch = Date.now()) {
+      const history = { attacks: [], defenses: [] };
+      const since = new Date(previousLegendDayStart(epoch)).toISOString();
+      for (const { direction, data } of selectRecentLegend.all(normalizePlayerTag(playerTag), since)) {
+        history[direction].push(JSON.parse(data));
+      }
+      return history;
+    },
+    read(playerTag) {
+      const player = normalizePlayerTag(playerTag);
+      return playerHistoryWithWeeklyBoards(readRows(player), weeklyLedgers?.read(player) ?? []);
+    },
+    merge(playerTag, recent, fetchedAt = new Date().toISOString(), weekly) {
+      const player = normalizePlayerTag(playerTag);
+      return transaction(db, () => {
+        const stored = new Map();
+        const archived = readRows(player, stored);
+        const merged = mergePlayerHistory(recent, archived);
+        for (const [direction, rows] of Object.entries(merged)) {
+          for (const row of rows) {
+            const id = key(direction, row.battleType, row.id);
+            const current = stored.get(id);
+            const data = JSON.stringify(historyRecord(row));
+            if (current?.data !== data) upsert.run(player, direction, row.battleType, row.id, fetchedAt, data);
+            stored.delete(id);
+          }
+        }
+        for (const { direction, battle_type: mode, id } of stored.values()) remove.run(player, direction, mode, id);
+        weeklyLedgers?.save(player, weekly, fetchedAt);
+        return playerHistoryWithWeeklyBoards(merged, weeklyLedgers?.read(player) ?? []);
+      });
+    },
+  };
+}
+
+function createTemporaryQueryStore(db) {
+  const limit = 50;
+  const select = db.prepare(`
+    SELECT player_tag AS playerTag, player_name AS playerName, last_queried_at AS lastQueriedAt
+    FROM temporary_queries ORDER BY id DESC
+  `);
+  // Replacing a tag assigns it a new ID so repeated lookups move to the top, even with identical timestamps.
+  const record = db.prepare("INSERT OR REPLACE INTO temporary_queries (player_tag, player_name, last_queried_at) VALUES (?, ?, ?)");
+  const prune = db.prepare(`
+    DELETE FROM temporary_queries WHERE id IN (SELECT id FROM temporary_queries ORDER BY id DESC LIMIT -1 OFFSET ?)
+  `);
+  return {
+    list: () => select.all(),
+    record({ playerTag, playerName, lastQueriedAt = new Date().toISOString() }) {
+      const tag = normalizePlayerTag(playerTag);
+      const name = text(playerName)?.trim() || tag;
+      transaction(db, () => {
+        record.run(tag, name, lastQueriedAt);
+        prune.run(limit);
+      });
+    },
+  };
+}
+
 function backupFile(file, version) {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   return `${file}.backup-v${version}-${stamp}.db`;
@@ -157,6 +291,8 @@ export function openDatabase(file, { migrations } = {}) {
       schemaVersion: migration.to,
       snapshots: createSnapshotStore(db),
       reports: createReportStore(db),
+      ...(migration.to >= 3 ? { playerHistory: createPlayerHistoryStore(db, migration.to >= 5 ? createWeeklyLedgerStore(db) : null) } : {}),
+      ...(migration.to >= 4 ? { temporaryQueries: createTemporaryQueryStore(db) } : {}),
       getMeta: (key) => getMeta.get(key)?.value,
       setMeta: (key, value) => setMeta.run(key, String(value)),
       close() {

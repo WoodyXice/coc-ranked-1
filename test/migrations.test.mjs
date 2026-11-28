@@ -52,6 +52,46 @@ test("a new database is created at the latest version without a backup", async (
   assert(!(await readdir(directory)).some((name) => name.includes(".backup-")));
 });
 
+test("upgrading v2 adds player history and retains group snapshots, notes and accounts", async (context) => {
+  const { file } = await tempFile(context);
+  const v2 = { migrations: migrations.slice(0, 2) };
+  withDatabase(file, v2, (database) => {
+    assert.equal(database.playerHistory, undefined);
+    database.snapshots.write(league, [{ id: "prior-attack" }], [{ id: "prior-defense" }]);
+    database.reports.save("#MOCK1", { ...league, source: "api" });
+    database.db.prepare("INSERT INTO defense_notes VALUES (?, ?, ?, ?)").run("#MOCK1", "prior-defense", "fixture note", "date");
+    database.db.prepare("INSERT INTO settings VALUES (?, ?, ?)").run("developer_token", "fixture ciphertext", 1);
+  });
+  withDatabase(file, {}, (database) => {
+    assert.equal(database.migration.from, 2);
+    assert.equal(database.migration.to, latest);
+    assert.equal(userVersion(database.migration.backup), 2);
+    assert.deepEqual(database.playerHistory.merge("#MOCK1", {}), { attacks: [], defenses: [] });
+    assert.equal(database.snapshots.read(league).defenses[0].id, "prior-defense");
+    assert.equal(database.reports.load("#MOCK1").raw.week, league.week);
+    assert.equal(database.db.prepare("SELECT note FROM defense_notes").get().note, "fixture note");
+    assert.equal(database.db.prepare("SELECT value FROM settings WHERE key = 'developer_token'").get().value, "fixture ciphertext");
+  });
+});
+
+test("upgrading v3 adds recent queries and preserves collected personal battles", async (context) => {
+  const { file } = await tempFile(context);
+  const v3 = { migrations: migrations.slice(0, 3) };
+  withDatabase(file, v3, (database) => {
+    assert.equal(database.temporaryQueries, undefined);
+    database.playerHistory.merge("#MOCK1", { attacks: [{
+      id: "old-attack", battleType: "RANKED", timestamp: "2026-11-24T00:00:00.000Z",
+      opponentTag: "#MOCK2", stars: 3, destruction: 100,
+    }] });
+  });
+  withDatabase(file, {}, (database) => {
+    assert.equal(database.migration.from, 3);
+    assert.equal(userVersion(database.migration.backup), 3);
+    assert.deepEqual(database.temporaryQueries.list(), []);
+    assert.equal(database.playerHistory.merge("#MOCK1", {}).attacks[0].id, "old-attack");
+  });
+});
+
 test("a later migration backs up the old file, keeps data and bumps the version", async (context) => {
   const { directory, file } = await tempFile(context);
   withDatabase(file, {}, (database) => database.snapshots.write(league, [{ id: "a1", stars: 3 }], []));

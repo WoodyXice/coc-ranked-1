@@ -60,6 +60,196 @@ export function weekWinRate(standing) {
   return Number.isInteger(wins) && Number.isInteger(losses) && wins + losses > 0 ? wins / (wins + losses) : null;
 }
 
+export function playerStrategyStats(attacks = []) {
+  const groups = new Map();
+  for (const attack of attacks) {
+    if (!attack || typeof attack !== "object" || Array.isArray(attack)) continue;
+    const label = typeof attack.strategy === "string" ? attack.strategy.trim() : "";
+    const strategy = label && !/^(?:未分类|未识别(?:流派)?|未知|unknown|unclassified)$/i.test(label) ? label : null;
+    const stats = groups.get(strategy) ?? {
+      strategy, count: 0, scoredCount: 0, threeStarCount: 0, destructionCount: 0, destructionTotal: 0,
+    };
+    stats.count += 1;
+    if (Number.isInteger(attack.stars) && attack.stars >= 0 && attack.stars <= 3) {
+      stats.scoredCount += 1;
+      stats.threeStarCount += Number(attack.stars === 3);
+    }
+    if (Number.isFinite(attack.destruction) && attack.destruction >= 0 && attack.destruction <= 100) {
+      stats.destructionCount += 1;
+      stats.destructionTotal += attack.destruction;
+    }
+    groups.set(strategy, stats);
+  }
+  return [...groups.values()].map(({ destructionTotal, ...stats }) => ({
+    ...stats,
+    threeStarRate: stats.scoredCount ? stats.threeStarCount / stats.scoredCount : null,
+    averageDestruction: stats.destructionCount ? destructionTotal / stats.destructionCount : null,
+  })).sort((a, b) => b.count - a.count
+    || Number(a.strategy === null) - Number(b.strategy === null)
+    || (a.strategy ?? "").localeCompare(b.strategy ?? "", "zh-CN"));
+}
+
+export function playerStrategySamples(attacks, strategy) {
+  const battles = (attacks ?? []).filter(battle => typeof battle?.strategy === "string" && battle.strategy.trim() === strategy
+    && Number.isInteger(battle.stars) && battle.stars >= 0 && battle.stars <= 3);
+  const time = battle => Date.parse(battle.battleTimestamp || battle.timestamp) || 0;
+  const destruction = battle => Number.isFinite(battle.destruction) && battle.destruction >= 0 && battle.destruction <= 100
+    ? battle.destruction : -1;
+  const recent = (a, b) => time(b) - time(a);
+  return {
+    triple: battles.filter(battle => battle.stars === 3).sort(recent)[0],
+    near: battles.filter(battle => battle.stars < 3).sort((a, b) =>
+      b.stars - a.stars || destruction(b) - destruction(a) || recent(a, b))[0],
+  };
+}
+
+const leagueDayMs = 86_400_000;
+const legendResetOffsetMs = 5 * 3_600_000;
+const legendDailyLimit = 8;
+
+export function legendDayNumber(epoch) {
+  return Math.floor((epoch - legendResetOffsetMs) / leagueDayMs);
+}
+
+export function nextLegendDayStart(epoch) {
+  return (legendDayNumber(epoch) + 1) * leagueDayMs + legendResetOffsetMs;
+}
+
+export function previousLegendDayStart(epoch) {
+  return (legendDayNumber(epoch) - 1) * leagueDayMs + legendResetOffsetMs;
+}
+
+export function freshLegendSnapshot(capturedAt, now = Date.now()) {
+  const epoch = typeof capturedAt === "number" ? capturedAt : Date.parse(capturedAt);
+  return Number.isFinite(epoch) && epoch <= now && now - epoch < 10 * 60_000
+    && legendDayNumber(epoch) === legendDayNumber(now);
+}
+
+function battleInstant(battle) {
+  return Date.parse(battle.battleTimestamp || battle.timestamp);
+}
+
+function recentLegendDays(battles, epoch, firstDay) {
+  const days = new Map();
+  for (const battle of battles) {
+    if (battle?.battleType !== "LEGEND") continue;
+    const time = battleInstant(battle);
+    const day = legendDayNumber(time);
+    if (!Number.isFinite(day) || day < firstDay || time > epoch) continue;
+    const rows = days.get(day) ?? [];
+    rows.push(battle);
+    days.set(day, rows);
+  }
+  return days;
+}
+
+function fullDayTrophies(rows, min, max) {
+  if (rows?.length !== legendDailyLimit) return null;
+  let total = 0;
+  for (const { trophyDelta } of rows) {
+    if (!Number.isInteger(trophyDelta) || trophyDelta < min || trophyDelta > max) return null;
+    total += trophyDelta;
+  }
+  return total;
+}
+
+export function legendPlayerMetrics(history, now = new Date()) {
+  const epoch = now.getTime();
+  const yesterday = legendDayNumber(epoch) - 1;
+  const attacks = recentLegendDays(history?.attacks ?? [], epoch, yesterday);
+  const defenses = recentLegendDays(history?.defenses ?? [], epoch, yesterday);
+  const recentAttacks = [...attacks.values()].flatMap((rows) =>
+    rows.toSorted((a, b) => battleInstant(b) - battleInstant(a)).slice(0, legendDailyLimit));
+  const strategies = playerStrategyStats(recentAttacks);
+  const named = strategies.filter(({ strategy }) => strategy && strategy !== "其他");
+  const common = named[0];
+  const attackCount = strategies.reduce((sum, item) => sum + item.scoredCount, 0);
+  const threeStarCount = strategies.reduce((sum, item) => sum + item.threeStarCount, 0);
+
+  let attackTotal = 0;
+  let attackDays = 0;
+  let net = 0;
+  let completedDays = 0;
+  for (const [day, rows] of attacks) {
+    const gained = fullDayTrophies(rows, 0, 40);
+    if (gained === null) continue;
+    attackTotal += gained;
+    attackDays += 1;
+    const lost = fullDayTrophies(defenses.get(day), -40, 0);
+    if (lost === null) continue;
+    net += gained + lost;
+    completedDays += 1;
+  }
+
+  return {
+    strategy: common?.strategy ?? null,
+    ...(!common && { strategyStatus: !recentAttacks.length ? 'no-attacks'
+      : recentAttacks.some(attack => attack.army?.troops?.length) ? 'unrecognized' : 'no-army' }),
+    strategyCount: common?.count ?? 0,
+    strategies: named.map(({ strategy, count, scoredCount, threeStarCount }) => ({ strategy, count, scoredCount, threeStarCount })),
+    attackCount,
+    threeStarRate: attackCount ? threeStarCount / attackCount : null,
+    averageDailyAttack: attackDays ? attackTotal / attackDays : null,
+    attackDays,
+    averageDailyNet: completedDays ? net / completedDays : null,
+    completedDays,
+  };
+}
+
+export function compareRows(a, b, key, ascending) {
+  const first = a[key];
+  const second = b[key];
+  if (typeof first === "string" && typeof second === "string" && first && second) {
+    return ascending ? first.localeCompare(second, "zh-CN") : second.localeCompare(first, "zh-CN");
+  }
+  if (typeof first === "string" && first) return -1;
+  if (typeof second === "string" && second) return 1;
+  if (!Number.isFinite(first)) return Number.isFinite(second) ? 1 : 0;
+  if (!Number.isFinite(second)) return -1;
+  return ascending ? first - second : second - first;
+}
+
+const legendMetricColumns = new Set(["strategy", "threeStarRate", "averageDailyAttack", "averageDailyNet"]);
+
+export function sortLegendPlayers(rows, metricsByTag, key = "rank", direction = "asc") {
+  const values = legendMetricColumns.has(key) ? (row) => metricsByTag.get(row.playerTag) ?? {} : (row) => row;
+  return rows.toSorted((a, b) => compareRows(values(a), values(b), key, direction === "asc")
+    || a.rank - b.rank || a.playerTag.localeCompare(b.playerTag));
+}
+
+function compareStrategyResults(a, b) {
+  return b.threeStarRate - a.threeStarRate || b.scoredCount - a.scoredCount;
+}
+
+export function legendStrategyLeaderboard(rows, metricsByTag) {
+  const groups = new Map();
+  for (const { playerTag, playerName, rank } of rows) {
+    for (const { strategy, scoredCount, threeStarCount } of metricsByTag.get(playerTag)?.strategies ?? []) {
+      if (!(scoredCount > 0)) continue;
+      let group = groups.get(strategy);
+      if (!group) {
+        group = { strategy, scoredCount: 0, threeStarCount: 0, playerCount: 0, topPlayers: [] };
+        groups.set(strategy, group);
+      }
+      group.scoredCount += scoredCount;
+      group.threeStarCount += threeStarCount;
+      group.playerCount++;
+      const player = { playerTag, playerName, rank, scoredCount, threeStarCount, threeStarRate: threeStarCount / scoredCount };
+      const leaders = group.topPlayers;
+      const position = leaders.findIndex(other =>
+        (compareStrategyResults(player, other) || player.rank - other.rank || playerTag.localeCompare(other.playerTag)) < 0);
+      if (position >= 0) {
+        leaders.splice(position, 0, player);
+        if (leaders.length > 3) leaders.pop();
+      } else if (leaders.length < 3) leaders.push(player);
+    }
+  }
+  return [...groups.values()].map(group => ({
+    ...group,
+    threeStarRate: group.threeStarCount / group.scoredCount,
+  })).sort((a, b) => compareStrategyResults(a, b) || a.strategy.localeCompare(b.strategy, "zh-CN"));
+}
+
 function carriedTotal(item) {
   return item.players.reduce((sum, player) => sum + player.carried, 0);
 }

@@ -1,0 +1,108 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { createLegendRequestCache } from "../src/legend-request-cache.mjs";
+
+test("an expired local board is readable during the network refresh and is cleared across a league day", async () => {
+  let now = Date.parse("2026-11-28T06:00:00Z"), fail;
+  const saved = { fromWorkbook: true, revalidate: true, fetchedAt: new Date(now - 700_000).toISOString() };
+  const calls = [];
+  const cache = createLegendRequestCache(async (_key, force) => {
+    calls.push(force);
+    if (!force && calls.length === 1) return saved;
+    return new Promise((_resolve, reject) => { fail = reject; });
+  }, () => now);
+  const first = cache.request("global");
+  await new Promise(setImmediate);
+  assert.equal(cache.read("global").data, saved);
+  assert.equal(cache.read("global").status, "loading");
+  fail(new Error("offline"));
+  await first;
+  assert.equal(cache.read("global").data, saved);
+  assert.deepEqual(calls, [false, true]);
+  now += 86_400_000;
+  const next = cache.request("global");
+  assert.equal(cache.read("global").data, null);
+  await new Promise(setImmediate);
+  fail(new Error("offline"));
+  await next;
+  assert.equal(cache.read("global").data, null);
+});
+
+test("a leaderboard snapshot is reused for ten minutes and stays visible while revalidating", async () => {
+  let now = 0;
+  let loads = 0;
+  const cache = createLegendRequestCache(() => ({ revision: ++loads }), () => now);
+  assert.equal(cache.read("global").status, "idle");
+  await cache.request("global");
+  now = 599_999;
+  const previous = cache.read("global");
+  assert.equal(cache.request("global"), null);
+  assert.equal(cache.read("global"), previous);
+  assert.equal(loads, 1);
+
+  now = 600_000;
+  const refresh = cache.request("global");
+  assert.equal(cache.read("global").status, "loading");
+  assert.equal(cache.read("global").data, previous.data);
+  await refresh;
+  assert.deepEqual(cache.read("global").data, { revision: 2 });
+  assert.equal(cache.read("global").fetchedAt, now);
+});
+
+test("leaderboard requests share an in-flight fetch per location, and manual refresh can bypass the fresh cache", async () => {
+  const calls = [];
+  const cache = createLegendRequestCache(async (location, force) => {
+    calls.push([location, force]);
+    return { location };
+  });
+  const first = cache.request("global");
+  assert.equal(cache.request("global"), first);
+  assert.equal(cache.request("global", true), first);
+  await Promise.all([first, cache.request(32000000)]);
+  assert.deepEqual(calls, [["global", false], [32000000, false]]);
+  assert.deepEqual(cache.read(32000000).data, { location: 32000000 });
+  assert.equal(cache.request(32000000), null);
+
+  await cache.request("global", true);
+  assert.deepEqual(calls, [["global", false], [32000000, false], ["global", true]]);
+});
+
+test("both leaderboard freshness windows stop at the league-day boundary and respect the source capture time", async () => {
+  let now = Date.parse("2026-11-28T04:59:59Z");
+  let loads = 0;
+  const cache = createLegendRequestCache(() => {
+    loads++;
+    return { fetchedAt: new Date(now - 1000).toISOString() };
+  }, () => now);
+  await cache.request("global");
+  assert.equal(cache.read("global").fetchedAt, now - 1000);
+  assert.equal(cache.request("global"), null);
+  now += 2000;
+  await cache.request("global");
+  assert.equal(loads, 2);
+  assert.equal(cache.request("global"), null);
+});
+
+test("a failed refresh retains the old leaderboard and retries after an expired tab return", async () => {
+  let now = 0;
+  let failure = false;
+  const cache = createLegendRequestCache(() => {
+    if (failure) throw new Error("限流");
+    return ["existing player"];
+  }, () => now);
+  await cache.request("global");
+  const previous = cache.read("global");
+  now = 600_001;
+  failure = true;
+  await cache.request("global");
+  const state = cache.read("global");
+  assert.equal(state.status, "error");
+  assert.equal(state.error, "限流");
+  assert.equal(state.data, previous.data);
+  assert.equal(state.fetchedAt, previous.fetchedAt);
+
+  failure = false;
+  await cache.request("global");
+  assert.equal(cache.read("global").status, "ready");
+  assert.equal(cache.read("global").fetchedAt, now);
+});

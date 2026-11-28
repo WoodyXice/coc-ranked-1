@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import "./update-notice.css";
+
+const announcedVersions = new Set();
 
 const actionByStatus = {
   idle: ["checkForUpdates", "检查更新"],
   current: ["checkForUpdates", "重新检查"],
-  available: ["downloadUpdate", "下载更新"],
   downloaded: ["installUpdate", "重启并安装"],
 };
 
@@ -27,7 +29,7 @@ const statusText = {
 };
 
 function versionLabel(version) {
-  if (!version) return "";
+  if (typeof version !== "string" || !version) return "";
   return version.startsWith("v") ? version : "v" + version;
 }
 
@@ -38,6 +40,11 @@ export default function UpdatePanel({ busy }) {
   const [feedback, setFeedback] = useState("");
   const revision = useRef(0);
   const actionPending = useRef(false);
+  const updatePanel = useRef(null);
+  const updateTrigger = useRef(null);
+  const notice = useRef(null);
+  const previousFocus = useRef(null);
+  const noticeId = useId();
 
   useEffect(() => {
     if (!api?.getUpdateState) return;
@@ -58,8 +65,6 @@ export default function UpdatePanel({ busy }) {
       unsubscribe?.();
     };
   }, [api]);
-
-  if (!api?.getUpdateState) return null;
 
   async function run(action) {
     if (actionPending.current || typeof api[action] !== "function") return;
@@ -83,10 +88,7 @@ export default function UpdatePanel({ busy }) {
     }
   }
 
-  const status = pending === "checkForUpdates" ? "checking"
-    : pending === "downloadUpdate" ? "downloading"
-      : pending === "installUpdate" ? "installing"
-        : state?.status ?? (feedback ? "error" : undefined);
+  const status = state?.status ?? (feedback ? "error" : undefined);
   const version = versionLabel(state?.currentVersion);
   const nextVersion = versionLabel(state?.availableVersion);
   const hasUpdate = ["available", "downloading", "downloaded", "installing"].includes(status)
@@ -95,39 +97,90 @@ export default function UpdatePanel({ busy }) {
     ? Math.min(100, Math.max(0, state.progress)) : undefined;
   const feedbackText = status === state?.status && state?.message ? state.message
     : statusText[status] ?? (feedback ? "" : "正在读取更新状态…");
-  const canOpenReleases = typeof api.openReleasePage === "function"
-    && ["unsupported", "development", "error"].includes(status);
+  const portable = state?.mode === "portable";
+  const releaseButtonLabel = portable ? "打开下载页" : "打开 GitHub 发布页";
+  const offerAction = portable ? "openReleasePage" : "downloadUpdate";
+  const offerLabel = portable ? releaseButtonLabel : "下载更新";
+  const canOpenReleases = typeof api?.openReleasePage === "function"
+    && (portable ? status !== "available" : ["unsupported", "development", "error"].includes(status));
   const [action, actionLabel] = status === "error"
     ? retryByOperation[state?.failedOperation] ?? retryByOperation.check
-    : actionByStatus[status] ?? [];
+    : status === "available" ? [offerAction, offerLabel] : actionByStatus[status] ?? [];
   const busyInstalling = action === "installUpdate" && busy;
+  const canOfferUpdate = status === "available" && Boolean(nextVersion) && typeof api?.[offerAction] === "function";
+
+  useEffect(() => {
+    const dialog = notice.current;
+    if (typeof dialog?.showModal !== "function") return;
+    if (!canOfferUpdate) {
+      if (dialog.open) dialog.close();
+      return;
+    }
+    if (announcedVersions.has(nextVersion)) return;
+    if (!dialog.open) {
+      previousFocus.current = document.activeElement;
+      dialog.returnValue = "";
+      dialog.showModal();
+    }
+    announcedVersions.add(nextVersion);
+  }, [canOfferUpdate, nextVersion]);
+
+  function closeNotice(event) {
+    if (event.currentTarget.open) return;
+    const previous = previousFocus.current;
+    previousFocus.current = null;
+    const target = event.currentTarget.returnValue !== "action" && previous?.isConnected && previous !== document.body
+      ? previous : updateTrigger.current;
+    target?.focus({ preventScroll: true });
+  }
+
+  function runNoticeAction() {
+    if (!canOfferUpdate || actionPending.current) return;
+    if (updatePanel.current) updatePanel.current.open = true;
+    notice.current?.close("action");
+    void run(offerAction);
+  }
+
+  if (!api?.getUpdateState) return null;
 
   return (
-    <details className="update-panel">
-      <summary className={hasUpdate ? "update-trigger update-trigger-available" : "update-trigger"}>
-        {hasUpdate ? "有新版本" : "软件更新"}{version && <span>{version}</span>}
-      </summary>
-      <section className="update-card" aria-label="软件更新">
-        {nextVersion && hasUpdate && <p className="update-version">新版本 <strong>{nextVersion}</strong></p>}
-        <p className="update-status" role="status">{feedbackText}</p>
-        {status === "downloading" && (
-          <div className="update-progress">
-            <progress max={100} value={progress} aria-label="下载更新进度" />
-            {progress !== undefined && <span>{Math.round(progress)}%</span>}
-          </div>
-        )}
-        {feedback && <p className="update-error" role="alert">{feedback}</p>}
-        {(action || canOpenReleases) && (
-          <div className="update-actions">
-            {action && <button type="button" className={hasUpdate ? "primary" : undefined}
-              title={busyInstalling ? "请等当前查询或保存完成。" : undefined}
-              disabled={!!pending || busyInstalling || typeof api[action] !== "function"}
-              onClick={() => void run(action)}>{actionLabel}</button>}
-            {canOpenReleases && <button type="button" disabled={!!pending}
-              onClick={() => void run("openReleasePage")}>打开 GitHub 发布页</button>}
-          </div>
-        )}
-      </section>
-    </details>
+    <>
+      <details className="update-panel" ref={updatePanel}>
+        <summary ref={updateTrigger} className={hasUpdate ? "update-trigger update-trigger-available" : "update-trigger"}
+          aria-label={["软件更新", version, hasUpdate && "有新版本"].filter(Boolean).join("，")} title="软件更新">
+          {version || "版本信息"}{hasUpdate && <span>有新版本</span>}
+        </summary>
+        <section className="update-card" aria-label="软件更新">
+          {nextVersion && hasUpdate && <p className="update-version">新版本 <strong>{nextVersion}</strong></p>}
+          <p className="update-status" role="status">{feedbackText}</p>
+          {status === "downloading" && (
+            <div className="update-progress">
+              <progress max={100} value={progress} aria-label="下载更新进度" />
+              {progress !== undefined && <span>{Math.round(progress)}%</span>}
+            </div>
+          )}
+          {feedback && <p className="update-error" role="alert">{feedback}</p>}
+          {(action || canOpenReleases) && (
+            <div className="update-actions">
+              {action && <button type="button" className={hasUpdate ? "primary" : undefined}
+                title={busyInstalling ? "请等当前查询或保存完成。" : undefined}
+                disabled={!!pending || busyInstalling || typeof api[action] !== "function"}
+                onClick={() => void run(action)}>{actionLabel}</button>}
+              {canOpenReleases && <button type="button" disabled={!!pending}
+                onClick={() => void run("openReleasePage")}>{releaseButtonLabel}</button>}
+            </div>
+          )}
+        </section>
+      </details>
+      <dialog className="update-notice" ref={notice} aria-labelledby={`${noticeId}-title`}
+        aria-describedby={`${noticeId}-version`} onClose={closeNotice}>
+        <h2 id={`${noticeId}-title`}>有新版本！</h2>
+        <p id={`${noticeId}-version`}>可下载 <strong>{nextVersion}</strong></p>
+        <div className="update-actions">
+          <button type="button" onClick={() => notice.current?.close("later")}>稍后</button>
+          <button type="button" className="primary" disabled={!canOfferUpdate} onClick={runNoticeAction}>{offerLabel}</button>
+        </div>
+      </dialog>
+    </>
   );
 }

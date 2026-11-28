@@ -1,6 +1,7 @@
 import { isIPv4 } from "node:net";
-import { getReport, sampleData } from "../analytics.mjs";
-import { decodeArmyShareCode, fetchRankedReport, fetchTemporaryPlayer } from "../collector.mjs";
+import { classifyBattleArmy, getReport, sampleData } from "../analytics.mjs";
+import { buildGroupedPlayerReport, createLegendBattleLogCollector, decodeArmyShareCode, fetchRankedReport, fetchTemporaryGroupDetails, fetchTemporaryPlayer, playerHistoryWithWeeklyBoards, weeklyPlayerBattleViews } from "../collector.mjs";
+import { legendPlayerMetrics } from "../insights.mjs";
 
 const hour = 3_600_000;
 export const developerPortal = "https://developer.clashofclans.com/#/new-key";
@@ -33,15 +34,11 @@ export function rankedWeek(now = new Date()) {
 }
 
 function withStrategies(records) {
-  const withArmy = records.map((battle) => ({
-    ...battle,
-    army: battle.army ?? decodeArmyShareCode(battle.armyShareCode),
-  }));
-  const attacks = withArmy.map(({ id, timestamp, armyShareCode, army }) => ({ id, timestamp, armyShareCode, army }));
-  const classified = getReport({ source: "api", attacks }).attacks;
-  const strategies = new Map(classified.map(({ id, strategy }) => [id, strategy]));
-  // Always reclassify with the current rules; a saved label is only a fallback for armies we cannot decode.
-  return withArmy.map((battle) => ({ ...battle, strategy: strategies.get(battle.id) || battle.strategy || "" }));
+  return records.map(battle => {
+    const army = battle.army?.troops?.length ? battle.army : decodeArmyShareCode(battle.armyShareCode) ?? battle.army ?? null;
+    const strategy = classifyBattleArmy(army) ?? battle.strategy ?? "";
+    return { ...battle, army, strategy };
+  });
 }
 
 function classifyBattleViews(battleViews) {
@@ -66,14 +63,138 @@ function classifyGroupBattles(groupBattles) {
   }]));
 }
 
+export function createLegendMetricsCollector(token) {
+  const collect = createLegendBattleLogCollector({ token });
+  return async (playerTag, archive) => {
+    const history = await collect({ playerTag, archive });
+    return legendPlayerMetrics({ ...history, attacks: withStrategies(history.attacks) });
+  };
+}
+
 function buildReport(raw) {
   let classified = raw.battleViews ? { ...raw, battleViews: classifyBattleViews(raw.battleViews) } : raw;
   if (raw.groupBattles) classified = { ...classified, groupBattles: classifyGroupBattles(raw.groupBattles) };
   return { raw: classified, report: getReport(classified) };
 }
 
-export async function collectTemporaryPlayer(input, options) {
-  const result = await fetchTemporaryPlayer(input, options);
+export async function collectTemporaryPlayer(input, { playerHistory, ...requestOptions } = {}) {
+  const result = await fetchTemporaryPlayer(input, requestOptions);
+  const recent = result.history;
+  const weekly = result.weeklyLeaderboard;
+  const coverage = (rows) => ({
+    count: rows.length,
+    oldestAt: rows.reduce((oldest, row) => {
+      const time = row.battleTimestamp || row.timestamp;
+      return time && (!oldest || time < oldest) ? time : oldest;
+    }, null),
+  });
+  let history;
+  let historySaved = false;
+  if (playerHistory) {
+    try {
+      history = playerHistory.merge(result.battleViews.playerTag, recent, result.fetchedAt, weekly);
+      historySaved = true;
+    } catch {
+      console.warn("Could not save the player battle history.");
+    }
+  }
+  history ??= playerHistoryWithWeeklyBoards(recent, weekly ? [weekly] : []);
+  return {
+    ...result,
+    ...(weekly && { weeklyLeaderboard: { ...weekly, attacks: withStrategies(weekly.attacks),
+      battleViews: classifyBattleViews(weeklyPlayerBattleViews(weekly, history)) } }),
+    battleViews: classifyBattleViews(result.battleViews),
+    history: classifyBattleViews(history),
+    recentAttacks: withStrategies(recent.attacks),
+    recentCoverage: result.battleViews.logAvailable === false ? null : {
+      attacks: coverage(recent.attacks), defenses: coverage(recent.defenses),
+    },
+    historySaved,
+  };
+}
+
+export function createTemporaryGroupService({ snapshots, now = () => new Date(), collect = fetchTemporaryGroupDetails } = {}) {
+  const verifiedPlayers = new Map();
+  const boards = new Map();
+
+  function remember(result) {
+    const playerTag = result?.battleViews?.playerTag;
+    if (!playerTag) return;
+    verifiedPlayers.delete(playerTag);
+    const group = result.weeklyLeaderboard;
+    if (!group) return;
+    const scope = {
+      groupTag: group.groupTag, seasonId: group.seasonId, week: group.week,
+      roster: JSON.stringify(group.rows.map(({ playerTag, trophies, attackCount, defenseCount }) =>
+        [playerTag, trophies, attackCount, defenseCount])),
+    };
+    // Older open pages may still refer to other members of the same group.
+    const members = new Set(group.rows.map(row => row.playerTag));
+    for (const [tag, prior] of verifiedPlayers) {
+      if (prior.groupTag !== scope.groupTag) continue;
+      if (prior.week !== scope.week || prior.seasonId !== scope.seasonId || !members.has(tag)) {
+        verifiedPlayers.delete(tag);
+      } else if (prior.roster !== scope.roster) {
+        verifiedPlayers.set(tag, scope);
+      }
+    }
+    if (members.has(playerTag)) verifiedPlayers.set(playerTag, scope);
+    if (verifiedPlayers.size > 50) verifiedPlayers.delete(verifiedPlayers.keys().next().value);
+  }
+
+  async function fetch(input, token) {
+    const playerTag = input?.playerTag;
+    const scope = verifiedPlayers.get(playerTag);
+    const time = now();
+    if (!scope || scope.week !== rankedWeek(time)
+        || input.groupTag !== scope.groupTag || input.seasonId !== scope.seasonId || input.week !== scope.week) {
+      throw new Error("请重新查询该村庄，再打开本周小组排名。");
+    }
+    let entry = boards.get(scope.groupTag);
+    if (!entry || entry.token !== token || entry.seasonId !== scope.seasonId
+        || entry.week !== scope.week || entry.roster !== scope.roster) {
+      entry = { ...scope, token };
+    }
+    boards.delete(scope.groupTag);
+    boards.set(scope.groupTag, entry);
+    if (boards.size > 3) boards.delete(boards.keys().next().value);
+    const cachedMember = entry.board?.rows.some((member) => member.playerTag === playerTag);
+    const lifetime = entry.board?.partial ? 60_000 : 10 * 60_000;
+    if (!entry.pending && (!cachedMember || input.force === true || time.getTime() - entry.loadedAt >= lifetime)) {
+      entry.pending = collect({ ...scope, playerTag, token }, { snapshots, now: time }).then((board) => {
+        const lineups = board.attacks.filter((attack) => attack.armyShareCode || attack.army);
+        const attacks = withStrategies(lineups);
+        const listedAttacks = board.rows.reduce((sum, row) => sum + (row.attackCount ?? 0), 0);
+        const { rows, total, notes, telemetry } = getReport({
+          source: "api", groupTag: scope.groupTag, week: scope.week, attacks,
+          telemetry: { expectedAttacks: Math.max(board.attacks.length, listedAttacks) },
+        });
+        // Send the classified lineups once; the chart only needs the group aggregates.
+        const metaReport = { source: "api", groupTag: scope.groupTag, week: scope.week, rows, total, notes, telemetry };
+        entry.board = { ...board, attacks, metaReport };
+        entry.loadedAt = now().getTime();
+      }).finally(() => { entry.pending = null; });
+    }
+    await entry.pending;
+    if (scope !== verifiedPlayers.get(playerTag) || boards.get(scope.groupTag) !== entry || scope.week !== rankedWeek(now())) {
+      throw new Error("正在查看的村庄或周次已切换，请重新打开小组排名。");
+    }
+    const standing = entry.board.rows.find((member) => member.playerTag === playerTag);
+    if (!standing) throw new Error("完整小组榜中未找到该村庄，请重新查询。");
+    return { ...entry.board, battleViews: { playerTag, standing, defenseTrophyMode: "earned" } };
+  }
+
+  function reset() {
+    verifiedPlayers.clear();
+    boards.clear();
+  }
+
+  return { remember, forget: (tag) => verifiedPlayers.delete(tag), fetch, reset };
+}
+
+export async function collectGroupedPlayer(input) {
+  const result = await buildGroupedPlayerReport(input);
+  if (!result) throw new Error("这份小组战报未找到该玩家，请更新本周排位后再试。");
   return { ...result, battleViews: classifyBattleViews(result.battleViews) };
 }
 

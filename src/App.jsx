@@ -1,296 +1,132 @@
-import { useEffect, useRef, useState } from "react";
-import { toBlob } from "html-to-image";
+import { useCallback, useEffect, useRef, useState } from "react";
 import AccountPanel from "./AccountPanel.jsx";
-import BattleLog from "./BattleLog.jsx";
-import GroupPlayer from "./GroupPlayer.jsx";
-import EquipmentFilter from "./EquipmentFilter.jsx";
 import LegendLeaderboard from "./LegendLeaderboard.jsx";
+import ReportDialog from "./ReportDialog.jsx";
 import TemporaryPlayer, { TemporaryPlayerSearch, useTemporaryPlayerLookup } from "./TemporaryPlayer.jsx";
-import Standings, { StandingSummary } from "./Standings.jsx";
 import UpdatePanel from "./UpdatePanel.jsx";
-import { formatTime } from "./battle-time.mjs";
+import VillageReport from "./VillageReport.jsx";
 
-const TAU = Math.PI * 2;
-const CHART_SIZE = 400;
-const formatNumber = new Intl.NumberFormat("zh-CN");
-const formatShare = new Intl.NumberFormat("zh-CN", {
-  style: "percent",
-  minimumFractionDigits: 1,
-  maximumFractionDigits: 1,
-});
+const sections = { overview: "总览", villages: "常用村庄", global: "全球榜", regional: "地区榜" };
+const emptyAccounts = { accounts: [], selectedTag: "", hasDeveloperToken: false };
 
-function Pie({ rows, active, onActive }) {
-  const canvas = useRef(null);
-  const angle = useRef([]);
-
-  useEffect(() => {
-    const element = canvas.current;
-    const density = Math.max(1, window.devicePixelRatio || 1);
-    element.width = CHART_SIZE * density;
-    element.height = CHART_SIZE * density;
-    const context = element.getContext("2d");
-    context.scale(density, density);
-    const center = CHART_SIZE / 2;
-    const radius = center - 1.5;
-    const labels = [];
-    let start = -Math.PI / 2;
-
-    angle.current = rows.map((row, index) => {
-      const end = start + row.share * TAU;
-      if (row.share <= 0) return end;
-      context.beginPath();
-      context.moveTo(center, center);
-      context.arc(center, center, radius, start, end);
-      context.closePath();
-      context.globalAlpha = active === null || active === index ? 1 : 0.55;
-      context.fillStyle = row.color;
-      context.fill();
-      context.globalAlpha = 1;
-      context.lineWidth = 3;
-      context.strokeStyle = "#1a1a19";
-      if (row.share < 1) context.stroke();
-      const middle = (start + end) / 2;
-      if (row.share >= 0.05) labels.push({ middle, share: row.share });
-      start = end;
-      return end;
-    });
-
-    context.fillStyle = "#fff";
-    context.textAlign = "center";
-    context.textBaseline = "middle";
-    context.font = "700 18px Arial, sans-serif";
-    for (const { middle, share } of labels) {
-      context.fillText(
-        Math.round(share * 100) + "%",
-        center + Math.cos(middle) * 132,
-        center + Math.sin(middle) * 132,
-      );
-    }
-  }, [rows, active]);
-
-  function move(event) {
-    const rect = canvas.current.getBoundingClientRect();
-    const x = (event.clientX - rect.left) / rect.width - 0.5;
-    const y = (event.clientY - rect.top) / rect.height - 0.5;
-    if (Math.hypot(x, y) > 0.5 || !rows.length) {
-      onActive(null);
-      return;
-    }
-    const fromTop = (Math.atan2(y, x) + Math.PI / 2 + TAU) % TAU - Math.PI / 2;
-    const index = angle.current.findIndex((end) => fromTop < end);
-    onActive(index < 0 ? null : index);
-  }
-
-  return (
-    <canvas
-      className="pie"
-      ref={canvas}
-      role="img"
-      aria-label="流派占比饼图，详细比例见旁边的表格"
-      onPointerMove={move}
-      onPointerLeave={() => onActive(null)}
-    />
-  );
+function errorMessage(error, secrets = []) {
+  const message = String(error?.message || "操作失败，请重试。").replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "");
+  return secrets.filter(Boolean).reduce((text, secret) => text.replaceAll(secret, "[已隐藏]"), message);
 }
-
-function detailText(row) {
-  if (row.name === "蓝胖") {
-    return row.details.map(({ name, count }) => name.replace(/蓝胖$/, "") + " " + count).join(" ・ ");
-  }
-  if (row.name === "其他") {
-    const listed = row.details.filter(({ name }) => name !== "其他");
-    return listed.length ? "含" + listed.map(({ name, count }) => name + " " + count).join("、") : "";
-  }
-  return row.details.map(({ name, count }) => name + " " + count).join("、");
-}
-
-function ThreeStarChart({ rows, active, onActive }) {
-  return (
-    <div className="three-star-chart" aria-label="各流派三星率">
-      {rows.map((row, index) => {
-        if (!Number.isFinite(row.threeStarRate)) return null;
-        return (
-          <div className={active === index ? "active-rate" : undefined} key={row.name}
-            onPointerEnter={() => onActive(index)} onPointerLeave={() => onActive(null)}>
-            <span>{row.name}</span><strong>{formatShare.format(row.threeStarRate)}</strong>
-            <div className="rate-track" aria-hidden="true">
-              <div style={{ width: `${Math.min(1, Math.max(0, row.threeStarRate)) * 100}%`, background: row.color }} />
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function Report({ report, reportRef, battleViews }) {
-  const [active, setActive] = useState(null);
-  const [metric, setMetric] = useState("usage");
-  const personalOnly = battleViews?.personalOnly;
-  const { groupTag, week, rows, total, notes, telemetry, source } = report;
-  const hasRate = source === "api" && rows.some((row) => Number.isFinite(row.threeStarRate));
-  const showRate = hasRate && metric === "rate";
-  const displayRows = showRate
-    ? [...rows].sort((left, right) => (right.threeStarRate ?? -1) - (left.threeStarRate ?? -1))
-    : rows;
-  const title = showRate ? "流派三星率" : "流派占比";
-  const scope = source === "api" && telemetry?.expectedAttacks !== undefined
-    ? "已获取阵容 " + formatNumber.format(total) + " / 组内已知进攻 "
-      + formatNumber.format(telemetry.expectedAttacks) + " 场" : "";
-  const recovered = telemetry?.recoveredFromDefense || 0;
-  const failed = (telemetry?.groupLogFailures || 0) + (telemetry?.battleLogFailures || 0);
-
-  return (
-    <article ref={reportRef} className="report" aria-labelledby="report-title">
-      <header className="report-header">
-        <div className="report-heading-row">
-          <h2 id="report-title">{groupTag ? "小组 " + groupTag + " " : ""}{week ? "本周" : ""}{title}</h2>
-          {hasRate && <div className="metric-control" data-no-export="true" role="group" aria-label="统计指标">
-            <button type="button" aria-pressed={!showRate} onClick={() => { setMetric("usage"); setActive(null); }}>使用率</button>
-            <button type="button" aria-pressed={showRate} onClick={() => { setMetric("rate"); setActive(null); }}>三星率</button>
-          </div>}
-        </div>
-        {!personalOnly && <p>
-          {[
-            week && week + " 周",
-            "有阵容排位进攻 " + formatNumber.format(total) + " 场",
-            rows.some(({ name }) => name === "蓝胖") && "天女 / 隐龙 / 其他蓝胖合并为「蓝胖」",
-          ].filter(Boolean).join(" ・ ")}
-        </p>}
-      </header>
-      <StandingSummary battleViews={battleViews} standing={battleViews?.standing} />
-      <section className={rows.length ? "report-card" : "report-card empty-card"} aria-label="本周流派统计">
-        {rows.length ? (
-          <>
-            {showRate ? <ThreeStarChart rows={displayRows} active={active} onActive={setActive} />
-              : <div className="pie-cell"><Pie rows={displayRows} active={active} onActive={setActive} /></div>}
-            <table className="report-table">
-              <thead><tr><th scope="col">流派</th><th scope="col">{showRate ? "三星 / 有星数" : "场数"}</th><th scope="col" aria-sort="descending">{showRate ? "三星率" : "占比"} <span className="sort-indicator" aria-hidden="true">↓</span></th></tr></thead>
-              <tbody>
-                {displayRows.map((row, index) => {
-                  const detail = detailText(row);
-                  return (
-                    <tr key={row.name} className={active === index ? "active-row" : ""}
-                      onPointerEnter={() => setActive(index)} onPointerLeave={() => setActive(null)}>
-                      <th scope="row">
-                        <span className="row-name"><span className="color-key" style={{ background: row.color }} />{row.name}</span>
-                        {detail && <small>{detail}</small>}
-                      </th>
-                      <td>{showRate ? (row.scoredCount > 0 ? `${formatNumber.format(row.threeStarCount)} / ${formatNumber.format(row.scoredCount)}` : "—") : formatNumber.format(row.count)}</td>
-                      <td>{showRate ? (Number.isFinite(row.threeStarRate) ? formatShare.format(row.threeStarRate) : "—") : formatShare.format(row.share)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </>
-        ) : <p>{personalOnly ? "传奇 I 使用排行榜，此段位没有周排位小组。可切换到进攻或防守查看个人战绩。" : "本次没有取得带阵容的排位进攻记录。"}</p>}
-      </section>
-      {!!(notes.length || scope) && (
-        <div className="report-notes">
-          {showRate && <p>三星率以本次获取到星数的场次为分母。</p>}
-          {notes.length > 0 && <p>{notes.join(" ")}</p>}
-          {scope && <p>{scope}{recovered > 0 && "，其中 " + formatNumber.format(recovered) + " 场由防守日志补齐"}。</p>}
-          {failed > 0 && <p>{failed} 个日志请求失败。再次抓取可补充记录。</p>}
-        </div>
-      )}
-    </article>
-  );
-}
-
-const legendTabs = ["legend-global", "legend-regional"];
-const baseTabs = ["meta", "standings", "group-player", "equipment", "attacks", "defenses", ...legendTabs];
-const temporaryTab = "temporary-player";
-const sourceLabels = { sample: "截图示例", api: "官方 API" };
-const initialAccounts = { accounts: [], selectedTag: "", hasDeveloperToken: false };
-
-function getErrorMessage(failure, secrets = []) {
-  const message = String(failure?.message || "操作失败，请重试。");
-  const clean = message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "");
-  return secrets.filter(Boolean).reduce((text, secret) => text.replaceAll(secret, "[已隐藏]"), clean);
-}
-
 function normalizeTag(input, label, optional = false) {
   const tag = input.trim().replace(/^#/, "").toUpperCase();
   if (optional && !tag) return "";
   if (!/^[A-Z0-9]{2,20}$/.test(tag)) throw new Error(`请输入有效的${label}，例如 #2PP8QG。`);
   return "#" + tag;
 }
+function Feedback({ busy, feedback }) {
+  return <div className="app-feedback">
+    {feedback?.error ? <div className="feedback error" role="alert">{feedback.message}</div>
+      : <div className="feedback" role="status">{busy || feedback?.message}</div>}
+  </div>;
+}
 
 export default function App() {
-  const [payload, setPayload] = useState(null);
-  const [accounts, setAccounts] = useState(initialAccounts);
+  const [page, setPage] = useState("overview");
+  const [boardRows, setBoardRows] = useState([]);
+  const [entries, setEntries] = useState([]);
+  const [accounts, setAccounts] = useState(emptyAccounts);
   const [accountLoading, setAccountLoading] = useState(true);
-  const [tab, setTab] = useState("meta");
+  const [cached, setCached] = useState(undefined);
+  const readingReport = useRef(null);
   const [tokenRevision, setTokenRevision] = useState(0);
   const [busy, setBusy] = useState("");
   const [feedback, setFeedback] = useState(null);
-  const [playerFocus, setPlayerFocus] = useState(null);
-  const reportRef = useRef(null);
   const working = useRef(false);
-  const showLookupWhenReady = useRef(false);
-  const temporaryLookup = useTemporaryPlayerLookup({ enabled: accounts.hasDeveloperToken && !accountLoading, tokenRevision });
-  const temporaryResult = temporaryLookup.result;
-  const isTemporaryTab = tab === temporaryTab;
-  const tabs = temporaryResult || isTemporaryTab ? [...baseTabs, temporaryTab] : baseTabs;
+  const nextId = useRef(0);
+  const navigation = useRef(0);
+  const pending = useRef(null);
+  const top = entries.at(-1);
+  const canLookup = accounts.hasDeveloperToken && !accountLoading;
+  const lookup = useTemporaryPlayerLookup({ enabled: canLookup, tokenRevision });
 
-  const report = payload?.report;
-  const battleViews = payload?.raw?.battleViews;
-  const battleAccountName = accounts.accounts.find(({ tag }) => tag === battleViews?.playerTag)?.name;
-  const isStandaloneTab = isTemporaryTab || legendTabs.includes(tab);
-  const selectedStanding = battleViews?.personalOnly && battleViews.playerTag === accounts.selectedTag
-    ? { rank: battleViews.currentLegendRank, trophies: battleViews.currentLegendTrophies }
-    : null;
-  const tabLabels = {
-    meta: "小组流派",
-    standings: "排位排名",
-    "group-player": "玩家记录",
-    equipment: "装备筛选",
-    attacks: "进攻" + (battleViews?.attacks ? ` ${battleViews.attacks.length}` : ""),
-    defenses: "防守" + (battleViews?.defenses ? ` ${battleViews.defenses.length}` : ""),
-    "legend-global": "传奇 I 全球榜",
-    "legend-regional": "传奇 I 地区榜",
-    [temporaryTab]: "临时战报",
-  };
-
+  const readCached = useCallback(tag => {
+    if (!tag) return Promise.resolve(null);
+    if (readingReport.current?.tag === tag) return readingReport.current.promise;
+    const promise = Promise.resolve().then(() => window.cocApp.cachedReport(tag)).catch(() => null)
+      .finally(() => {
+        if (readingReport.current?.promise === promise) readingReport.current = null;
+      });
+    readingReport.current = { tag, promise };
+    return promise;
+  }, []);
   useEffect(() => {
     let active = true;
-    async function loadAccounts() {
+    async function init() {
       try {
         const result = await window.cocApp.listAccounts();
-        if (!active) return;
-        setAccounts(result);
-        if (result.selectedTag) {
-          const saved = await loadSavedReport(result.selectedTag);
-          if (active && saved) showSavedReport(saved);
-        }
-      } catch (failure) {
-        if (active) setFeedback({ message: getErrorMessage(failure), error: true });
-      } finally {
-        if (active) setAccountLoading(false);
-      }
+        if (active) setAccounts(result);
+      } catch (error) {
+        if (active) setFeedback({ message: errorMessage(error), error: true });
+      } finally { if (active) setAccountLoading(false); }
     }
-    void loadAccounts();
+    void init();
     return () => { active = false; };
   }, []);
 
+  // The overview only needs credentials. Rebuilding a saved weekly report can be expensive.
   useEffect(() => {
-    if (!temporaryResult || !showLookupWhenReady.current) return;
-    showLookupWhenReady.current = false;
-    setTab(temporaryTab);
-    document.getElementById("tab-" + temporaryTab)?.focus();
-  }, [temporaryResult]);
+    if (cached !== undefined || !accounts.selectedTag || (page !== "villages" && page !== "global")) return;
+    let active = true;
+    void readCached(accounts.selectedTag).then(report => { if (active) setCached(report); });
+    return () => { active = false; };
+  }, [accounts.selectedTag, cached, page, readCached]);
 
-  async function run(message, action, secrets) {
+  function startNavigation(keepLookup = false) {
+    if (!keepLookup) lookup.dismiss();
+    pending.current = null;
+    navigation.current += 1;
+    setFeedback(null);
+    return navigation.current;
+  }
+  function newEntry(info) {
+    return { ...info, id: ++nextId.current, parentId: top?.id, trigger: document.activeElement };
+  }
+  function choosePage(next) {
+    startNavigation();
+    setEntries([]);
+    setPage(next);
+  }
+  function back() {
+    startNavigation();
+    setEntries(list => list.slice(0, -1));
+  }
+  function closeDialog() {
+    startNavigation();
+    setEntries([]);
+  }
+  function openPlayer(tag, group, origin) {
+    const item = newEntry({ tag, kind: "player", origin });
+    if (lookup.query(tag, group)) {
+      startNavigation(true);
+      pending.current = item;
+    }
+  }
+  useEffect(() => {
+    const item = pending.current;
+    if (!item || (!lookup.result && !lookup.error)) return;
+    pending.current = null;
+    if (lookup.error) return;
+    const result = lookup.result;
+    setEntries(list => [...list, { ...item, result, name: result.battleViews.playerName }]);
+  }, [lookup.result, lookup.error]);
+
+  async function run(message, action, success, secrets = []) {
     if (working.current) return false;
     working.current = true;
     setBusy(message);
     setFeedback(null);
     try {
-      await action();
+      const result = await action();
+      if (success && result !== false && result !== null) setFeedback({ message: success });
       return true;
-    } catch (failure) {
-      setFeedback({ message: getErrorMessage(failure, secrets), error: true });
+    } catch (error) {
+      setFeedback({ message: errorMessage(error, secrets), error: true });
       return false;
     } finally {
       working.current = false;
@@ -298,216 +134,109 @@ export default function App() {
     }
   }
 
-  async function applyAccountState(result) {
+  async function applyAccounts(result) {
     setAccounts({ ...result, storageWarnings: accounts.storageWarnings });
-    if (result.selectedTag === accounts.selectedTag) return null;
-    setPayload(null);
-    setPlayerFocus(null);
-    if (!result.selectedTag) return null;
-    const saved = await loadSavedReport(result.selectedTag);
-    if (saved) showSavedReport(saved);
+    if (result.selectedTag === accounts.selectedTag) return cached;
+    setCached(undefined);
+    const saved = await readCached(result.selectedTag);
+    setCached(saved);
     return saved;
   }
-
-  async function loadSavedReport(tag) {
-    try {
-      return await window.cocApp.cachedReport(tag);
-    } catch {
-      return null;
-    }
-  }
-
-  function showSavedReport(saved) {
-    setPayload(saved);
-    setFeedback({ message: `已显示 ${formatTime(saved.fetchedAt)} 保存的本周战报，点「更新本周排位」可获取最新数据。` });
-  }
-
-  async function collectFor(tag) {
-    const result = await window.cocApp.collect({ playerTag: tag, token: "" });
-    setPayload(result);
-    setFeedback({ message: "已更新本周排位战报。" });
-  }
-
-  function collect() {
-    void run("正在核对小组成员与本周对战记录…", async () => {
-      await collectFor(accounts.selectedTag);
-    });
-  }
-
-  function selectAccount(tag) {
-    if (!tag || tag === accounts.selectedTag) return;
-    void run("正在切换村庄…", async () => {
-      const result = await window.cocApp.selectAccount(tag);
-      const cached = await applyAccountState(result);
-      if (result.hasDeveloperToken && !cached) {
-        setBusy("正在查询所选村庄的本周排位…");
-        await collectFor(tag);
+  function openSaved(tag, refresh = false) {
+    if (working.current || !tag) return;
+    const revision = startNavigation();
+    const item = newEntry({ kind: "saved", tag, name: accounts.accounts.find(a => a.tag === tag)?.name });
+    void run(refresh ? "正在更新本周排位…" : "正在读取村庄战报…", async () => {
+      let payload = cached;
+      if (tag !== accounts.selectedTag) payload = await applyAccounts(await window.cocApp.selectAccount(tag));
+      else if (payload === undefined) {
+        payload = await readCached(tag);
+        setCached(payload);
       }
-    });
-  }
-
-  function saveAccount({ tag, name, clanTag, gameToken, clearGameToken }) {
-    const shortToken = gameToken.trim();
-    return run("正在保存村庄…", async () => {
-      const player = normalizeTag(tag, "村庄标签");
-      const clan = normalizeTag(clanTag, "部落标签", true);
-      const result = await window.cocApp.saveAccount({
-        tag: player, name: name.trim(), clanTag: clan,
-        ...(shortToken && { gameToken: shortToken }),
-        ...(clearGameToken && { clearGameToken: true }),
+      let failure;
+      if (canLookup && (!payload || refresh)) {
+        try {
+          setBusy("正在查询本周排位…");
+          payload = await window.cocApp.collect({ playerTag: tag, token: "" });
+          setCached(payload);
+        } catch (error) {
+          failure = error;
+        }
+      }
+      if (revision !== navigation.current) return;
+      setEntries(list => {
+        const updated = list.map(frame => frame.kind === "saved" && frame.tag === tag ? { ...frame, payload } : frame);
+        return updated.at(-1)?.kind === "saved" && updated.at(-1).tag === tag ? updated : [...updated, { ...item, payload }];
       });
-      await applyAccountState(result);
-      setFeedback({ message: "村庄已保存在本机。" });
-    }, [shortToken]);
-  }
-
-  function removeAccount(tag) {
-    return run("正在移除村庄…", async () => {
-      const result = await window.cocApp.removeAccount(tag);
-      await applyAccountState(result);
-      setFeedback({ message: "已移除该村庄。" });
+      if (failure) throw failure;
     });
   }
-
+  function openSample() {
+    const revision = startNavigation();
+    const entry = newEntry({ kind: "sample", name: "示例村庄" });
+    void run("正在加载示例…", async () => {
+      const payload = await window.cocApp.sample();
+      if (revision === navigation.current) setEntries(list => [...list, { ...entry, payload }]);
+    });
+  }
+  function saveAccount({ tag, name, clanTag, gameToken, clearGameToken }) {
+    const short = gameToken.trim();
+    return run("正在保存村庄…", async () => {
+      const result = await window.cocApp.saveAccount({ tag: normalizeTag(tag, "村庄标签"), name: name.trim(),
+        clanTag: normalizeTag(clanTag, "部落标签", true), ...(short && { gameToken: short }), ...(clearGameToken && { clearGameToken: true }) });
+      await applyAccounts(result);
+    }, "已保存村庄。", [short]);
+  }
+  function removeAccount(tag) {
+    return run("正在移除村庄…", async () => { await applyAccounts(await window.cocApp.removeAccount(tag)); }, "已移除村庄。");
+  }
   function saveDeveloperToken(input) {
     const token = input.trim();
-    return run(token ? "正在保存开发者令牌…" : "正在清除开发者令牌…", async () => {
+    return run("正在保存开发者令牌…", async () => {
       if (token && !/^[\w-]+\.[\w-]+\.[\w-]+$/.test(token)) throw new Error("请输入从 Supercell 开发者后台获取的完整 JWT 令牌。");
-      await applyAccountState(await window.cocApp.saveDeveloperToken(token));
-      setTokenRevision((revision) => revision + 1);
-      setFeedback({ message: token ? "开发者 API 令牌已保存在本机。" : "已清除开发者 API 令牌。" });
-    }, [token]);
+      await applyAccounts(await window.cocApp.saveDeveloperToken(token));
+      setTokenRevision(revision => revision + 1);
+    }, token ? "已保存开发者 API 令牌。" : "已清除开发者 API 令牌。", [token]);
   }
 
-  function loadSample() {
-    void run("正在加载示例…", async () => {
-      setPayload(await window.cocApp.sample());
-      chooseTab("meta");
-    });
-  }
-
-  function exportExcel() {
-    void run("正在保存 Excel…", async () => {
-      const saved = await window.cocApp.downloadWorkbook(payload.raw);
-      if (saved) setFeedback({ message: "已保存 Excel。" });
-    });
-  }
-
-  function exportPng() {
-    void run("正在生成图片…", async () => {
-      await document.fonts.ready;
-      const node = reportRef.current;
-      if (!node) throw new Error("请先打开小组流派报表。");
-      const blob = await toBlob(node, {
-        backgroundColor: "#121315", pixelRatio: 2, skipFonts: true,
-        width: node.offsetWidth + 56, height: node.offsetHeight + 56,
-        style: { padding: "28px", boxSizing: "border-box" },
-        filter: (element) => element.dataset?.noExport !== "true",
-      });
-      if (!blob) throw new Error("无法生成图片。");
-      const filename = "COC-" + (report.groupTag || "report").replace(/[^a-z0-9-]/gi, "")
-        + (report.week ? "-" + report.week : "") + ".png";
-      const saved = await window.cocApp.saveImage(new Uint8Array(await blob.arrayBuffer()), filename);
-      if (saved) setFeedback({ message: "已保存 PNG。" });
-    });
-  }
-
-  function chooseTab(next) {
-    showLookupWhenReady.current = false;
-    setPlayerFocus(null);
-    setTab(next);
-  }
-
-  function openTemporaryPlayer(playerTag) {
-    if (temporaryLookup.query(playerTag)) showLookupWhenReady.current = true;
-  }
-
-  function openLegendLeaderboard() {
-    chooseTab("legend-global");
-    document.getElementById("tab-legend-global")?.focus();
-  }
-
-  function openGroupPlayer(playerTag, kind = "attacks", equipment = null) {
-    chooseTab("group-player");
-    setPlayerFocus({ playerTag, kind, equipment, opened: Date.now() });
-    document.getElementById("tab-group-player")?.focus();
-  }
-
-  function openEquipmentPlayer(playerTag, equipment) {
-    openGroupPlayer(playerTag, "attacks", equipment);
-  }
-
-  function moveTab(event) {
-    const index = tabs.indexOf(tab);
-    const next = {
-      ArrowLeft: tabs[(index - 1 + tabs.length) % tabs.length],
-      ArrowRight: tabs[(index + 1) % tabs.length],
-      Home: tabs[0], End: tabs[tabs.length - 1],
-    }[event.key];
-    if (!next) return;
-    event.preventDefault();
-    chooseTab(next);
-    document.getElementById("tab-" + next).focus();
-  }
-
-  return (
-    <main className="page">
-      <header className="app-heading">
-        <h1>部落冲突排位战报</h1>
-        <UpdatePanel busy={!!busy} />
-      </header>
-      <AccountPanel accounts={accounts} busy={accountLoading || !!busy} hasReport={!!payload?.fetchedAt} onSelect={selectAccount}
-        onSaveAccount={saveAccount} onRemoveAccount={removeAccount} onSaveDeveloperToken={saveDeveloperToken}
-        onQuery={collect} onSample={loadSample}>
-        <TemporaryPlayerSearch lookup={temporaryLookup} disabled={accountLoading || !!busy || !accounts.hasDeveloperToken}
-          onLookupPlayer={openTemporaryPlayer} />
-      </AccountPanel>
-      <div className="app-feedback">
-        {accounts.storageWarnings?.length > 0 && <div className="feedback error" role="alert">{accounts.storageWarnings.join(" ")}</div>}
-        <div className="feedback" role="status">{(accountLoading && "正在读取本机村庄…") || busy || (!feedback?.error && feedback?.message)}</div>
-        {feedback?.error && <div className="feedback error" role="alert">{feedback.message}</div>}
-      </div>
-      <section className="results" aria-label="排位战报">
-          <div className="results-bar">
-            <div className="tabs" role="tablist" aria-label="查看排位战报">
-              {tabs.map((name) => (
-                <button type="button" id={"tab-" + name} key={name} role="tab" aria-controls="report-panel"
-                  aria-selected={tab === name} tabIndex={tab === name ? 0 : -1}
-                  disabled={busy === "正在生成图片…"} onClick={() => chooseTab(name)} onKeyDown={moveTab}>{tabLabels[name]}</button>
-              ))}
-            </div>
-            {report && !isStandaloneTab && <div className="export-actions">
-              {sourceLabels[report.source] && <span className="source-label">{sourceLabels[report.source]}</span>}
-              <button type="button" onClick={exportExcel} disabled={!!busy}>导出 Excel</button>
-              {tab === "meta" && <button type="button" onClick={exportPng} disabled={!!busy}>保存图片</button>}
-            </div>}
-          </div>
-          <div className="report-panel" id="report-panel" role="tabpanel" aria-labelledby={"tab-" + tab}>
-            {report && tab === "meta" && <Report key={report.source + report.groupTag + report.week}
-              report={report} reportRef={reportRef} battleViews={battleViews} />}
-            {report && tab === "standings" && <Standings key={report.groupTag + report.week} rows={payload.raw?.standings ?? []} battleViews={battleViews}
-              groupTag={report.groupTag} week={report.week} leagueTier={payload.raw?.leagueTier} isSample={report.source === "sample"}
-              onOpenLegend={openLegendLeaderboard} onOpenPlayer={openGroupPlayer} />}
-            {report && tab === "group-player" && <GroupPlayer key={report.groupTag + report.week + (playerFocus?.opened ?? "")}
-              standings={payload.raw?.standings ?? []} groupBattles={payload.raw?.groupBattles} battleViews={battleViews}
-              isSample={report.source === "sample"} focus={playerFocus} onLookupPlayer={openTemporaryPlayer} />}
-            {report && tab === "equipment" && <EquipmentFilter key={report.groupTag + report.week}
-              attacks={payload.raw?.attacks ?? []} classifiedAttacks={report.attacks} standings={payload.raw?.standings ?? []}
-              groupTag={report.groupTag} week={report.week} isSample={report.source === "sample"}
-              personalOnly={!!battleViews?.personalOnly} onOpenPlayer={openEquipmentPlayer} />}
-            {report && (tab === "attacks" || tab === "defenses") && <BattleLog key={battleViews?.playerTag + tab} kind={tab} battleViews={battleViews}
-              isSample={report.source === "sample"} accountName={battleAccountName} standings={payload.raw?.standings ?? []} />}
-            {(tab === "legend-global" || tab === "legend-regional") && <LegendLeaderboard key={tab + tokenRevision}
-              scope={tab === "legend-global" ? "global" : "regional"} hasDeveloperToken={accounts.hasDeveloperToken}
-              accountLoading={accountLoading} selectedTag={accounts.selectedTag} selectedStanding={selectedStanding}
-              onLookupPlayer={openTemporaryPlayer} />}
-            {isTemporaryTab && <TemporaryPlayer lookup={temporaryLookup} onLookupPlayer={openTemporaryPlayer} />}
-            {!report && !isStandaloneTab && <section className="empty-card empty-results" aria-label="暂无战报">
-              <p>{busy ? "查询结果会显示在这里。" : accounts.selectedTag && accounts.hasDeveloperToken
-                ? "点击「查询本周排位」获取当前村庄的战报。" : "添加村庄并设置开发者 API 令牌，即可查询本周排位。"}</p>
-            </section>}
-          </div>
-      </section>
-    </main>
-  );
+  const search = <TemporaryPlayerSearch lookup={lookup} accounts={accounts} boardRows={page === "villages" ? undefined : boardRows} disabled={accountLoading || !!busy}
+    onLookupPlayer={openPlayer} onSelectSaved={openSaved} onManageVillages={() => choosePage("villages")} />;
+  const status = <Feedback busy={busy} feedback={feedback}/>;
+  const battles = cached?.raw?.battleViews;
+  const selectedStanding = battles?.personalOnly && battles.playerTag === accounts.selectedTag
+    ? { rank: battles.currentLegendRank, trophies: battles.currentLegendTrophies } : null;
+  return <main className="page workspace">
+    <header className="workspace-header">
+      <h1>coc查询工具</h1>
+      <nav className="workspace-nav" aria-label="主导航">
+        {Object.entries(sections).map(([key, label]) => <button type="button" key={key} aria-current={page === key ? "page" : undefined}
+          onClick={() => choosePage(key)}>{label}</button>)}
+      </nav>
+      {!top && <div className="workspace-tools">{search}</div>}
+    </header>
+    {accounts.storageWarnings?.length > 0 && <div className="feedback error" role="alert">{accounts.storageWarnings.join(" ")}</div>}
+    {!top && status}
+    <div className="workspace-content">
+      {page === "villages" && <AccountPanel accounts={accounts} busy={accountLoading || !!busy} hasReport={!!cached?.fetchedAt}
+        onSelect={openSaved} onSaveAccount={saveAccount} onRemoveAccount={removeAccount} onSaveDeveloperToken={saveDeveloperToken}
+        history={lookup.history} onLookupPlayer={openPlayer} onQuery={() => openSaved(accounts.selectedTag, true)} onSample={openSample}/>}
+      {["global","regional"].map(scope => {
+        const visible = page === scope || (scope === "global" && page === "overview");
+        return <div key={scope + tokenRevision} hidden={!visible}>
+          <LegendLeaderboard scope={scope} active={visible && !top} overview={scope === "global" && page === "overview"}
+            hasDeveloperToken={accounts.hasDeveloperToken} accountLoading={accountLoading} selectedTag={accounts.selectedTag}
+            selectedStanding={selectedStanding} onBoardRows={visible ? setBoardRows : undefined} onLookupPlayer={openPlayer} onOpenGlobal={() => choosePage("global")}
+            onOpenVillages={() => choosePage("villages")}/>
+        </div>;
+      })}
+    </div>
+    <footer className="workspace-footer"><UpdatePanel busy={!!busy}/></footer>
+    <ReportDialog entries={entries} onBack={back} onClose={closeDialog} search={top && search} feedback={top && status}>
+      {entry => entry.kind === "player" ? <TemporaryPlayer lookup={{ result: entry.result }} origin={entry.origin} onLookupPlayer={canLookup ? openPlayer : undefined}
+        onOpenLegend={canLookup ? () => choosePage("global") : undefined}/> :
+        <VillageReport entry={entry} busy={!!busy} run={run} onManage={() => choosePage("villages")} onOpenLegend={() => choosePage("global")}
+          onRefresh={entry.kind === "saved" && canLookup ? () => openSaved(entry.tag, true) : undefined}
+          onLookupPlayer={openPlayer}/>}
+    </ReportDialog>
+  </main>;
 }

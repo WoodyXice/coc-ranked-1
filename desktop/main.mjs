@@ -1,16 +1,22 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, protocol, safeStorage, session, shell } from "electron";
 import { mkdirSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import { basename, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { getReport } from "../analytics.mjs";
-import { fetchLegendLeaderboard, fetchLegendLocations } from "../collector.mjs";
+import { fetchLegendLeaderboard, fetchLegendLocations, legendBoardKey } from "../collector.mjs";
 import { workbookBytes } from "../files.mjs";
-import { cachedReport, collectData, collectTemporaryPlayer, developerPortal, getPublicIp, sampleReport } from "./service.mjs";
+import { freshLegendSnapshot, legendDayNumber } from "../insights.mjs";
+import { cachedReport, collectData, collectGroupedPlayer, collectTemporaryPlayer, createTemporaryGroupService, developerPortal, getPublicIp, sampleReport } from "./service.mjs";
 import { createAccountStore, importAccountsJson, validateDeveloperToken } from "./accounts.mjs";
 import { openDatabase } from "./database.mjs";
 import { createDefenseNoteStore } from "./defense-notes.mjs";
+import { createReportSources } from "./report-sources.mjs";
+import { createLegendMetricsService } from "./legend-metrics.mjs";
+import { createLegendSnapshots } from "./legend-snapshots.mjs";
+import { readWorkbook, writeWorkbook } from "./legend-workbook-io.mjs";
 import { importLegacyJson } from "./legacy-import.mjs";
 import { createUpdater, releasePage } from "./updater.mjs";
 
@@ -76,22 +82,99 @@ function bind(window, channel, handler) {
 
 function createWindow(database, storageWarnings) {
   const window = new BrowserWindow({
-    title: "部落冲突排位助手",
+    title: "coc查询工具",
     icon,
     width: 1280,
     height: 900,
     minWidth: 700,
     minHeight: 560,
     show: false,
-    backgroundColor: "#121315",
+    backgroundColor: "#f3f7f9",
     webPreferences: { preload, sandbox: true, contextIsolation: true, nodeIntegration: false },
   });
   const accountStore = createAccountStore(database, safeStorage);
   const defenseNotes = createDefenseNoteStore(database.db);
+  function newCacheGeneration() {
+    const generation = randomUUID();
+    database.setMeta("legend_cache_generation", generation);
+    return generation;
+  }
+  const workbooks = createLegendSnapshots({
+    directory: resolve(app.getPath("userData"), "榜单缓存"),
+    generation: database.getMeta("legend_cache_generation") || newCacheGeneration(),
+    read: readWorkbook, write: writeWorkbook,
+  });
+  const legendMetrics = createLegendMetricsService({ readHistory: database.playerHistory.readRecentLegend, onCollected: workbooks.record });
+  window.once("closed", legendMetrics.reset);
+  let quitting = false, flushed = false;
+  app.on("before-quit", event => {
+    if (flushed || !workbooks.hasWork()) return;
+    event.preventDefault();
+    if (!quitting) {
+      quitting = true;
+      legendMetrics.reset();
+      // A locked workbook must not keep an update installer waiting for the application.
+      let timer;
+      const deadline = new Promise(resolve => { timer = setTimeout(resolve, 8000); });
+      void Promise.race([workbooks.flush(), deadline]).finally(() => {
+        clearTimeout(timer);
+        flushed = true;
+        app.quit();
+      });
+    }
+  });
+  const temporaryGroups = createTemporaryGroupService({ snapshots: database.snapshots });
+  window.once("closed", temporaryGroups.reset);
+  let temporaryLookupId = 0;
+  const legendBoards = new Map();
+  const lastScope = new Map();
+  let legendTokenRevision = 0;
+  const reportSources = createReportSources(database.reports.load);
   async function savedDeveloperToken() {
     const token = await accountStore.getDeveloperToken();
     if (!token) throw new Error("请先保存 Supercell 开发者 API 令牌。");
     return token;
+  }
+
+  function loadLegendBoard(token, location = "global", force = false, limit = 200) {
+    const key = legendBoardKey(location, limit);
+    const scope = key.split(":")[0];
+    lastScope.set(scope, key);
+    let state = legendBoards.get(key);
+    if (state?.token !== token) {
+      state = { token, data: null, pending: null };
+      legendBoards.set(key, state);
+    }
+    if (state.pending) return state.pending;
+    function stillCurrent() {
+      if (window.isDestroyed() || legendBoards.get(key) !== state) {
+        throw new Error("榜单查询已过期，请重新查询。");
+      }
+    }
+    if (!force && state.data && freshLegendSnapshot(state.data.fetchedAt)) {
+      return Promise.resolve({ ...state.data, cachedMetrics: workbooks.samples(state.data) });
+    }
+    state.pending = (async () => {
+      const saved = await workbooks.restore(location);
+      stillCurrent();
+      if (!force && !state.data && saved?.requestedLimit === limit) {
+        const cachedMetrics = workbooks.samples(saved);
+        legendMetrics.setRows(token, saved.rows, location, limit, cachedMetrics);
+        state.data = saved;
+        return { ...saved, cachedMetrics, fromWorkbook: true, revalidate: !freshLegendSnapshot(saved.fetchedAt) };
+      }
+      const board = await fetchLegendLeaderboard({ token, location, limit });
+      stillCurrent();
+      const cachedMetrics = workbooks.samples(board);
+      legendMetrics.setRows(token, board.rows, location, limit, cachedMetrics);
+      if (lastScope.get(scope) === key) workbooks.capture(board);
+      state.data = board;
+      return { ...board, cachedMetrics };
+    })().finally(() => {
+      state.pending = null;
+      if (!state.data && legendBoards.get(key) === state) legendBoards.delete(key);
+    });
+    return state.pending;
   }
   const contents = window.webContents;
   const updates = createUpdater({ app, publish(state) {
@@ -117,6 +200,10 @@ function createWindow(database, storageWarnings) {
     if (!raw.battleViews) return payload;
     return { ...payload, raw: { ...raw, battleViews: await defenseNotes.withNotes(raw.battleViews) } };
   }
+  async function displayReport(payload, ownerTag, persisted) {
+    reportSources.show(ownerTag, payload, persisted);
+    return payload ? withDefenseNotes(payload) : null;
+  }
   bind(window, "coc:accounts", async () => {
     const accounts = await accountStore.list();
     return storageWarnings.length ? { ...accounts, storageWarnings } : accounts;
@@ -124,7 +211,15 @@ function createWindow(database, storageWarnings) {
   bind(window, "coc:save-account", accountStore.saveAccount);
   bind(window, "coc:select-account", accountStore.selectAccount);
   bind(window, "coc:remove-account", accountStore.removeAccount);
-  bind(window, "coc:save-developer-token", accountStore.saveDeveloperToken);
+  bind(window, "coc:save-developer-token", async (value) => {
+    const saved = await accountStore.saveDeveloperToken(value);
+    legendTokenRevision += 1;
+    legendBoards.clear();
+    workbooks.reset(newCacheGeneration());
+    legendMetrics.reset();
+    temporaryGroups.reset();
+    return saved;
+  });
   bind(window, "coc:public-ip", () => getPublicIp());
   bind(window, "coc:copy-public-ip", (ip) => {
     if (typeof ip !== "string" || !isIP(ip)) throw new Error("无效的 IP 地址。");
@@ -138,29 +233,82 @@ function createWindow(database, storageWarnings) {
     }
   });
   bind(window, "coc:save-defense-note", defenseNotes.save);
-  bind(window, "coc:sample", () => withDefenseNotes(sampleReport()));
+  bind(window, "coc:sample", () => displayReport(sampleReport()));
   bind(window, "coc:collect", async (input) => {
     const token = validateDeveloperToken(input?.token) || await savedDeveloperToken();
     const result = await collectData({ playerTag: input?.playerTag, token }, { snapshots: database.snapshots });
     let fetchedAt = new Date().toISOString();
     const playerTag = savedReportTag(input?.playerTag);
+    let persisted = false;
     try {
-      if (playerTag) fetchedAt = database.reports.save(playerTag, result.raw, fetchedAt);
+      if (playerTag) {
+        fetchedAt = database.reports.save(playerTag, result.raw, fetchedAt);
+        persisted = true;
+      }
     } catch (error) {
       console.warn(`Could not save the latest report: ${error?.message}`);
     }
-    return { ...(await withDefenseNotes(result)), fetchedAt };
+    return displayReport({ ...result, fetchedAt }, playerTag, persisted);
   });
   bind(window, "coc:cached-report", async (tag) => {
     const playerTag = savedReportTag(tag);
     const saved = playerTag ? cachedReport(database.reports.load(playerTag)) : null;
-    return saved && withDefenseNotes(saved);
+    return displayReport(saved, playerTag);
   });
-  bind(window, "coc:legend-leaderboard", async (input) =>
-    fetchLegendLeaderboard({ token: await savedDeveloperToken(), location: input?.location }));
-  bind(window, "coc:legend-locations", async () => fetchLegendLocations({ token: await savedDeveloperToken() }));
-  bind(window, "coc:temporary-player", async (input) =>
-    collectTemporaryPlayer({ token: await savedDeveloperToken(), playerTag: input?.playerTag }));
+  bind(window, "coc:legend-leaderboard", async (input) => {
+    const revision = legendTokenRevision;
+    const token = await savedDeveloperToken();
+    if (legendTokenRevision !== revision) throw new Error("开发者令牌已更新，请重新查询榜单。");
+    return loadLegendBoard(token, input?.location, input?.force === true, input?.limit);
+  });
+  bind(window, "coc:legend-player-metrics", async (input) =>
+    legendMetrics.fetchBatch(await savedDeveloperToken(), input?.playerTags, input?.location, input?.limit, input?.progressive === true));
+  bind(window, "coc:legend-locations", async () => {
+    const token = await savedDeveloperToken();
+    const day = legendDayNumber(Date.now());
+    let saved;
+    try { saved = JSON.parse(database.getMeta("legend_region_list") ?? "null"); } catch {}
+    if (saved?.day === day && Array.isArray(saved.locations) && saved.locations.length) return saved.locations;
+    const locations = await fetchLegendLocations({ token });
+    database.setMeta("legend_region_list", JSON.stringify({ day, locations }));
+    return locations;
+  });
+  bind(window, "coc:temporary-query-history", database.temporaryQueries.list);
+  bind(window, "coc:temporary-group-details", async (input) => {
+    const revision = legendTokenRevision;
+    const token = await savedDeveloperToken();
+    if (revision !== legendTokenRevision) throw new Error("开发者令牌已更新，请重新查询村庄。");
+    return temporaryGroups.fetch(input, token);
+  });
+  bind(window, "coc:temporary-player", async (input) => {
+    const lookupId = ++temporaryLookupId;
+    const group = input?.group;
+    if (!group) {
+      temporaryGroups.forget(savedReportTag(input?.playerTag));
+      const revision = legendTokenRevision;
+      const token = await savedDeveloperToken();
+      const result = await collectTemporaryPlayer({ token, playerTag: input?.playerTag }, {
+        playerHistory: database.playerHistory,
+      });
+      const { playerTag, playerName } = result.battleViews;
+      if (lookupId === temporaryLookupId && revision === legendTokenRevision && !window.isDestroyed()) {
+        temporaryGroups.remember(result);
+      }
+      if (result.period === "retained" && !result.battleViews.currentLegendRank && legendTokenRevision === revision && !window.isDestroyed()) {
+        const board = await loadLegendBoard(token).catch(() => null);
+        const rank = board?.hasTierData && board.rows.find((row) => row.playerTag === playerTag)?.rank;
+        if (rank) result.battleViews.currentLegendRank = rank;
+      }
+      try {
+        database.temporaryQueries.record({ playerTag, playerName, lastQueriedAt: result.fetchedAt });
+      } catch {
+        console.warn("Could not save the temporary village query.");
+      }
+      return result;
+    }
+    const { raw, fetchedAt } = reportSources.resolve(group);
+    return collectGroupedPlayer({ raw, fetchedAt, playerTag: input.playerTag, snapshots: database.snapshots });
+  });
   bind(window, "coc:workbook", async (raw) => {
     const report = getReport(raw);
     const noted = raw.battleViews ? { ...raw, battleViews: await defenseNotes.withNotes(raw.battleViews) } : raw;

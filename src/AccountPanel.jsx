@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { formatShortTime } from "./battle-time.mjs";
+import "./saved-villages.css";
 
 const developerKeyAddress = "developer.clashofclans.com/#/new-key";
 const loadingIp = { status: "loading", ip: "" };
@@ -100,13 +102,17 @@ function DeveloperKeyHelp({ busy, lookupQueue }) {
 }
 
 export default function AccountPanel({ accounts, busy, hasReport, onSelect, onSaveAccount, onRemoveAccount, onSaveDeveloperToken,
-  onQuery, onSample, children }) {
+  onQuery, onSample, history = [], onLookupPlayer }) {
   const [editor, setEditor] = useState(null);
+  const [allRecent, setAllRecent] = useState(false);
   const ipLookupQueue = useRef(Promise.resolve());
-  const selected = accounts.accounts.find((account) => account.tag === accounts.selectedTag);
+  const savedTags = new Set(accounts.accounts.map((account) => account.tag));
+  const recent = allRecent ? history : history.slice(0, 5);
 
-  function editAccount(account) {
-    setEditor({ type: "account", tag: account?.tag || "", name: account?.name || "", clanTag: account?.clanTag || "", gameToken: "", clearGameToken: false, existing: account });
+  function editAccount(account, prefill) {
+    setEditor({ type: "account", tag: account?.tag || prefill?.playerTag || "",
+      name: account?.name ?? (prefill?.playerName !== prefill?.playerTag ? prefill?.playerName : "") ?? "",
+      clanTag: account?.clanTag || "", gameToken: "", clearGameToken: false, existing: account });
   }
 
   function update(name) {
@@ -125,38 +131,25 @@ export default function AccountPanel({ accounts, busy, hasReport, onSelect, onSa
   }
 
   async function removeAccount() {
-    if (await onRemoveAccount(selected.tag)) setEditor(null);
+    if (await onRemoveAccount(editor.existing.tag)) setEditor(null);
   }
 
   return (
-    <section className="query-card" aria-label="村庄和查询设置">
-      <div className="account-bar">
-        <label htmlFor="active-village">当前村庄
-          <select id="active-village" value={selected?.tag || ""} disabled={busy || !accounts.accounts.length}
-            onChange={(event) => { setEditor(null); onSelect(event.target.value); }}>
-            {!selected && <option value="">{accounts.accounts.length ? "请选择村庄" : "尚未添加村庄"}</option>}
-            {accounts.accounts.map(({ tag, name }) => <option key={tag} value={tag}>{name ? `${name} · ${tag}` : tag}</option>)}
-          </select>
-        </label>
+    <section className="query-card saved-villages" aria-labelledby="saved-villages-title">
+      <header className="saved-villages-header">
+        <h2 id="saved-villages-title">常用村庄</h2>
         <div className="account-actions">
-          <button type="button" className="primary" disabled={busy || !selected || !accounts.hasDeveloperToken} onClick={onQuery}>{hasReport ? "更新本周排位" : "查询本周排位"}</button>
-          <button type="button" disabled={busy} onClick={() => editAccount()}>添加村庄</button>
-          {selected && <button type="button" disabled={busy} onClick={() => editAccount(selected)}>编辑村庄</button>}
+          <button type="button" disabled={busy} onClick={onSample}>查看示例</button>
+          <button type="button" disabled={busy} onClick={() => setEditor({ type: "developer", token: "" })}>
+            {accounts.hasDeveloperToken ? "管理令牌" : "设置 API 令牌"}
+          </button>
+          <button type="button" className="primary" disabled={busy} onClick={() => editAccount()}>添加村庄</button>
         </div>
-      </div>
-      <div className="credential-bar">
-        {selected?.clanTag && <span className="selected-clan">部落 {selected.clanTag}</span>}
-        <span>{accounts.hasDeveloperToken ? "开发者 API 令牌已保存" : "查询需要 Supercell 开发者 API 令牌"}</span>
-        <button type="button" className="text-button" disabled={busy} onClick={() => setEditor({ type: "developer", token: "" })}>
-          {accounts.hasDeveloperToken ? "管理令牌" : "设置令牌"}
-        </button>
-        <button type="button" className="text-button example-button" disabled={busy} onClick={onSample}>查看示例</button>
-      </div>
-      {children}
+      </header>
       {editor?.type === "account" && (
-        <form className="account-editor" onSubmit={saveAccount} autoComplete="off">
+        <form className="account-editor" key={editor.existing?.tag || "add"} onSubmit={saveAccount} autoComplete="off">
           <label htmlFor="edit-village-tag">村庄标签
-            <input id="edit-village-tag" required value={editor.tag} placeholder="#2PP8QG" maxLength={21}
+            <input id="edit-village-tag" autoFocus required value={editor.tag} placeholder="#2PP8QG" maxLength={21}
               readOnly={!!editor.existing} onChange={update("tag")} spellCheck={false} />
           </label>
           <label htmlFor="edit-village-name">村庄名称或备注
@@ -178,23 +171,23 @@ export default function AccountPanel({ accounts, busy, hasReport, onSelect, onSa
             <button type="submit" className="primary" disabled={busy}>保存村庄</button>
             <button type="button" disabled={busy} onClick={() => setEditor(null)}>取消</button>
             {editor.existing && <button type="button" className="danger" disabled={busy}
-              onClick={() => setEditor({ type: "remove" })}>移除村庄</button>}
+              onClick={() => setEditor({ type: "remove", existing: editor.existing })}>移除村庄</button>}
           </div>
         </form>
       )}
-      {editor?.type === "remove" && selected && (
+      {editor?.type === "remove" && (
         <div className="account-editor" role="group" aria-label="确认移除村庄">
-          <p className="editor-help">从本机移除 {selected.name || selected.tag} 及其保存的游戏令牌。</p>
+          <p className="editor-help">从本机移除 {editor.existing.name || editor.existing.tag}（{editor.existing.tag}）及其保存的游戏令牌。</p>
           <div className="editor-actions">
             <button type="button" className="danger" disabled={busy} onClick={removeAccount}>确认移除</button>
-            <button type="button" disabled={busy} onClick={() => editAccount(selected)}>取消</button>
+            <button type="button" disabled={busy} onClick={() => editAccount(editor.existing)}>取消</button>
           </div>
         </div>
       )}
       {editor?.type === "developer" && (
         <form className="account-editor developer-editor" onSubmit={saveDeveloper} autoComplete="off">
           <label htmlFor="api-token">开发者 API 令牌
-            <input id="api-token" type="password" autoComplete="off" value={editor.token} required
+            <input id="api-token" autoFocus type="password" autoComplete="off" value={editor.token} required
               maxLength={4096} placeholder={accounts.hasDeveloperToken ? "粘贴新令牌以更换" : "粘贴开发者后台生成的 JWT"} onChange={update("token")} />
           </label>
           <div className="editor-actions">
@@ -216,6 +209,44 @@ export default function AccountPanel({ accounts, busy, hasReport, onSelect, onSa
           </div>
         </div>
       )}
+      {accounts.accounts.length > 0 ? <ul className="village-list" aria-label="已保存村庄">
+        {accounts.accounts.map((account) => {
+          const current = account.tag === accounts.selectedTag;
+          return <li key={account.tag}>
+            <button className="village-open" type="button" disabled={busy} onClick={() => onSelect(account.tag)}>
+              <span className="village-identity"><strong>{account.name || account.tag}</strong>
+                {account.name && account.name !== account.tag && <small>{account.tag}</small>}</span>
+              {current && <span className="current-village-label">当前</span>}
+              {account.clanTag && <small>部落 {account.clanTag}</small>}
+            </button>
+            <div className="village-actions">
+              {current && <button type="button" disabled={busy || !accounts.hasDeveloperToken} onClick={onQuery}>
+                {hasReport ? "更新本周排位" : "查询本周排位"}</button>}
+              <button type="button" disabled={busy} onClick={() => editAccount(account)}
+                aria-label={`编辑村庄 ${account.name || account.tag}`}>编辑</button>
+            </div>
+          </li>;
+        })}
+      </ul> : <p className="village-empty">暂无常用村庄</p>}
+      {history.length > 0 && <section className="saved-history" aria-labelledby="recent-villages-title">
+        <header className="saved-villages-header"><h3 id="recent-villages-title">最近查询</h3>
+          {history.length > 5 && <button className="text-button" type="button" aria-expanded={allRecent}
+            onClick={() => setAllRecent(!allRecent)}>{allRecent ? "收起" : `查看全部（${history.length}）`}</button>}
+        </header>
+        <ul className="village-list">{recent.map((entry) => {
+          const saved = savedTags.has(entry.playerTag);
+          return <li key={entry.playerTag}>
+            <button type="button" className="village-open" disabled={busy || (!saved && !accounts.hasDeveloperToken)}
+              onClick={() => saved ? onSelect(entry.playerTag) : onLookupPlayer(entry.playerTag)}>
+              <span className="village-identity"><strong>{entry.playerName || entry.playerTag}</strong>
+                {entry.playerName && entry.playerName !== entry.playerTag && <small>{entry.playerTag}</small>}</span>
+            </button>
+            {entry.lastQueriedAt && <time dateTime={entry.lastQueriedAt}>{formatShortTime(entry.lastQueriedAt)}</time>}
+            {!saved && <button className="village-save" type="button" disabled={busy}
+              onClick={() => editAccount(null, entry)}>加入常用</button>}
+          </li>;
+        })}</ul>
+      </section>}
     </section>
   );
 }

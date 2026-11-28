@@ -13,6 +13,98 @@ const battle = (id, extra = {}) => ({
   id, playerTag: "#MOCK1", opponentTag: "#MOCK2", timestamp: "2026-11-24T18:00:05.000Z", stars: 2, ...extra,
 });
 
+const personalBattle = (id, timestamp, fields = {}) => ({
+  id, timestamp, opponentTag: "#MOCK2", stars: 2, destruction: 80, trophies: 26, battleType: "RANKED", ...fields,
+});
+
+test("partially overlapping player history is preserved across a database reopen", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "coc-ranked-history-test-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const file = join(directory, "coc-ranked.db");
+  const earliest = personalBattle("older", "2026-11-22T04:00:00.000Z");
+  const rounded = personalBattle("rounded", "2026-11-24T04:00:00.000Z", {
+    armyShareCode: "u9x80", gameToken: "fixture-excluded", note: "fixture-private-note",
+  });
+  const precise = personalBattle("precise", "2026-11-24T04:00:00.300Z", { durationSeconds: 173 });
+  const latestDefense = personalBattle("recent", "2026-11-25T06:00:00.000Z", { battleType: "LEGEND" });
+
+  const initial = openDatabase(file);
+  try {
+    initial.playerHistory.merge("#MOCK1", { attacks: [earliest, rounded], defenses: [] });
+    assert.deepEqual(initial.playerHistory.merge("#MOCK9", {}), { attacks: [], defenses: [] });
+    const data = initial.db.prepare("SELECT data FROM player_history WHERE id = 'rounded'").get().data;
+    assert.equal(JSON.parse(data).armyShareCode, "u9x80");
+    assert.doesNotMatch(data, /"army"|"gameToken"|"note"/);
+  } finally {
+    initial.close();
+  }
+
+  const reopened = openDatabase(file);
+  try {
+    const newer = { attacks: [precise], defenses: [latestDefense] };
+    const result = reopened.playerHistory.merge("mock1", newer, "2026-11-25T12:00:00Z");
+    assert.deepEqual(result.attacks.map(({ id }) => id), ["precise", "older"]);
+    assert.equal(result.attacks[0].durationSeconds, 173);
+    assert.equal(result.attacks[0].army.troops[0].name, "Super Bowler");
+    assert.deepEqual(result.attacks[0].previousIds, ["rounded"]);
+    assert.deepEqual(result.defenses.map(({ id, trophyDelta }) => [id, trophyDelta]), [["recent", -26]]);
+    assert.equal(reopened.db.prepare("SELECT count(*) AS n FROM player_history").get().n, 3);
+    assert.deepEqual(reopened.playerHistory.merge("#MOCK1", newer), result);
+    assert.deepEqual(reopened.playerHistory.merge("#MOCK9", {}), { attacks: [], defenses: [] });
+  } finally {
+    reopened.close();
+  }
+});
+
+test("leaderboard history reads only the player's Legend battles from the two league days", (t) => {
+  const database = openDatabase(":memory:");
+  t.after(() => database.close());
+  const now = Date.parse("2026-11-25T05:00:00Z");
+  const first = "2026-11-24T05:00:00.000Z";
+  const older = "2026-11-24T04:59:59.999Z";
+  const legend = (id, timestamp, extra) => personalBattle(id, timestamp, { battleType: "LEGEND", ...extra });
+  database.playerHistory.merge("#MOCK1", {
+    attacks: [legend("in", first), personalBattle("ranked", first), legend("out", older, { opponentTag: "#OTHER" })],
+    defenses: [legend("defense", older, { battleTimestamp: first })],
+  });
+  database.playerHistory.merge("#MOCK2", { attacks: [legend("unrelated", first)] });
+  const archive = database.playerHistory.readRecentLegend("mock1", now);
+  assert.deepEqual(archive.attacks.map(row => row.id), ["in"]);
+  assert.deepEqual(archive.defenses.map(row => row.id), ["defense"]);
+  assert.deepEqual(database.playerHistory.readRecentLegend("#MOCK1", now + 86_400_000), { attacks: [], defenses: [] });
+  assert.equal(database.playerHistory.read("#MOCK1").attacks.length, 3);
+});
+
+test("recent village queries persist, deduplicate and retain the 50 latest distinct tags", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "coc-ranked-queries-test-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const file = join(directory, "coc-ranked.db");
+  const lastQueriedAt = "2026-11-27T10:00:00.000Z";
+  const initial = openDatabase(file);
+  try {
+    assert.deepEqual(initial.temporaryQueries.list(), []);
+    for (let number = 0; number < 52; number += 1) {
+      initial.temporaryQueries.record({ playerTag: `#MOCK${number}`, lastQueriedAt });
+    }
+    initial.temporaryQueries.record({ playerTag: " mock2 ", playerName: "重查玩家", lastQueriedAt });
+  } finally {
+    initial.close();
+  }
+
+  const reopened = openDatabase(file);
+  try {
+    const rows = reopened.temporaryQueries.list();
+    assert.equal(rows.length, 50);
+    assert.deepEqual({ ...rows[0] }, { playerTag: "#MOCK2", playerName: "重查玩家", lastQueriedAt });
+    assert.equal(rows[1].playerTag, "#MOCK51");
+    assert.equal(rows[1].playerName, "#MOCK51");
+    assert.equal(rows.at(-1).playerTag, "#MOCK3");
+    assert.equal(new Set(rows.map(({ playerTag }) => playerTag)).size, 50);
+  } finally {
+    reopened.close();
+  }
+});
+
 test("snapshots round-trip and a later write replaces superseded battles", (context) => {
   const database = openDatabase(":memory:");
   context.after(() => database.close());

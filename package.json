@@ -1,12 +1,13 @@
 {
   "name": "coc-ranked",
-  "version": "1.4.0",
+  "version": "1.5.2",
   "description": "部落冲突排位助手",
   "author": "COC Ranked",
   "private": true,
   "type": "module",
   "main": "desktop/main.mjs",
   "scripts": {
+    "harness": "node --test test/*.test.mjs && npm run build",
     "build": "vite build",
     "start": "electron .",
     "package:windows": "npm run build && electron-builder --win nsis portable --x64 --publish never",
@@ -14,7 +15,8 @@
   },
   "dependencies": {
     "electron-updater": "6.8.11",
-    "exceljs": "4.4.0"
+    "exceljs": "4.4.0",
+    "unzipper": "0.12.5"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "5.0.4",

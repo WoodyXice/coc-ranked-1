@@ -1,0 +1,48 @@
+.atlas-edges {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.atlas-link-track {
+  stroke: #7993a4;
+  stroke-width: .9;
+  opacity: .54;
+}
+.atlas-link-primary .atlas-link-track {
+  stroke: #567c94;
+  stroke-width: 1.15;
+}
+.atlas-link-bridge .atlas-link-track {
+  stroke: #4f819a;
+  stroke-width: 1.45;
+  opacity: .7;
+}
+.atlas-edges.has-focus .atlas-link:not(.is-selected) { opacity: .42; }
+.atlas-link.is-selected .atlas-link-track {
+  stroke: #285d82;
+  stroke-width: 2;
+  opacity: 1;
+}
+.atlas-link-flow path {
+  animation: atlas-edge-travel var(--travel-time) linear var(--travel-offset) infinite;
+}
+.atlas-link-trail {
+  --dash-start: 5px;
+  stroke: #337eaa;
+  stroke-width: 2.1;
+  stroke-dasharray: 5 95;
+  opacity: .68;
+}
+.atlas-link-pulse {
+  stroke: #147499;
+  stroke-width: 3.4;
+  stroke-dasharray: .1 99.9;
+}
+@keyframes atlas-edge-travel {
+  from { stroke-dashoffset: var(--dash-start, 0px); }
+  to { stroke-dashoffset: calc(var(--dash-start, 0px) - 100px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .atlas-link-flow { display: none; }
+  .atlas-link-flow path { animation: none; }
+}

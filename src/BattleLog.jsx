@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 import ArmyLineup, { ArmyAttribution, hasLineup } from "./ArmyLineup.jsx";
-import { compareRows, SortHeader, StandingSummary, Trophy } from "./Standings.jsx";
+import { CompactSort, compareRows, SortHeader, StandingSummary, Trophy } from "./Standings.jsx";
 import { formatDuration, formatTime } from "./battle-time.mjs";
 import { DEFENSE_TOP_N, defenseRanks } from "../insights.mjs";
 
@@ -13,7 +13,7 @@ function battleTrophy(row, lost) {
 }
 
 export default function BattleLog({ kind, battleViews, isSample, accountName, periodLabel = "本周", showStanding = true,
-  onLookupPlayer, dailyTrophies, standings, rowBadge }) {
+  onLookupPlayer, dailyTrophies, standings, officialStanding, recordedOnly = false, rowBadge }) {
   const headingId = useId();
   const [sort, setSort] = useState({ key: "time", ascending: false });
   const offense = kind === "attacks";
@@ -23,6 +23,8 @@ export default function BattleLog({ kind, battleViews, isSample, accountName, pe
   const label = offense ? "进攻" : "防守";
   const lineupLabel = offense ? "己方阵容" : "对手阵容";
   const rows = battleViews?.[kind] ?? [];
+  const weekly = officialStanding ?? (showStanding && !battleViews?.personalOnly ? battleViews?.standing : null);
+  const weeklyCount = weekly?.[offense ? "attackCount" : "defenseCount"];
   const ranks = offense && standings?.length && !battleViews?.personalOnly ? defenseRanks(standings, mode) : null;
   const columns = [
     { key: "opponent", label: offense ? "防守方" : "进攻方", ascendingFirst: true },
@@ -74,16 +76,18 @@ export default function BattleLog({ kind, battleViews, isSample, accountName, pe
       </dl>}
       {rows.length === 0 ? (
         <div className="empty-card">
-          <p>{isSample ? "示例没有这类战绩。查询村庄后可查看个人战绩。" : `官方 API 本次未返回该村庄${periodLabel}的${label}记录。`}</p>
+          <p>{isSample ? `示例没有${label}记录。` : `官方 API 本次未返回该村庄${periodLabel}的${label}记录。`}</p>
         </div>
       ) : (
         <>
           <dl className="battle-summary battle-log-stats">
-            <div><dt>{label}场次</dt><dd>{formatNumber.format(rows.length)}</dd></div>
-            <div><dt>{offense ? "三星场次" : "被三星场次"}</dt><dd>{formatNumber.format(threeStars)}</dd></div>
-            <div><dt>{offense ? "平均进攻星数" : "平均被打星数"}</dt><dd>{averageStars}</dd></div>
-            <div><dt>{offense ? "平均摧毁率" : "对手平均摧毁率"}</dt><dd>{average}</dd></div>
+            <div><dt>{weekly ? "本周小组" : recordedOnly ? "已收录" : ""}{label}场次</dt><dd>{weekly ? (Number.isFinite(weeklyCount) ? formatNumber.format(weeklyCount) : "—") : formatNumber.format(rows.length)}</dd>
+              {weekly && <small>已取得 {rows.length} 场明细</small>}</div>
+            <div><dt>{weekly ? "明细" : ""}{offense ? "三星场次" : "被三星场次"}</dt><dd>{formatNumber.format(threeStars)}</dd></div>
+            <div><dt>{weekly ? "明细" : ""}{offense ? "平均进攻星数" : "平均被打星数"}</dt><dd>{averageStars}</dd></div>
+            <div><dt>{weekly ? "明细" : ""}{offense ? "平均摧毁率" : "对手平均摧毁率"}</dt><dd>{average}</dd></div>
           </dl>
+          <div className="battle-mobile-sort"><CompactSort columns={columns} sort={sort} onSort={setSort} /></div>
           <div className="battle-card">
             <table className="battle-table personal-battle-table">
               <colgroup>
@@ -104,7 +108,7 @@ export default function BattleLog({ kind, battleViews, isSample, accountName, pe
                   const rowClass = [topDefense && "defense-top-hit", badge && "army-history-focus"].filter(Boolean).join(" ");
                   return (
                     <tr key={row.id || index} className={rowClass || undefined}>
-                      <th scope="row">
+                      <th scope="row"><span className="battle-field-label">{columns[0].label}</span>
                         {canLookup ? (
                           <button className="battle-opponent-name battle-opponent-lookup" type="button" title={opponent}
                             aria-label={`查询村庄 ${[row.opponentName, row.opponentTag].filter(Boolean).join(" ")}`}
@@ -113,22 +117,22 @@ export default function BattleLog({ kind, battleViews, isSample, accountName, pe
                         {row.opponentTag && row.opponentName && <small>{row.opponentTag}</small>}
                         {defenseRank && <span className="defense-rank-badge" title="按本周小组防守得杯计算">组内防守第 {defenseRank} 名</span>}
                       </th>
-                      <td><time dateTime={timestamp || undefined}>{formatTime(timestamp)}</time></td>
-                      <td>{formatDuration(row.durationSeconds)}</td>
-                      <td>{stars !== null ? (
+                      <td><span className="battle-field-label">对战时间</span><time dateTime={timestamp || undefined}>{formatTime(timestamp)}</time></td>
+                      <td><span className="battle-field-label">用时</span>{formatDuration(row.durationSeconds)}</td>
+                      <td><span className="battle-field-label">星数</span>{stars !== null ? (
                         <span className="stars" aria-label={`${stars} 星`}>
                           <span aria-hidden="true">{"★".repeat(stars)}</span><span className="star-empty" aria-hidden="true">{"☆".repeat(3 - stars)}</span>
                         </span>
                       ) : "—"}</td>
-                      <td>{Number.isFinite(row.destruction) ? row.destruction + "%" : "—"}</td>
-                      <td><Trophy value={trophy} /></td>
-                      <td className="battle-army-cell">{showArmy ? (
+                      <td><span className="battle-field-label">摧毁率</span>{Number.isFinite(row.destruction) ? row.destruction + "%" : "—"}</td>
+                      <td><span className="battle-field-label">{trophyLabel}</span><Trophy value={trophy} /></td>
+                      <td className="battle-army-cell"><span className="battle-field-label">{lineupLabel}</span>{showArmy ? (
                         <div className="battle-army">
                           {badge ? <div className="battle-army-label">
                             <span className="battle-army-strategy" title={lineup}>{lineup}</span>
                             <span className="gear-badge">{badge}</span>
                           </div> : <span className="battle-army-strategy" title={lineup}>{lineup}</span>}
-                          <ArmyLineup army={row.army} label={lineupLabel} />
+                          <ArmyLineup army={row.army} label={[row.strategy, lineupLabel].filter(Boolean).join(" · ")} />
                         </div>
                       ) : <span className="missing-lineup">{row.strategy || (row.armyShareCode ? "阵容待解析" : "暂无阵容")}</span>}</td>
                     </tr>

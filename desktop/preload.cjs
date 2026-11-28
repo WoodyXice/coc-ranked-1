@@ -10,8 +10,11 @@ function invoke(channel, ...args) {
 contextBridge.exposeInMainWorld("cocApp", {
   collect: (input) => invoke("coc:collect", input),
   fetchLegendLeaderboard: (input) => invoke("coc:legend-leaderboard", input),
+  fetchLegendPlayerMetrics: (input) => invoke("coc:legend-player-metrics", input),
   fetchLegendLocations: () => invoke("coc:legend-locations"),
   fetchTemporaryPlayer: (input) => invoke("coc:temporary-player", input),
+  fetchTemporaryGroupDetails: (input) => invoke("coc:temporary-group-details", input),
+  getTemporaryQueryHistory: () => invoke("coc:temporary-query-history"),
   cachedReport: (tag) => invoke("coc:cached-report", tag),
   listAccounts: () => invoke("coc:accounts"),
   saveAccount: (input) => invoke("coc:save-account", input),

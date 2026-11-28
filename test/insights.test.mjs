@@ -4,7 +4,10 @@ import ExcelJS from "exceljs";
 import { getReport } from "../analytics.mjs";
 import { decodeArmyShareCode } from "../collector.mjs";
 import { workbookBytes } from "../files.mjs";
-import { armySets, attacksWithEquipment, defenseRanks, equipmentUsage, myAttacksByOpponent } from "../insights.mjs";
+import {
+  armySets, attacksWithEquipment, defenseRanks, equipmentUsage, legendPlayerMetrics,
+  legendStrategyLeaderboard, myAttacksByOpponent, playerStrategySamples, playerStrategyStats, sortLegendPlayers,
+} from "../insights.mjs";
 
 function strategyOf(code) {
   return getReport({ source: "api", attacks: [{ id: "x", armyShareCode: code }] }).attacks[0].strategy;
@@ -29,6 +32,190 @@ test("my attacks are grouped by opponent", () => {
     { opponentTag: "#A", stars: 2, destruction: 80, trophies: 20, timestamp: "2026-11-24T01:00:00Z" },
   ] });
   assert.deepEqual(mine.get("#A").map((r) => [r.stars, r.trophies]), [[2, 20], [3, 40]]);
+});
+
+test("player strategy metrics keep distinct unknowns and use each observed score denominator", () => {
+  const stats = playerStrategyStats([
+    { strategy: " 天女蓝胖 ", stars: 3, destruction: 100 },
+    { strategy: "天女蓝胖", stars: 2, destruction: null },
+    { strategy: "天女蓝胖", stars: null, destruction: 80 },
+    { strategy: "天女蓝胖", stars: 4, destruction: 101 },
+    { strategy: "其他", stars: 0, destruction: 0 },
+    { strategy: "其他蓝胖", stars: null, destruction: null },
+    { strategy: "未分类", stars: null, destruction: 50 },
+    { strategy: "", stars: 0 },
+    { stars: 3, destruction: 100 },
+    null,
+  ]);
+  assert.deepEqual(stats.map(({ strategy, count }) => [strategy, count]),
+    [["天女蓝胖", 4], [null, 3], ["其他", 1], ["其他蓝胖", 1]]);
+  assert.deepEqual(stats[0], {
+    strategy: "天女蓝胖", count: 4, scoredCount: 2, threeStarCount: 1, destructionCount: 2,
+    threeStarRate: 0.5, averageDestruction: 90,
+  });
+  assert.equal(stats[1].averageDestruction, 75);
+  assert.equal(stats[1].threeStarRate, 0.5);
+  assert.equal(stats[2].threeStarRate, 0);
+  assert.equal(stats[2].averageDestruction, 0);
+  assert.equal(stats[3].threeStarRate, null);
+  assert.equal(stats[3].averageDestruction, null);
+  assert.deepEqual(playerStrategyStats(), []);
+});
+
+function legendRows(date, trophyDelta, { length = 8, stars = 2, strategy = "龙流" } = {}) {
+  const start = Date.parse(`${date}T05:00:00.000Z`);
+  return Array.from({ length }, (_, index) => ({
+    battleType: "LEGEND", timestamp: new Date(start + 60_000 * index).toISOString(),
+    trophyDelta, stars, strategy,
+  }));
+}
+
+test("strategy comparisons use the latest triple and the closest scored miss from only the selected range and style", () => {
+  const battle = (id, stars, destruction, strategy = "龙流") => ({
+    id, stars, destruction, strategy, timestamp: `2026-11-26T11:0${id}:00Z`, army: { troops: [{ id }] },
+  });
+  const rows = [battle(0, 3, 100), battle(1, 3, 100), battle(2, 2, 97), battle(3, 2, 97), battle(4, 1, 99),
+    battle(5, 2, null), battle(6, 2, 99, "天女蓝胖"), battle(7, null, 99), battle(8, 2, 101)];
+  const samples = playerStrategySamples(rows, "龙流");
+  assert.equal(samples.triple, rows[1]);
+  assert.equal(samples.near, rows[3]);
+  assert.deepEqual(playerStrategySamples(rows.slice(6, 7), "龙流"), { triple: undefined, near: undefined });
+  assert.equal(playerStrategySamples([rows[5]], "龙流").near, rows[5]);
+});
+
+test("Legend board metrics use up to sixteen attacks across the two latest league days at the 05:00 UTC reset", () => {
+  const now = new Date("2026-11-27T18:00:00Z");
+  const today = legendRows("2026-11-27", 40, { stars: 3 });
+  const yesterday = legendRows("2026-11-26", 20);
+  yesterday[7].timestamp = "2026-11-27T04:59:59.900Z";
+  yesterday[6].strategy = "天女蓝胖";
+  yesterday[7].strategy = "天女蓝胖";
+  const attacks = [
+    ...today,
+    ...yesterday,
+    ...legendRows("2026-11-25", 40, { stars: 3, strategy: "巨矛投手" }),
+    { ...today[0], timestamp: "2026-11-26T04:59:59.900Z" },
+    { ...yesterday[0], battleType: "RANKED" },
+    { ...yesterday[0], timestamp: "2026-11-27T18:00:01.000Z" },
+    { ...yesterday[0], timestamp: "invalid" },
+  ];
+  const defenses = [
+    ...legendRows("2026-11-27", -20),
+    ...legendRows("2026-11-26", -30),
+    ...legendRows("2026-11-25", -30),
+  ];
+  assert.deepEqual(legendPlayerMetrics({ attacks, defenses }, now), {
+    strategy: "龙流", strategyCount: 14,
+    strategies: [
+      { strategy: "龙流", count: 14, scoredCount: 14, threeStarCount: 8 },
+      { strategy: "天女蓝胖", count: 2, scoredCount: 2, threeStarCount: 0 },
+    ],
+    attackCount: 16, threeStarRate: 0.5,
+    averageDailyAttack: 240, attackDays: 2,
+    averageDailyNet: 40, completedDays: 2,
+  });
+
+  const extra = { ...today[0], timestamp: "2026-11-27T12:00:00Z" };
+  const anomalous = legendPlayerMetrics({ attacks: [...attacks, extra], defenses }, now);
+  assert.equal(anomalous.attackCount, 16);
+  assert.equal(anomalous.attackDays, 1);
+  assert.equal(anomalous.completedDays, 1);
+});
+
+test("incomplete defenses do not discard a complete attack day from the attack average", () => {
+  const now = new Date("2026-11-27T18:00:00Z");
+  const attacks = [...legendRows("2026-11-27", 40, { stars: 3 }), ...legendRows("2026-11-26", 20)];
+  const defenses = [...legendRows("2026-11-27", -20, { length: 7 }), ...legendRows("2026-11-26", -30)];
+  assert.deepEqual(legendPlayerMetrics({ attacks, defenses }, now), {
+    strategy: "龙流", strategyCount: 16,
+    strategies: [{ strategy: "龙流", count: 16, scoredCount: 16, threeStarCount: 8 }],
+    attackCount: 16, threeStarRate: 0.5,
+    averageDailyAttack: 240, attackDays: 2,
+    averageDailyNet: -80, completedDays: 1,
+  });
+  assert.deepEqual(legendPlayerMetrics({ attacks: [{ ...attacks[0], trophyDelta: null }, ...attacks.slice(1)], defenses }, now), {
+    strategy: "龙流", strategyCount: 16,
+    strategies: [{ strategy: "龙流", count: 16, scoredCount: 16, threeStarCount: 8 }],
+    attackCount: 16, threeStarRate: 0.5,
+    averageDailyAttack: 160, attackDays: 1,
+    averageDailyNet: -80, completedDays: 1,
+  });
+});
+
+test("Legend board metrics distinguish missing samples, zero scores, and tied named strategies", () => {
+  const now = new Date("2026-11-27T18:00:00Z");
+  const none = {
+    strategy: null, strategyStatus: "no-attacks", strategyCount: 0, strategies: [], attackCount: 0, threeStarRate: null,
+    averageDailyAttack: null, attackDays: 0, averageDailyNet: null, completedDays: 0,
+  };
+  assert.deepEqual(legendPlayerMetrics({}, now), none);
+  const attacks = legendRows("2026-11-26", 0, { stars: 0, strategy: "其他" });
+  const defenses = legendRows("2026-11-26", 0);
+  assert.deepEqual(legendPlayerMetrics({ attacks, defenses }, now), {
+    ...none, strategyStatus: "no-army", attackCount: 8, threeStarRate: 0, averageDailyAttack: 0, attackDays: 1, averageDailyNet: 0, completedDays: 1,
+  });
+  assert.equal(legendPlayerMetrics({ attacks: [{ ...attacks[0], army: decodeArmyShareCode("u1x12345") }] }, now).strategyStatus, "unrecognized");
+  const mixed = [
+    { ...attacks[0], strategy: "龙流" },
+    { ...attacks[1], strategy: "巨矛投手" },
+    ...attacks.slice(2),
+  ];
+  const eitherOrder = legendPlayerMetrics({ attacks: mixed, defenses }, now);
+  assert.equal(eitherOrder.strategy, "巨矛投手");
+  assert.equal(eitherOrder.strategyCount, 1);
+  assert.deepEqual(legendPlayerMetrics({ attacks: [...mixed].reverse(), defenses }, now), eitherOrder);
+  assert.equal(legendPlayerMetrics({ attacks, defenses: [...defenses, { ...defenses[0] }] }, now).averageDailyNet, null);
+});
+
+test("Legend strategy board pools scored attacks per named strategy within the selected roster", () => {
+  const now = new Date("2026-11-27T18:00:00Z");
+  const playerMetrics = (scores) => legendPlayerMetrics({
+    attacks: scores.map(([strategy, stars], index) => ({
+      battleType: "LEGEND", timestamp: new Date(now.getTime() - index * 60_000).toISOString(), strategy, stars,
+    })),
+  }, now);
+  const entries = new Map([
+    ["#A", playerMetrics([["龙流", 3], ["天女蓝胖", 2], ["天女蓝胖", 2], ["其他", 3], ["未识别", 3]])],
+    ["#B", playerMetrics([["龙流", 3], ["龙流", 3], ["龙流", null], ["巨矛投手", null], ["天女蓝胖", 3]])],
+    ["#C", playerMetrics([["龙流", 3], ["龙流", 3]])],
+    ["#D", playerMetrics([["龙流", 1], ["龙流", 1], ["龙流", 1], ["龙流", 1], ["龙流", 1]])],
+    ["#OTHER", playerMetrics([["巨矛投手", 3]])],
+    ["#ERROR", null],
+  ]);
+  const rows = ["#A", "#B", "#C", "#D", "#ERROR", "#PENDING"].map((playerTag, i) =>
+    ({ playerTag, playerName: `玩家 ${i + 1}`, rank: i + 1 }));
+  const board = legendStrategyLeaderboard(rows.toReversed(), entries);
+  assert.deepEqual(board.map(({ strategy, scoredCount, threeStarCount, threeStarRate, playerCount }) =>
+    [strategy, scoredCount, threeStarCount, threeStarRate, playerCount]), [
+    ["龙流", 10, 5, 0.5, 4], ["天女蓝胖", 3, 1, 1 / 3, 2],
+  ]);
+  // Equal rates prefer the larger sample, then the official board rank.
+  assert.deepEqual(board[0].topPlayers, [
+    { playerTag: "#B", playerName: "玩家 2", rank: 2, scoredCount: 2, threeStarCount: 2, threeStarRate: 1 },
+    { playerTag: "#C", playerName: "玩家 3", rank: 3, scoredCount: 2, threeStarCount: 2, threeStarRate: 1 },
+    { playerTag: "#A", playerName: "玩家 1", rank: 1, scoredCount: 1, threeStarCount: 1, threeStarRate: 1 },
+  ]);
+  assert.deepEqual(board[1].topPlayers.map((p) => p.playerTag), ["#B", "#A"]);
+  assert.deepEqual(legendStrategyLeaderboard([rows.at(-1)], entries), []);
+});
+
+test("Legend player sorting preserves official ranks and keeps missing or pending values last in both directions", () => {
+  const rows = ["#A", "#B", "#C", "#D", "#E"].map((playerTag, i) =>
+    ({ playerTag, rank: i + 1, trophies: [9, 102, 11, 250, 7][i], clanName: ["", "Alpha", "Beta", "", ""][i] }));
+  const metrics = new Map([
+    ["#A", { threeStarRate: 0.125, averageDailyNet: -5 }],
+    ["#B", { threeStarRate: 0, averageDailyNet: 0 }],
+    ["#C", { threeStarRate: 0.125, averageDailyNet: 10 }],
+    ["#D", null],
+  ]);
+  const tags = (key, direction) => sortLegendPlayers(rows, metrics, key, direction).map((row) => row.playerTag);
+  assert.deepEqual(tags("threeStarRate", "desc"), ["#A", "#C", "#B", "#D", "#E"]);
+  assert.deepEqual(tags("threeStarRate", "asc"), ["#B", "#A", "#C", "#D", "#E"]);
+  assert.deepEqual(tags("averageDailyNet", "asc"), ["#A", "#B", "#C", "#D", "#E"]);
+  assert.deepEqual(tags("trophies", "desc"), ["#D", "#B", "#C", "#A", "#E"]);
+  assert.deepEqual(tags("clanName", "desc"), ["#C", "#B", "#A", "#D", "#E"]);
+  assert.deepEqual(tags("rank", "asc"), ["#A", "#B", "#C", "#D", "#E"]);
+  assert.deepEqual(rows.map((row) => row.rank), [1, 2, 3, 4, 5]);
 });
 
 test("equipment usage groups gear under its hero and computes rates", () => {
@@ -79,6 +266,31 @@ test("bowler classification uses hero gear ownership and supports older army rec
     { army: { troops, heroes: [{ name: "飞龙公爵", equipment: ["雷电獠牙"] }], spells: { 隐形法术: 3 } } },
   ] }).attacks;
   assert.deepEqual(classified.map(({ strategy }) => strategy), ["天女蓝胖", "隐龙蓝胖"]);
+});
+
+test("main-force styles use trained troop space and distinguish corroborated hero equipment", () => {
+  assert.equal(strategyOf("u8x110-10x12-3x7"), "根蔓武神");
+  assert.equal(strategyOf("u2x17-20x5-4x7"), "熔岩狗球");
+  assert.equal(strategyOf("u2x201-2x202-4x7"), "矿猪");
+  assert.equal(strategyOf("h1e15_20u12x11-12x24-4x7"), "天女矿猪");
+  assert.equal(strategyOf("h2e15_20u12x11-12x24-4x7"), "矿猪");
+  assert.equal(strategyOf("h2e22u3x66-4x7s2x35"), "火球超女巫");
+  assert.equal(strategyOf("h2e22u3x66-4x7"), "超级女巫流");
+  assert.equal(strategyOf("h1e22u3x66-4x7s2x35"), "超级女巫流");
+});
+
+test("fallback names describe troop combinations consistently and keep incomplete records unclassified", () => {
+  const name = strategyOf("u4x167-4x194-2x7");
+  assert.match(name, /陨石戈仑/);
+  assert.match(name, /图腾投手/);
+  assert.equal(strategyOf("u6x194-3x167-2x7"), name);
+  assert.equal(strategyOf("u1x110-2x12-4x7i6x110"), "其他");
+  assert.equal(strategyOf("u8x110-10x999"), "其他");
+  const report = getReport({ source: "import", attacks: [
+    { id: "cn", army: { troops: { 根蔓骑士: 8, 瓦基丽武神: 10, 天使: 3 } } },
+    { id: "no-main-army", armyShareCode: "h2e22i5x110s3x35" },
+  ] });
+  assert.deepEqual(report.attacks.map(row => [row.id, row.strategy]), [["cn", "根蔓武神"]]);
 });
 
 test("workbook adds the defense top list and opponent defense ranks", async () => {
