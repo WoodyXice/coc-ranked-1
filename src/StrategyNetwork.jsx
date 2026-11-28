@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
+import AtlasPopulation from "./AtlasPopulation.jsx";
 import { buildStrategyMap } from "./strategy-map-layout.mjs";
 import { placeMapLabels } from "./strategy-map-labels.mjs";
 import { matchesNetworkFilters, measuredValue, netBands, playerRadius, rateBands, valueBand } from "./network-metrics.mjs";
@@ -17,21 +18,21 @@ function prepareBoard(rows, metrics, strategies, mode) {
   const groups = mode === "style"
     ? strategies.map(({ strategy }, i) => ({ key: strategy, name: strategy, color: tones[i % tones.length] }))
     : bands.map(band => ({ key: band.id, name: band.label, color: band.color }));
-  const players = rows.filter(row => Number.isInteger(row.rank) && row.rank >= 1 && row.rank <= 200)
+  const players = rows.filter(row => Number.isInteger(row.rank) && row.rank >= 1)
     .map(row => {
       const stats = metrics.get(row.playerTag);
       const uses = (stats?.strategies ?? []).filter(entry => entry.scoredCount > 0);
       const primary = (uses.find(entry => entry.strategy === stats?.strategy) ?? uses[0])?.strategy;
       const cluster = mode === "style" ? primary : valueBand(measuredValue(stats, mode), bands)?.id;
-      const tier = [1, 3, 10, 30, 80, 200].findIndex(last => row.rank <= last);
+      const tier = [1, 3, 10, 30, 80, Infinity].findIndex(last => row.rank <= last);
       return { ...row, stats, uses, primary, cluster, tier };
     }).sort((a, b) => a.rank - b.rank);
   const nets = players.map(player => measuredValue(player.stats, "net")).filter(value => value !== null);
   return { players, groups, netExtent: nets.length ? [Math.min(...nets), Math.max(...nets)] : [0, 0] };
 }
 
-function drawMap(players, groups, width, mode, sizeBy, netExtent) {
-  const { nodes, zones, height, edges } = buildStrategyMap(players, groups, width, sizeBy, mode);
+function drawMap(players, groups, width, mode, sizeBy, netExtent, density) {
+  const { nodes, zones, height, edges } = buildStrategyMap(players, groups, width, sizeBy, mode, density);
   const points = nodes.map(node => ({ ...node, radius: playerRadius(node, sizeBy, netExtent) * 1.36 }));
   // Reserve painted zone captions first. Player names can then use any clear side of their marker.
   const reserved = [];
@@ -101,11 +102,68 @@ function MetricFilter({ label, value, options, onChange, title }) {
 
 const samples = [{ id: 4, label: "至少 4 场" }, { id: 8, label: "至少 8 场" }, { id: 16, label: "满 16 场" }];
 
+const PlayerPicker = memo(function PlayerPicker({ players, onLookup }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(0);
+  const trigger = useRef(null);
+  const panel = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const dismiss = event => {
+      if (!panel.current?.contains(event.target) && !trigger.current?.contains(event.target)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", dismiss);
+    return () => document.removeEventListener("pointerdown", dismiss);
+  }, [open]);
+  const matches = useMemo(() => {
+    const term = query.trim().toLowerCase();
+    if (!open || !term) return players;
+    const rank = Number(term.replace(/^#/, ""));
+    return players.filter(player => player.rank === rank || player.playerTag.toLowerCase().includes(term)
+      || player.playerName?.toLowerCase().includes(term));
+  }, [players, query, open]);
+  if (players.length <= 200 && !open) return <select value="" aria-label="查看榜上玩家战报"
+    onChange={event => onLookup?.(event.target.value)} disabled={!onLookup || !players.length}>
+    <option value="" disabled>查看玩家</option>
+    {players.map(player => <option key={player.playerTag} value={player.playerTag}>#{player.rank} {player.playerName} · {player.playerTag}</option>)}
+  </select>;
+  const pageCount = Math.max(1, Math.ceil(matches.length / 30));
+  const current = Math.min(page, pageCount - 1);
+  function close(restoreFocus = false) {
+    setOpen(false);
+    if (restoreFocus) trigger.current?.focus();
+  }
+  return <div className="atlas-player-picker" onKeyDown={event => {
+    if (event.key === "Escape") { event.stopPropagation(); close(true); }
+  }}>
+    <button type="button" ref={trigger} aria-expanded={open} disabled={!onLookup} onClick={() => setOpen(value => !value)}>查看玩家</button>
+    {open && <div className="atlas-player-panel" ref={panel}>
+      <input type="search" aria-label="搜索榜上玩家" placeholder="名次、玩家名或标签" autoFocus value={query}
+        onChange={event => { setQuery(event.target.value); setPage(0); }} />
+      <div className="atlas-player-list">
+        {matches.slice(current * 30, (current + 1) * 30).map(player => <button type="button" key={player.playerTag}
+          onClick={() => { close(true); onLookup(player.playerTag); }}>
+          <span>#{player.rank} {player.playerName}</span><small>{player.playerTag}</small>
+        </button>)}
+        {!matches.length && <p>没有匹配的玩家</p>}
+      </div>
+      {matches.length > 30 && <div className="legend-pages">
+        <button type="button" disabled={!current} onClick={() => setPage(current - 1)}>上一页</button>
+        <span>{current + 1} / {pageCount}</span>
+        <button type="button" disabled={current + 1 === pageCount} onClick={() => setPage(current + 1)}>下一页</button>
+      </div>}
+    </div>}
+  </div>;
+});
+
 export default function StrategyNetwork({ rows, strategies, metricsByTag, onLookupPlayer, onOpenStrategies }) {
   const frame = useRef(null);
+  const hitRef = useRef(null);
   const width = useCanvasWidth(frame);
   const [mode, setMode] = useState("style");
   const [sizeBy, setSizeBy] = useState("rank");
+  const [density, setDensity] = useState("standard");
   const [filters, setFilters] = useState(emptyFilters);
   const [controlsOpen, setControlsOpen] = useState(false);
   const [focused, setFocused] = useState("");
@@ -113,8 +171,8 @@ export default function StrategyNetwork({ rows, strategies, metricsByTag, onLook
   const filterCount = filters.styles.length + [filters.rate, filters.net, filters.attack, filters.sample].filter(Boolean).length;
   const matching = useMemo(() => filterCount ? board.players.filter(player => matchesNetworkFilters(player, filters)) : board.players,
     [board, filters, filterCount]);
-  const graph = useMemo(() => drawMap(matching, board.groups, width, mode, sizeBy, board.netExtent),
-    [matching, board, width, mode, sizeBy]);
+  const graph = useMemo(() => drawMap(matching, board.groups, width, mode, sizeBy, board.netExtent, density),
+    [matching, board, width, mode, sizeBy, density]);
   const canUseStyleRates = filters.styles.length > 0 && Boolean(filters.rate);
   const useStyleRates = canUseStyleRates && filters.perStyle;
   const current = graph.points.find(player => player.playerTag === focused);
@@ -149,6 +207,9 @@ export default function StrategyNetwork({ rows, strategies, metricsByTag, onLook
   return <section className="overview-network" aria-label="玩家与流派关系图">
     <header className="network-heading"><h3>玩家关系图</h3>
       <div className="network-controls">
+        <label className="atlas-density">图上密度 <select aria-label="图上密度" value={density} onChange={event => {
+          setDensity(event.target.value); setFocused("");
+        }}><option value="sparse">疏朗</option><option value="standard">标准</option><option value="dense">密集</option><option value="all">全员</option></select></label>
         <div className="network-modes" role="group" aria-label="色块分区">
           {Object.entries(modeNames).map(([key, name]) => <button key={key} type="button" aria-pressed={mode === key}
             onClick={() => { setMode(key); setFocused(""); }}>{name}</button>)}
@@ -176,7 +237,13 @@ export default function StrategyNetwork({ rows, strategies, metricsByTag, onLook
     <div ref={frame} className="network-plot">
       {matching.length === 0 ? <p className="network-empty">暂无符合条件的玩家</p> :
         <svg className="strategy-network-map" viewBox={`0 0 ${width} ${graph.height}`} aria-label={`全球榜玩家，按${modeNames[mode]}分区`} role="group"
-          onPointerLeave={() => setFocused("")}>
+          onPointerLeave={() => setFocused("")} onClickCapture={event => {
+            if (density !== "all" || !event.detail || event.target.closest(".network-player, .network-zone text")) return;
+            const bounds = event.currentTarget.getBoundingClientRect();
+            const tag = hitRef.current?.((event.clientX - bounds.left) * width / bounds.width,
+              (event.clientY - bounds.top) * graph.height / bounds.height);
+            if (tag) { event.stopPropagation(); onLookupPlayer?.(tag); }
+          }}>
           {graph.territories.map(({ key, d, group, caption }) =>
             <g key={key} className="network-zone" role="button" tabIndex={0} aria-label={`筛选${group.name}`}
               aria-pressed={selectedGroup(group)} onClick={() => pick(group)}
@@ -184,6 +251,7 @@ export default function StrategyNetwork({ rows, strategies, metricsByTag, onLook
               <path d={d} fill={group.color} data-region={key} />
               {caption && <text x={caption.x} y={caption.y} textAnchor="middle">{group.name}</text>}
             </g>)}
+          {density === "all" && <AtlasPopulation players={matching} anchors={graph.points} width={width} height={graph.height} hitRef={hitRef} />}
           <g aria-hidden="true" pointerEvents="none">{graph.edges.map(({ a, b }, i) => {
             const active = current && (a.playerTag === current.playerTag || b.playerTag === current.playerTag);
             const commonPrimary = mode === "style" && a.primary && a.primary === b.primary;
@@ -224,17 +292,14 @@ export default function StrategyNetwork({ rows, strategies, metricsByTag, onLook
           {net !== null && `（${current.stats.completedDays} 日）`}</span>
           {useStyleRates && current.uses.filter(use => filters.styles.includes(use.strategy)).map(use =>
             <span key={use.strategy}>{use.strategy} {percent.format(use.threeStarCount / use.scoredCount)}（{use.threeStarCount}/{use.scoredCount}）</span>)}</>
-        : matching.length > 0 && <><span>图中 {graph.points.length} 人</span><span className="network-edge-key"
+        : matching.length > 0 && <><span>图中 {density === "all" ? matching.length : graph.points.length} 人</span><span className="network-edge-key"
           title={mode === "style" ? "连线表示用过同一流派，加粗表示常用流派相同" : undefined}>
           {mode === "style" ? "共用流派" : mode === "rate" ? "同档三星率" : "同档净杯"}</span></>}</div>
       <div className="network-actions"><label>节点大小 <select aria-label="节点大小" value={sizeBy} onChange={event => setSizeBy(event.target.value)}>
         <option value="rank">官方名次</option><option value="rate">三星率</option><option value="net">日均净杯</option><option value="sample">有效进攻</option>
       </select></label>
-      <select value="" aria-label="查看榜上玩家战报"
-        onChange={event => onLookupPlayer?.(event.target.value)} disabled={!onLookupPlayer || !matching.length}>
-        <option value="" disabled>查看玩家</option>
-        {matching.map(player => <option key={player.playerTag} value={player.playerTag}>#{player.rank} {player.playerName} · {player.playerTag}</option>)}
-      </select>{!!filters.styles.length && <button type="button" onClick={onOpenStrategies}>流派排行 ↗</button>}</div>
+      <PlayerPicker players={matching} onLookup={onLookupPlayer} />
+      {!!filters.styles.length && <button type="button" onClick={onOpenStrategies}>流派排行 ↗</button>}</div>
     </footer>
   </section>;
 }

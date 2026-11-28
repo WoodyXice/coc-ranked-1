@@ -22,7 +22,11 @@ function representatives(ranked, categories, limit, sizeBy) {
   ranked.slice(0, 3).forEach(add);
   if (sizeBy !== "rank") priority.slice(0, 3).forEach(add);
   add(ranked.at(-1));
-  for (const { key } of categories) add(priority.find(player => player.cluster === key));
+  const leaders = new Map();
+  for (const player of priority) {
+    if (!leaders.has(player.cluster)) leaders.set(player.cluster, player);
+  }
+  for (const { key } of categories) add(leaders.get(key));
   // Retain ranks throughout the table, even when several categories share the same leaders.
   const intervals = Math.max(2, limit - selected.size);
   for (let j = 0; j < intervals; j++) add(ranked[Math.round(j * (ranked.length - 1) / (intervals - 1))]);
@@ -67,8 +71,9 @@ function positionPlayers(selected, categories, width, height) {
     for (let i = 0; i < 170; i++) {
       const x = i ? insetX + spanX * random() : desiredX;
       const y = i ? insetY + spanY * random() : desiredY;
-      let clearance = gap;
-      for (const p of nodes) clearance = Math.min(clearance, Math.hypot(p.x - x, p.y - y));
+      let nearestSquared = gap * gap;
+      for (const p of nodes) nearestSquared = Math.min(nearestSquared, (p.x - x) ** 2 + (p.y - y) ** 2);
+      const clearance = Math.sqrt(nearestSquared);
       const cost = ((x - desiredX) / spanX) ** 2 + ((y - desiredY) / spanY) ** 2
         + 9 * ((gap - clearance) / gap) ** 2;
       if (cost < lowest) { best = { x, y }; lowest = cost; }
@@ -128,7 +133,10 @@ function territories(categories, nodes, width, height) {
   const painted = new Set();
   const zones = [];
   for (const { key } of categories) {
-    const members = nodes.filter(p => p.cluster === key);
+    const allMembers = nodes.filter(p => p.cluster === key);
+    // The tint represents a local pair. Bounded candidates keep one dominant style cheap to lay out.
+    const members = allMembers.length <= 18 ? allMembers : Array.from({ length: 18 }, (_, i) =>
+      allMembers[Math.round(i * (allMembers.length - 1) / 17)]);
     let best, bestScore = -Infinity;
     for (let i = 0; i < members.length; i++) {
       for (const b of members.slice(i + 1)) {
@@ -175,6 +183,8 @@ function mapEdges(nodes, width, height, mode) {
   pairs.sort((a, b) => a.distance - b.distance);
   const degree = nodes.map(() => 0);
   const edges = [];
+  // Preserve room for the player dots as density rises, especially when a popular style connects everyone.
+  const edgeLimit = Math.min(Math.ceil(nodes.length * 1.25), width < 520 ? 30 : width < 800 ? 52 : 76);
   function link(pair) {
     const { i, j } = pair;
     edges.push({ a: nodes[i], b: nodes[j] });
@@ -203,21 +213,34 @@ function mapEdges(nodes, width, height, mode) {
       if (pair.distance > maxLength || pair.used || degree[i] >= 3 || degree[j] >= 3) continue;
       if (connectIsolated && degree[i] && degree[j]) continue;
       link(pair);
-      if (edges.length >= Math.ceil(nodes.length * 1.25)) return edges;
+      if (edges.length >= edgeLimit) return edges;
     }
   }
   return edges;
 }
 
-export function buildStrategyMap(players, groups, width, sizeBy = "rank", mode = "style") {
-  const height = players.length <= 3 ? 140 + 20 * players.length : Math.round(clamp(width * .34, 320, 450));
+const densityLimits = {
+  sparse: [12, 19, 28],
+  standard: [20, 36, 56],
+  dense: [30, 60, 92],
+  all: [12, 19, 28],
+};
+
+export function buildStrategyMap(players, groups, width, sizeBy = "rank", mode = "style", density = "standard") {
+  const band = width < 520 ? 0 : width < 800 ? 1 : 2;
+  const limit = (densityLimits[density] ?? densityLimits.standard)[band];
+  const visible = Math.min(players.length, limit);
+  const extraHeight = Math.max(0, visible - densityLimits.sparse[band]) * (band === 0 ? 6 : 2.5);
+  // All-player mode keeps a few foreground anchors; its canvas needs space for everyone else.
+  const canvasHeight = density === "all" ? Math.min(160, Math.max(0, players.length - limit) / 2) : 0;
+  const height = players.length <= 3 ? 140 + 20 * players.length :
+    Math.round(clamp(width * .34, 320, 450) + Math.max(extraHeight, canvasHeight));
   if (!players.length) return { nodes: [], height, zones: [], edges: [] };
   const ranked = [...players].sort(byRank);
   const counts = new Map();
   for (const player of ranked) counts.set(player.cluster, (counts.get(player.cluster) ?? 0) + 1);
   const categories = groups.filter(group => counts.has(group.key))
     .sort((a, b) => counts.get(b.key) - counts.get(a.key) || a.key.localeCompare(b.key));
-  const limit = width < 520 ? 12 : width < 800 ? 19 : 28;
   const nodes = positionPlayers(representatives(ranked, categories, limit, sizeBy), categories, width, height);
   const zones = territories(categories, nodes, width, height);
   return { nodes, height, zones, edges: mapEdges(nodes, width, height, mode) };

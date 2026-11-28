@@ -32,8 +32,9 @@ async function loadLocations() {
   return locations.filter(({ id, name }) => Number.isSafeInteger(id) && id > 0 && typeof name === "string" && name.trim());
 }
 
-async function loadLeaderboard(location, force) {
-  const board = await window.cocApp.fetchLegendLeaderboard({ location, force });
+async function loadLeaderboard(key, force) {
+  const [location, size] = key.split(":");
+  const board = await window.cocApp.fetchLegendLeaderboard({ location: location === "global" ? location : Number(location), limit: Number(size), force });
   if (!Array.isArray(board?.rows)) throw new Error("官方接口未返回榜单数据。");
   return board;
 }
@@ -190,6 +191,24 @@ function StrategyTable({ label, strategies, sort, onSort, onLookupPlayer }) {
   </div>;
 }
 
+function PagedPlayers({ rows, ...props }) {
+  const [selectedPage, setPage] = useState(1);
+  const pageSize = 100;
+  if (rows.length <= 200) return <PlayerTable rows={rows} {...props} />;
+  const pages = Math.ceil(rows.length / pageSize);
+  const current = Math.min(selectedPage, pages);
+  return <>
+    <nav className="legend-pages" aria-label="榜单分页">
+      <button type="button" disabled={current === 1} onClick={() => setPage(current - 1)}>上一页</button>
+      <select aria-label="榜单页码" value={current} onChange={event => setPage(Number(event.target.value))}>
+        {Array.from({ length: pages }, (_, i) => <option key={i} value={i + 1}>第 {i + 1} / {pages} 页</option>)}
+      </select>
+      <button type="button" disabled={current === pages} onClick={() => setPage(current + 1)}>下一页</button>
+    </nav>
+    <PlayerTable rows={rows.slice((current - 1) * pageSize, current * pageSize)} {...props} />
+  </>;
+}
+
 export default function LegendLeaderboard({ scope, active = true, overview = false, hasDeveloperToken, accountLoading,
   selectedTag, selectedStanding, onLookupPlayer, onOpenGlobal, onOpenVillages }) {
   const regional = scope === "regional";
@@ -197,6 +216,7 @@ export default function LegendLeaderboard({ scope, active = true, overview = fal
   const regionId = useId();
   const searchId = useId();
   const [search, setSearch] = useState("");
+  const [limit, setLimit] = useState(200);
   const [view, setView] = useState("players");
   const [playerSort, setPlayerSort] = useState({ key: "rank", ascending: true });
   const [strategySort, setStrategySort] = useState({ key: "threeStarRate", ascending: false });
@@ -208,7 +228,7 @@ export default function LegendLeaderboard({ scope, active = true, overview = fal
     ?? countries.find(({ countryCode }) => countryCode === "CN")
     ?? countries[0];
   const location = !enabled ? null : regional ? region?.id ?? null : "global";
-  const [board, refreshBoard] = useLegendRequest(location, active, loadLeaderboard, overview);
+  const [board, refreshBoard] = useLegendRequest(location === null ? null : `${location}:${limit}`, active, loadLeaderboard, overview);
   const activeQuery = regional && !region ? locations : board;
   const waiting = enabled && (activeQuery.status === "idle" || activeQuery.status === "loading");
   const rows = board.data?.rows ?? emptyRows;
@@ -217,7 +237,7 @@ export default function LegendLeaderboard({ scope, active = true, overview = fal
   const loadAll = overview || strategyView || playerColumns.some((column) => column.key === playerSort.key && column.metric);
   const hasTier = board.data?.hasTierData === true;
   const { statuses, observeRow } = useLegendPlayerMetrics(rows, {
-    active: active && enabled, location, loadAll,
+    active: active && enabled, location, loadAll, limit,
     refreshKey: board.data?.fetchedAt,
   });
   const metricsByTag = useMemo(() => new Map([...statuses].filter(([, entry]) => entry.metrics)
@@ -238,6 +258,12 @@ export default function LegendLeaderboard({ scope, active = true, overview = fal
   const showProfile = !regional && selectedTag && !ownInTable && (profileRank !== null || Number.isFinite(profileTrophies));
   const range = regional ? "地区" : "全球";
   const heading = board.data?.hasTierData === false ? `官方${range}杯数榜` : hasTier ? `传奇 I ${range}榜` : `${range}排行榜`;
+  const scopeControl = !regional && <label className="legend-scope-control">榜单范围
+    <select aria-label="榜单范围" value={limit} onChange={event => setLimit(Number(event.target.value))}>
+      <option value={200}>前 200 人</option><option value={1000}>前 1,000 人</option>
+      <option value={2000}>前 2,000 人</option><option value={10000}>前 1 万人</option>
+    </select>
+  </label>;
 
   function refresh() {
     if (regional && !region) refreshLocations();
@@ -245,7 +271,7 @@ export default function LegendLeaderboard({ scope, active = true, overview = fal
   }
 
   if (overview) return <RankedOverview rows={rows} strategies={strategies} metricsByTag={metricsByTag}
-    board={board} waiting={waiting} pending={metricsPending} unavailable={unavailable}
+    board={board} waiting={waiting} pending={metricsPending} unavailable={unavailable} scopeControl={scopeControl} limit={limit}
     accountLoading={accountLoading} enabled={enabled} onRefresh={refresh}
     onOpenVillages={onOpenVillages} onLookupPlayer={onLookupPlayer}
     onOpenStrategies={() => { setView("strategies"); onOpenGlobal?.(); }} />;
@@ -268,9 +294,12 @@ export default function LegendLeaderboard({ scope, active = true, overview = fal
             <span title="今日和上一个联赛日，北京时间每日 13:00 换日">近两个联赛日</span>
             {board.data.fetchedAt && <time dateTime={board.data.fetchedAt}>更新于 {formatTime(board.data.fetchedAt)}（北京时间）</time>}
             {board.data.hasTierData === false && <span>接口未返回段位</span>}
+            {board.data.paginationInterrupted ? <span>榜单分页中断，可刷新重试</span>
+              : limit > 200 && rows.length < limit && <span>已显示本次接口返回的全部可用玩家</span>}
           </p>}
         </div>
         <div className="legend-board-controls">
+          {scopeControl}
           {regional && countries.length > 0 && <label htmlFor={regionId}>地区
             <select id={regionId} value={region.id} onChange={(event) => chooseRegion(Number(event.target.value))}>
               {countries.map((item) => <option key={item.id} value={item.id}>{regionName(item)}</option>)}
@@ -309,7 +338,7 @@ export default function LegendLeaderboard({ scope, active = true, overview = fal
           : <div className="empty-card" role="status"><p>{metricsPending ? "正在汇总各流派的进攻记录…"
             : "近两个联赛日暂无已识别流派的有效进攻记录。"}</p></div>
       ) : players.length ? (
-        <PlayerTable label={`${range}排名表`} rows={players} statuses={statuses} observeRow={observeRow}
+        <PagedPlayers key={`${location}:${limit}:${playerSort.key}:${playerSort.ascending}:${query}`} label={`${range}排名表`} rows={players} statuses={statuses} observeRow={observeRow}
           selectedTag={selectedTag} sort={playerSort} onSort={setPlayerSort} onLookupPlayer={onLookupPlayer} />
       ) : (
         <div className="empty-card" role={activeQuery.status === "error" ? "alert" : "status"}>

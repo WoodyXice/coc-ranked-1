@@ -6,9 +6,9 @@
 
 | 界面入口 | 当前行为和验收要点 | 主要实现 |
 | --- | --- | --- |
-| 首页总览 | 使用传奇 I 全球榜同一份排名与两日数据。按有星数且可识别的进攻统计流派出场占比，玩家三星率同分优先有效进攻较多者，日均净杯同分优先完整攻防日较多者。采集中标明覆盖人数，缺数据可重试。流派统计表列出全部已识别流派。 | [总览](src/RankedOverview.jsx)、[共享榜单](src/LegendLeaderboard.jsx) |
-| 玩家关系图 | 在榜单上先算交集，再按可用宽度选取代表玩家。图可横向展开，保留官方名次和玩家标签。少量局部色块可点击筛选。流派视图的线连接使用过同一流派的玩家，指标视图的线连接同一档玩家。悬停或键盘聚焦显示明细，点玩家打开战报。玩家名称避开节点、区名和其他名字。 | [关系图](src/StrategyNetwork.jsx)、[取样与布局](src/strategy-map-layout.mjs)、[名称放置](src/strategy-map-labels.mjs) |
-| 关系图筛选 | 「筛选」默认收起。多选流派要求每项都有已识别且有星数的进攻样本。可叠加三星率、日均进攻杯、日均净杯和有效进攻门槛（至少 4、8 或 16 场）。勾选「按各流派计算」时，每个所选流派分别满足三星率和场数门槛。两项日均杯始终按玩家计算。「查看玩家」包含所有命中者。节点大小和色块分区可独立切换。 | [筛选与节点大小](src/network-metrics.mjs)、[两日样本](insights.mjs) |
+| 首页总览 | 与传奇 I 全球榜共用「榜单范围」和近两个联赛日的数据。默认取官方名次前 200，可选前 1,000、2,000 或 10,000。分别显示榜单实际收回人数、已取得战报人数及暂缺数。已识别且有星数的进攻计入流派出场占比和流派统计。玩家三星率同分优先有效进攻较多者，日均净杯同分优先完整攻防日较多者。 | [总览](src/RankedOverview.jsx)、[共享榜单](src/LegendLeaderboard.jsx) |
+| 玩家关系图 | 对实收榜单先算交集，再按图上密度绘制。默认「标准」。疏朗、标准、密集三档随窗口大小选取代表玩家。全员档保留代表节点，让每名其他命中玩家各占一个可点击的小点。保留官方名次和标签，点人打开战报。局部色块可筛选，线表示使用过同一流派或位于同一指标档。玩家名称避开节点、区名和其他名字。 | [关系图](src/StrategyNetwork.jsx)、[布局](src/strategy-map-layout.mjs)、[全员点位](src/atlas-population.mjs)、[名称放置](src/strategy-map-labels.mjs) |
+| 关系图筛选 | 「筛选」默认收起。多选流派要求每项都有已识别且有星数的进攻样本。可叠加三星率、日均进攻杯、日均净杯和有效进攻门槛（至少 4、8 或 16 场）。勾选「按各流派计算」时，每个所选流派分别满足三星率和场数门槛。两项日均杯始终按玩家计算。「查看玩家」包含所有命中者，超过 200 人时可按名次、名字或 Tag 搜索。节点大小和色块分区可独立切换。 | [筛选与节点大小](src/network-metrics.mjs)、[两日样本](insights.mjs) |
 | 常用村庄与顶栏搜索 | 常用页列出本机已存村庄及最近查询。点名字打开该村庄战报；近期玩家可加入常用并编辑。顶栏点输入框展开历史，支持粘贴 Tag、按本机已知名称查找、方向键选项、回车及 Escape。无令牌也能查看已有的本周缓存。 | [常用村庄](src/AccountPanel.jsx)、[搜索框](src/TemporaryPlayer.jsx) |
 | 战报弹窗与返回 | 常用周排位村庄在弹窗中查看小组流派、排名、装备与个人攻防；传奇 I 提供个人攻防与历史。临时玩家可展开该玩家的本周小组，切换排名、装备和流派。点名单或对手继续查询，返回恢复上一层的排序、筛选、攻防方向与滚动位置，关闭回到原榜。 | [弹窗](src/ReportDialog.jsx)、[本周村庄战报](src/VillageReport.jsx)、[临时玩家](src/TemporaryPlayer.jsx) |
 | 个人流派配兵对照 | 展开个人流派的一行，对照所选范围内最近的三星进攻和最接近三星的进攻。未三星样本依次比较星数、摧毁率和对战时间，配兵取同一条战斗记录。 | [个人流派](src/PlayerStrategyStats.jsx)、[样本口径](insights.mjs) |
@@ -25,8 +25,8 @@
 | 临时战报的段位、榜单 | 资料卡含段位、榜单类型、可用的名次及杯数、大本营和部落。传奇 I 优先取当季官方全球名次，必要时在已验证段位的全球榜中查找。传奇 II、III、雷龙等周排位按本周和当前小组查官方名次，展开本周小组表可继续点组员。未参赛、未上榜或暂缺小组时，仍可看已取得的个人资料。 | [资料卡](src/TemporaryPlayer.jsx)、[官方数据采集](collector.mjs)、[桌面接口](desktop/main.mjs) |
 | 临时战报 → 查看本周小组排名 | 先显示官方名单、场次与总杯，首次展开时再按成员取本组攻防日志，结合同组同赛季快照算得杯、星数和摧毁率。每个方向独立判断样本是否完整，已确认的零场显示 0。部分失败可在原表重试；全组防守得杯齐全时才列防守名次。 | [取组员明细](collector.mjs)、[小组缓存](desktop/service.mjs)、[表格](src/Standings.jsx) |
 | 临时战报的攻防与流派 | 按对战类型、联赛日（当天、昨天、前天及其他有记录日期）、本周或全部已收录切换；显示本次接口攻防各自的场次、最早时间、本机累计场次与得扣杯，点对手可继续查人。个人进攻流派按本次近期、本周或全部已收录分别比较场数、平均摧毁率、三星率及分母，从自己小组点名时使用该份快照。 | [战报筛选](src/TemporaryPlayer.jsx)、[个人流派统计](src/PlayerStrategyStats.jsx)、[统计口径](insights.mjs) |
-| 传奇 I 全球榜、地区榜 | 两榜共用玩家排名和流派排行。玩家表默认按官方名次（每榜请求最多 200 名），点表头切换升降序，缺项置末。地区榜可选国际服地区及按名字或 Tag 筛选玩家。榜上名字可点开临时战报。往返详情保留视图、排序和地区，同一榜单 10 分钟内复用，可手动刷新。上游缺少段位数据时显示官方杯数榜。 | [榜单界面](src/LegendLeaderboard.jsx)、[缓存](src/legend-request-cache.mjs) |
-| 两榜的两日指标、流派排行 | 默认补查屏幕附近玩家的战报。按常用流派、三星率或日均杯排序，以及打开流派排行时，分批补查当前榜全部成员。流派榜按每种流派实际三星数除以该流派有效进攻总数排序，同时列出该流派三星率最高的三名玩家和样本。并列优先有效场次多，再看官方名次。地区的流派排行统计整个所选地区。 | [按需加载](src/legend-player-metrics.jsx)、[按榜校验和批量采集](desktop/legend-metrics.mjs)、[统计口径](insights.mjs) |
+| 传奇 I 全球榜、地区榜 | 两榜共用玩家排名与流派排行。全球榜按所选目标名次请求数据，地区榜默认前 200，可选国际服地区、按名字或 Tag 搜索。大页请求被拒时改以 200 人一页，只跟随官方返回的下一页游标。跨页按玩家标签去重，保留官方名次。无下一页时显示实收人数。后续页中断时保留已取得的记录并提示刷新重试。实际可取人数以该次接口响应为准。玩家表超过 200 行时，按完整结果排序后每页显示 100 人。点玩家打开战报，返回时恢复榜单。列表按地区和请求范围分别缓存 10 分钟。缺段位字段时显示官方杯数榜。 | [采集](collector.mjs)、[榜单](src/LegendLeaderboard.jsx)、[缓存](src/legend-request-cache.mjs) |
+| 两榜的两日指标、流派排行 | 默认补查屏幕附近玩家的战报。打开总览、流派排行或按常用流派、三星率、日均杯排序时，分批补查当前实收成员。每批最多 20 人，同一会话最多 4 份战报并行。成员名单按地区和人数范围校验，同一玩家的指标在有效期内复用。收集中按已取得战报统计。流派榜按每种流派实际三星数除以该流派有效进攻总数排序，同时列出该流派三星率最高的三名玩家和样本。并列优先有效场次多，再看官方名次。地区的流派排行统计整个所选地区。 | [按需加载](src/legend-player-metrics.jsx)、[按榜校验和批量采集](desktop/legend-metrics.mjs)、[统计口径](insights.mjs) |
 | 导出 Excel、保存图片 | 主战报的 Excel 按已有资料生成流派汇总、进攻或分类明细、小组排名、防守前十、个人攻防，带冻结表头及命中高亮，旧防守备注在导出中兼容。时间列标注 UTC，用时单位为秒。小组流派页可将当前图表及表格保存为 PNG。 | [工作簿](files.mjs)、[PNG 生成](src/VillageReport.jsx)、[保存对话框](desktop/main.mjs) |
 | 软件更新 | 主界面右下角以小字显示版本号，点击展开更新面板。Windows 安装版启动检查正式版，「有新版本！」弹窗在一次启动内对同一版本提示一次。可稍后、下载、查看进度、重启安装、失败重试。从 v1.4.9 起，点下载和重启安装时会再次确认目标，期间有新正式版就取最新包，复用校验匹配的下载。便携版打开最新发布页手动下载。 | [更新状态与下载](desktop/updater.mjs)、[弹窗](src/UpdatePanel.jsx)、[发布工作流](.github/workflows/release.yml) |
 
@@ -59,11 +59,11 @@ npm run harness
 | 改动范围 | 可单独运行的测试（`node --test <文件>`） |
 | --- | --- |
 | 周排名、快照下钻、切换常用村庄再返回、时间精度与阵容去重 | [collector.test.mjs](test/collector.test.mjs)、[report-sources.test.mjs](test/report-sources.test.mjs) |
-| 临时玩家、段位识别、传奇榜、官方周小组、近期与归档合并 | [legend.test.mjs](test/legend.test.mjs) |
+| 临时玩家、段位识别、官方周小组、近期与归档合并，以及传奇榜游标分页、去重、分页中断和 50 页合计 10,000 人 | [legend.test.mjs](test/legend.test.mjs) |
 | 展开临时小组后其他成员的杯数、真实零场、缺日志、旧周隔离和重试 | [temporary-group-details.test.mjs](test/temporary-group-details.test.mjs) |
 | 流派、装备组合、防守排行、Excel、两日指标公式 | [insights.test.mjs](test/insights.test.mjs) |
-| 榜单 10 分钟缓存、旧榜重试、按需批量指标 | [legend-request-cache.test.mjs](test/legend-request-cache.test.mjs)、[legend-metrics.test.mjs](test/legend-metrics.test.mjs) |
-| 首页代表玩家、节点间距、局部色块、连线与名称避让 | [strategy-map-layout.test.mjs](test/strategy-map-layout.test.mjs)、[strategy-map-labels.test.mjs](test/strategy-map-labels.test.mjs) |
+| 榜单 10 分钟缓存、旧榜重试、按需批量指标、同一联赛日优先续采尚未查询的玩家 | [legend-metric-batch.test.mjs](test/legend-metric-batch.test.mjs)、[legend-request-cache.test.mjs](test/legend-request-cache.test.mjs)、[legend-metrics.test.mjs](test/legend-metrics.test.mjs) |
+| 首页代表玩家、节点间距、局部色块、连线、名称避让、四档密度及全员点位逐人命中 | [strategy-map-layout.test.mjs](test/strategy-map-layout.test.mjs)、[strategy-map-labels.test.mjs](test/strategy-map-labels.test.mjs)、[atlas-population.test.mjs](test/atlas-population.test.mjs) |
 | 关系图的多流派交集、三星率与场数口径、进攻杯和净杯条件、缺失指标与零值 | [network-metrics.test.mjs](test/network-metrics.test.mjs)、[insights.test.mjs](test/insights.test.mjs) |
 | 本地账号加密、旧库迁移、查询历史、快照、旧备注 | [accounts.test.mjs](test/accounts.test.mjs)、[migrations.test.mjs](test/migrations.test.mjs)、[database.test.mjs](test/database.test.mjs)、[defense-notes.test.mjs](test/defense-notes.test.mjs) |
 | 更新发现、下载、安装、重试及便携版 | [updater.test.mjs](test/updater.test.mjs) |
@@ -79,4 +79,4 @@ npm start -- "--user-data-dir=$qaProfile"
 2. 有合成接口数据时，从常用村庄点组员，再从临时输入框查另一组成员，对照名次、攻防杯、明细数和账号选择。覆盖缺部分日志、零杯、A 的请求比 B 晚返回三种情况。
 3. 在全球榜按三星率先降后升，核对视口外成员参与、零值可排序、缺项始终在末尾。挑选用过两种流派的玩家核对两份样本和流派内前三，点名字查看个人战报再返回。地区榜按同样流程验证，切换地区后确认流派归属，筛选单个名字后确认地区流派榜仍含全地区。模拟 10 分钟边界、手动刷新和换密钥。传奇 I 与周排位各取一例，确认日净杯和周总杯符号。
 4. 在带测试发布数据的更新器上模拟连续两个正式版、断网重试与便携版入口；发布后再核对真实最新版本。查看示例和开发模式用于验界面，打包安装版用于验升级链路。
-5. 总览使用 200 人的夹具验证。宽屏与窄屏分别核对可见节点数量、区名和玩家标签间距，通过「查看玩家」打开一个图上没有标出的玩家，再返回。展开「筛选」，叠加两种流派、三星率至少 75% 和有效进攻至少 4 场。两种流派分别有 4/4 和 2/4 三星时，按总体计算应命中，按各流派计算应排除。验证净杯为零、交集为空以及只有 8 攻、7 防的情况。切换分区、节点大小或从战报返回后，名单仍应与全榜交集一致。
+5. 总览分别用 200 人、10,000 人及请求 10,000 实收 200 的夹具验证。切换范围、密度并返回，核对榜单实收人数、战报覆盖和图中人数。在大榜的「查看玩家」搜索第 10,000 名并下钻。测试后续页失败时可以从保留记录打开战报和刷新重试。宽屏与窄屏分别核对可见节点数量、区名和玩家标签间距，通过「查看玩家」打开一个图上没有标出的玩家，再返回。展开「筛选」，叠加两种流派、三星率至少 75% 和有效进攻至少 4 场。两种流派分别有 4/4 和 2/4 三星时，按总体计算应命中，按各流派计算应排除。验证净杯为零、交集为空以及只有 8 攻、7 防的情况。切换分区、节点大小或从战报返回后，名单仍应与全榜交集一致。

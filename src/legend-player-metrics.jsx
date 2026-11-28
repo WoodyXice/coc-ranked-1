@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { legendDayNumber, nextLegendDayStart } from "../insights.mjs";
+import { nextLegendMetricBatch } from "./legend-metric-batch.mjs";
 
 const cacheLifetime = 10 * 60 * 1000;
 const retryDelay = 60 * 1000;
-const batchSize = 20;
 
-export function useLegendPlayerMetrics(rows, { active, refreshKey, location, loadAll }) {
+export function useLegendPlayerMetrics(rows, { active, refreshKey, location, loadAll, limit = 200 }) {
   const [boards, setBoards] = useState(() => new Map());
   const [nearby, setNearby] = useState(new Set());
   const observer = useRef(null);
@@ -85,11 +85,10 @@ export function useLegendPlayerMetrics(rows, { active, refreshKey, location, loa
     const nearTags = new Set([...nearby].map((node) => node.dataset.playerTag));
     const candidates = loadAll || typeof IntersectionObserver !== "function"
       ? rows : rows.filter(({ playerTag }) => nearTags.has(playerTag));
-    const tags = candidates.map(({ playerTag }) => playerTag)
-      .filter((tag) => tag && !statuses.has(tag)).slice(0, batchSize);
+    const requestDay = legendDayNumber(Date.now());
+    const tags = nextLegendMetricBatch(candidates, statuses, boards.get(location), requestDay);
     if (!tags.length) return;
     pending.current.add(location);
-    const requestDay = legendDayNumber(Date.now());
 
     function finish(results) {
       const byTag = new Map();
@@ -102,7 +101,8 @@ export function useLegendPlayerMetrics(rows, { active, refreshKey, location, loa
         const next = new Map(previous);
         const entries = new Map(next.get(location));
         for (const [tag, entry] of entries) {
-          if (entry.expiresAt <= asOf) entries.delete(tag);
+          // Keep today's attempts for scheduling even after their metrics have expired for display.
+          if (entry.day !== requestDay) entries.delete(tag);
         }
         for (const tag of tags) {
           const metrics = byTag.get(tag) ?? null;
@@ -114,9 +114,9 @@ export function useLegendPlayerMetrics(rows, { active, refreshKey, location, loa
       });
     }
 
-    void Promise.resolve().then(() => api.fetchLegendPlayerMetrics({ location, playerTags: tags }))
+    void Promise.resolve().then(() => api.fetchLegendPlayerMetrics({ location, limit, playerTags: tags }))
       .then((result) => finish(result?.entries), () => finish(null));
-  }, [active, loadAll, location, nearby, refreshKey, rows, statuses, asOf]);
+  }, [active, loadAll, location, limit, nearby, refreshKey, rows, statuses, boards]);
 
   return { statuses, observeRow };
 }

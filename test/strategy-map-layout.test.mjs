@@ -14,7 +14,7 @@ const players = Array.from({ length: 200 }, (_, index) => {
 });
 
 test("representatives retain the leaders, every common category and the tail in wide and narrow windows", () => {
-  for (const [width, min, max] of [[380, 10, 15], [1000, 24, 30]]) {
+  for (const [width, min, max] of [[380, 18, 22], [1000, 50, 60]]) {
     const map = buildStrategyMap(players, groups, width);
     assert.ok(map.nodes.length >= min && map.nodes.length <= max);
     const ranks = map.nodes.map(p => p.rank);
@@ -23,6 +23,22 @@ test("representatives retain the leaders, every common category and the tail in 
     assert.deepEqual(new Set(map.nodes.map(p => p.cluster)), new Set(groups.map(g => g.key)));
     assert.deepEqual([...new Set(ranks)].sort((a, b) => a - b), ranks);
     assert.deepEqual(buildStrategyMap([...players].reverse(), [...groups].reverse(), width), map);
+  }
+});
+
+test("density budgets change the number of visible representatives without truncating the ranked population", () => {
+  const population = Array.from({ length: 10000 }, (_, i) => ({ ...players[i % players.length], rank: i + 1, playerTag: `#W${i}` }));
+  for (const [width, limits] of [[320, [12, 20, 30, 12]], [695, [19, 36, 60, 19]], [1210, [28, 56, 92, 28]]]) {
+    const heights = [];
+    for (const [i, density] of ["sparse", "standard", "dense", "all"].entries()) {
+      const { nodes, height, edges } = buildStrategyMap(population, groups, width, "rank", "style", density);
+      assert.equal(nodes.length, limits[i]);
+      assert.equal(nodes.at(-1).rank, 10000);
+      assert.deepEqual(nodes.slice(0, 3).map(p => p.rank), [1, 2, 3]);
+      assert.ok(edges.length <= (width < 520 ? 30 : width < 800 ? 52 : 76));
+      heights.push(height);
+    }
+    assert.ok(heights[0] < heights[1] && heights[1] < heights[2]);
   }
 });
 

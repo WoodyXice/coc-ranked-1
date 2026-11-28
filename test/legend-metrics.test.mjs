@@ -109,6 +109,25 @@ test("results from an obsolete roster or credential do not escape an in-flight b
   assert.deepEqual(await pending, { entries: [] });
 });
 
+test("the active size scopes each roster while identical players share cached metrics", async () => {
+  const requests = [];
+  const service = createLegendMetricsService({
+    makeCollector: () => async tag => { requests.push(tag); return { tag }; },
+  });
+  const rows = (...tags) => tags.map(playerTag => ({ playerTag }));
+  service.setRows("token", rows("#LEADER"), "global");
+  service.setRows("token", rows("#LEADER", "#DEEP"), "global", 10000);
+  const tags = ["#LEADER", "#DEEP"];
+  const get = async limit => (await service.fetchBatch("token", tags, "global", limit)).entries.map(entry => entry.playerTag);
+  assert.deepEqual(await get(200), ["#LEADER"]);
+  assert.deepEqual(await get(10000), tags);
+  service.setRows("token", [], "global", 200);
+  assert.deepEqual(await get(200), []);
+  assert.deepEqual(await get(10000), tags);
+  assert.deepEqual(await get(2000), []);
+  assert.deepEqual(requests, tags);
+});
+
 test("a new league day invalidates two-day metrics within the cache lifetime", async () => {
   let time = Date.parse("2026-11-27T04:59:59Z");
   let calls = 0;

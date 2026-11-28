@@ -12,6 +12,10 @@
 .legend-board .legend-board-meta { color: var(--muted); font-size: 13px; }
 .legend-board-meta > * { display: inline-block; }
 .legend-board-meta > * + *::before { content: "·"; margin-inline: 6px; }
+.legend-scope-control, .legend-pages { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.legend-pages { flex-wrap: wrap; }
+.legend-board > .legend-pages { justify-content: flex-end; margin-block: 8px; }
+.legend-pages button, .legend-pages select, .overview-tools .legend-scope-control select { width: auto; min-height: 30px; font-size: 13px; padding: 3px 8px; }
 .legend-board-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 .legend-board-tools .standings-compact-sort { display: none; }
 .legend-board-controls label, .legend-board-search { display: flex; align-items: center; gap: 7px; color: var(--soft); font-size: 14px; }

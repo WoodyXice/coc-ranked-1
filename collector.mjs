@@ -1185,6 +1185,15 @@ export function legendBoardLocation(value = 'global') {
   return location;
 }
 
+export function legendBoardLimit(value = 200) {
+  if (![200, 1000, 2000, 10000].includes(value)) throw clientError(400, '请选择有效的排行榜人数。');
+  return value;
+}
+
+export function legendBoardKey(location, limit) {
+  return `${legendBoardLocation(location)}:${legendBoardLimit(limit)}`;
+}
+
 function leaderboardRow(entry) {
   const rank = nonnegativeInteger(entry?.rank);
   const playerTag = normalizeTag(entry?.tag);
@@ -1205,32 +1214,69 @@ function leaderboardRow(entry) {
 }
 
 export async function fetchLegendLeaderboard(
-  { token, location: inputLocation = 'global' } = {},
+  { token, location: inputLocation = 'global', limit: inputLimit } = {},
   { fetchImpl = globalThis.fetch, requestIntervalMs = 100 } = {},
 ) {
   const location = legendBoardLocation(inputLocation);
+  const requestedLimit = legendBoardLimit(inputLimit);
   const request = apiRequest(requiredApiToken(token), fetchImpl, requestIntervalMs);
-  const data = await request(`/locations/${location}/rankings/players?limit=200`).catch((error) => {
-    if (error.status === 404) throw clientError(404, '官方 API 暂未提供此地区的排行榜。');
-    throw error;
-  });
-  if (!Array.isArray(data.items)) throw clientError(502, '官方 API 未返回有效的传奇排行榜。');
-
-  const hasTierData = data.items.some((item) => item?.leagueTier?.id != null);
-  const candidates = data.items.flatMap((item) => {
-    const row = leaderboardRow(item);
-    return row ? [{ row, tierId: item.leagueTier?.id }] : [];
-  });
-  if (data.items.length && !candidates.length) {
-    throw clientError(502, '官方 API 未返回有效的传奇排行榜。');
+  const seenCursors = new Set();
+  const allRows = new Map();
+  const legendRows = new Map();
+  let hasTierData = false;
+  let paginationInterrupted = false;
+  let pageSize = requestedLimit;
+  let after = '';
+  for (;;) {
+    const params = new URLSearchParams({ limit: String(pageSize) });
+    if (after) params.set('after', after);
+    let items;
+    let next;
+    try {
+      const data = await request(`/locations/${location}/rankings/players?${params}`);
+      if (!Array.isArray(data.items)) throw clientError(502, '官方 API 未返回有效的传奇排行榜。');
+      items = data.items;
+      next = data.paging?.cursors?.after;
+    } catch (error) {
+      if (!after && pageSize > 200 && error.status === 400) {
+        pageSize = 200;
+        continue;
+      }
+      if (after && error.status !== 403) { paginationInterrupted = true; break; }
+      if (error.status === 404) throw clientError(404, '官方 API 暂未提供此地区的排行榜。');
+      throw error;
+    }
+    if (!items.length) {
+      paginationInterrupted = typeof next === 'string' && Boolean(next.trim());
+      break;
+    }
+    let furthestRank = 0;
+    const previousCount = allRows.size;
+    for (const item of items) {
+      const row = leaderboardRow(item);
+      if (!row) continue;
+      furthestRank = Math.max(furthestRank, row.rank);
+      if (row.rank > requestedLimit) continue;
+      if ((allRows.get(row.playerTag)?.rank ?? Infinity) > row.rank) allRows.set(row.playerTag, row);
+      const tierId = item.leagueTier?.id;
+      if (tierId != null) hasTierData = true;
+      if (tierId === legendOneTierId && (legendRows.get(row.playerTag)?.rank ?? Infinity) > row.rank) {
+        legendRows.set(row.playerTag, row);
+      }
+    }
+    if (!furthestRank) {
+      if (!after) throw clientError(502, '官方 API 未返回有效的传奇排行榜。');
+      paginationInterrupted = true;
+      break;
+    }
+    if (allRows.size >= requestedLimit || furthestRank >= requestedLimit || typeof next !== 'string' || !next.trim()) break;
+    if (seenCursors.has(next) || allRows.size === previousCount) { paginationInterrupted = true; break; }
+    seenCursors.add(next);
+    after = next;
   }
-  candidates.sort((a, b) => a.row.rank - b.row.rank);
-  const rows = new Map();
-  for (const { row, tierId } of candidates) {
-    if (hasTierData && tierId !== legendOneTierId) continue;
-    if (!rows.has(row.playerTag)) rows.set(row.playerTag, row);
-  }
-  return { location, fetchedAt: new Date().toISOString(), rows: [...rows.values()], hasTierData };
+  const selected = hasTierData ? legendRows : allRows;
+  const rows = [...selected.values()].sort((a, b) => a.rank - b.rank).slice(0, requestedLimit);
+  return { location, requestedLimit, fetchedAt: new Date().toISOString(), rows, hasTierData, paginationInterrupted };
 }
 
 export async function fetchLegendLocations(

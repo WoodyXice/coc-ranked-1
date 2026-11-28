@@ -77,6 +77,93 @@ test("a legacy local board remains distinguishable when no official tier is avai
   assert.deepEqual(calls.map(({ path }) => path), [localPath]);
 });
 
+test("requested ranking ranges use official ranks and accept an exhausted first page", async () => {
+  for (const limit of [1000, 2000, 10000]) {
+    const path = `/v1/locations/global/rankings/players?limit=${limit}`;
+    const item = (rank) => ({ rank, tag: `#R${rank}`, trophies: 5000 });
+    const { calls, options } = apiFixture({ [path]: { items: [item(limit + 1), item(1), item(limit)] } });
+    const board = await fetchLegendLeaderboard({ token: mockToken, limit }, options);
+    assert.deepEqual(board.rows.map(row => row.rank), [1, limit]);
+    assert.equal(board.requestedLimit, limit);
+    assert.equal(board.paginationInterrupted, false);
+    assert.equal(calls.length, 1);
+  }
+  const { calls, options } = apiFixture({});
+  for (const limit of [null, 0, 300, 10001, "1000"]) {
+    await assert.rejects(fetchLegendLeaderboard({ token: mockToken, limit }, options), { status: 400 });
+  }
+  assert.equal(calls.length, 0);
+});
+
+test("ranking pagination follows opaque official cursors across short pages and filters tiers globally", async () => {
+  const path = "/v1/locations/global/rankings/players?limit=1000";
+  const next = path + "&after=ab%2B%2F%3D%26x";
+  const item = (rank, section) => ({ rank, tag: `#R${rank}`, trophies: 5010, leagueTier: section });
+  const { calls, options } = apiFixture({
+    [path]: { items: [item(1), item(2)], paging: { cursors: { after: "ab+/=&x" } } },
+    [next]: { items: [item(2, legendTier), item(3, legendTier)], paging: { cursors: { after: "last" } } },
+    [path + "&after=last"]: { items: [item(3, legendTier), item(4, legendTier)] },
+  });
+  const board = await fetchLegendLeaderboard({ token: mockToken, limit: 1000 }, options);
+  assert.deepEqual(calls.map(call => call.path), [path, next, path + "&after=last"]);
+  assert.equal(board.hasTierData, true);
+  assert.equal(board.paginationInterrupted, false);
+  assert.deepEqual(board.rows.map(row => row.rank), [2, 3, 4]);
+});
+
+test("a rejected large page falls back to paged requests and keeps the requested rank ceiling", async () => {
+  const large = "/v1/locations/global/rankings/players?limit=10000";
+  const entry = rank => ({ rank, tag: "#R" + rank, trophies: 5000 });
+  const { calls, options } = apiFixture({
+    [large]: new Response(null, { status: 400 }),
+    [globalPath]: { items: [entry(1)], paging: { cursors: { after: "p2" } } },
+    [globalPath + "&after=p2"]: { items: [entry(10000)], paging: { cursors: { after: "unused" } } },
+  });
+  const board = await fetchLegendLeaderboard({ token: mockToken, limit: 10000 }, options);
+  assert.deepEqual(calls.map(call => call.path), [large, globalPath, globalPath + "&after=p2"]);
+  assert.deepEqual(board.rows.map(row => row.rank), [1, 10000]);
+  assert.equal(board.requestedLimit, 10000);
+});
+
+test("ten thousand distinct ranked players are collected from fifty server-sized pages", async () => {
+  const path = "/v1/locations/global/rankings/players?limit=10000";
+  const routes = {};
+  for (let page = 0; page < 50; page++) {
+    const items = Array.from({ length: 200 }, (_, index) => {
+      const rank = page * 200 + index + 1;
+      return { rank, tag: `#R${rank}`, trophies: 5000, leagueTier: legendTier };
+    });
+    routes[path + (page ? "&after=p" + page : "")] = {
+      items, paging: { cursors: { after: "p" + (page + 1) } },
+    };
+  }
+  const { calls, options } = apiFixture(routes);
+  const result = await fetchLegendLeaderboard({ token: mockToken, limit: 10000 }, options);
+  assert.equal(result.rows.length, 10000);
+  assert.equal(result.rows.at(-1).playerTag, "#R10000");
+  assert.equal(result.paginationInterrupted, false);
+  assert.equal(calls.length, 50);
+});
+
+test("failed, nonadvancing or repeated cursor pages leave verified rows visible and mark the interruption", async () => {
+  const path = "/v1/locations/global/rankings/players?limit=2000";
+  const entry = rank => ({ rank, tag: "#R" + rank, trophies: 5000 });
+  for (const [second, expected] of [
+    [new Response(null, { status: 404 }), [1]], [{ bad: true }, [1]],
+    [{ items: [entry(1)], paging: { cursors: { after: "new-cursor" } } }, [1]],
+    [{ items: [entry(2)], paging: { cursors: { after: "page2" } } }, [1, 2]],
+  ]) {
+    const { calls, options } = apiFixture({
+      [path]: { items: [entry(1)], paging: { cursors: { after: "page2" } } },
+      [path + "&after=page2"]: second,
+    });
+    const board = await fetchLegendLeaderboard({ token: mockToken, limit: 2000 }, options);
+    assert.deepEqual(board.rows.map(row => row.rank), expected);
+    assert.equal(board.paginationInterrupted, true);
+    assert.equal(calls.length, 2);
+  }
+});
+
 test("the location list returns only official countries and safe public fields", async () => {
   const locationPath = "/v1/locations";
   const { calls, options } = apiFixture({

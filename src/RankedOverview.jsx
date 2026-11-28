@@ -24,7 +24,7 @@ function Metric({ label, value, name, sample, onClick }) {
 }
 
 export default function RankedOverview({ rows, strategies, metricsByTag, board, waiting, pending, unavailable,
-  accountLoading, enabled, onRefresh, onOpenVillages, onLookupPlayer, onOpenStrategies }) {
+  accountLoading, enabled, onRefresh, onOpenVillages, onLookupPlayer, onOpenStrategies, scopeControl, limit = 200 }) {
   const byUsage = useMemo(() => strategies.toSorted((a, b) => b.scoredCount - a.scoredCount || b.playerCount - a.playerCount
     || a.strategy.localeCompare(b.strategy, "zh-CN")), [strategies]);
   const recognized = byUsage.reduce((total, entry) => total + entry.scoredCount, 0);
@@ -38,17 +38,24 @@ export default function RankedOverview({ rows, strategies, metricsByTag, board, 
   else if (!enabled) status = "查询全球榜需要开发者 API 令牌。";
   else if (board.status === "error") status = board.error;
   else if (waiting) status = "正在读取全球榜…";
-  else if (pending || unavailable) status = `已收录 ${metricsByTag.size} / ${rows.length} 名${unavailable ? ` · ${unavailable} 名暂缺` : " · 汇总中"}`;
   else if (!rows.length) status = "本次榜单没有成员。";
-  else if (!popular && !stars && !net) status = "近两个联赛日暂无有效攻防记录。";
+  else if (!pending && !unavailable && !popular && !stars && !net) status = "近两个联赛日暂无有效攻防记录。";
 
   return <section className="ranked-overview" aria-label="全球榜总览">
     <header className="overview-header"><div>
-      <h2>{fallback ? "官方全球杯数榜" : "传奇 I · 全球前 200"}</h2>
-      <p>近两个联赛日{board.data?.fetchedAt && <><span> · </span><time dateTime={board.data.fetchedAt}>{formatTime(board.data.fetchedAt)}（北京时间）</time></>}</p>
+      <h2>{fallback ? "官方全球杯数榜" : "传奇 I · 全球榜"}</h2>
+      <p>近两个联赛日{board.data && <>
+        <span> · 榜单实收 {count.format(rows.length)} 人</span>
+        <span> · 战报 {count.format(metricsByTag.size)} / {count.format(rows.length)} 人{pending ? "（收集中）" : ""}</span>
+        {unavailable > 0 && <span> · {count.format(unavailable)} 人暂缺</span>}
+      </>}{board.data?.fetchedAt && <><span> · </span><time dateTime={board.data.fetchedAt}>{formatTime(board.data.fetchedAt)}（北京时间）</time></>}</p>
     </div><div className="overview-tools">
+      {scopeControl}
       {enabled && <button type="button" disabled={waiting} onClick={onRefresh}>刷新</button>}
     </div></header>
+    {board.data && (board.data.paginationInterrupted || (limit > 200 && rows.length < limit)) && <p className="overview-status" role="status">
+      {board.data.paginationInterrupted ? "榜单分页中断，已保留取得的玩家，可点刷新重试。" : `当前接口结果仅有 ${count.format(rows.length)} 名可用玩家。`}
+    </p>}
     {status && <div className="overview-status" role={board.status === "error" ? "alert" : "status"}>{status}
       {!accountLoading && !enabled && onOpenVillages && <button type="button" onClick={onOpenVillages}>管理村庄与令牌</button>}
     </div>}
@@ -65,8 +72,8 @@ export default function RankedOverview({ rows, strategies, metricsByTag, board, 
           sample={net && `杯/日 · ${net.stats.completedDays} 个完整联赛日`}
           onClick={net && onLookupPlayer && (() => onLookupPlayer(net.player.playerTag))} />
     </div>
-    {!!rows.length && <StrategyNetwork rows={rows} strategies={byUsage} metricsByTag={metricsByTag}
-      onLookupPlayer={onLookupPlayer} onOpenStrategies={onOpenStrategies} />}
+    <div hidden={!rows.length}><StrategyNetwork rows={rows} strategies={byUsage} metricsByTag={metricsByTag}
+      onLookupPlayer={onLookupPlayer} onOpenStrategies={onOpenStrategies} /></div>
     {!!byUsage.length && <section className="overview-styles" aria-label="常用流派对照">
       <header><h3>流派统计</h3><button type="button" onClick={onOpenStrategies}>流派排行 ↗</button></header>
       <table><thead><tr><th scope="col">流派</th><th scope="col">出场率</th><th scope="col">三星率</th><th scope="col">流派第一</th></tr></thead>

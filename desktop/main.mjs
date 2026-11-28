@@ -5,7 +5,7 @@ import { isIP } from "node:net";
 import { basename, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { getReport } from "../analytics.mjs";
-import { fetchLegendLeaderboard, fetchLegendLocations, legendBoardLocation } from "../collector.mjs";
+import { fetchLegendLeaderboard, fetchLegendLocations, legendBoardKey } from "../collector.mjs";
 import { workbookBytes } from "../files.mjs";
 import { freshLegendSnapshot } from "../insights.mjs";
 import { cachedReport, collectData, collectGroupedPlayer, collectTemporaryPlayer, createTemporaryGroupService, developerPortal, getPublicIp, sampleReport } from "./service.mjs";
@@ -105,25 +105,25 @@ function createWindow(database, storageWarnings) {
     return token;
   }
 
-  function loadLegendBoard(token, inputLocation = "global", force = false) {
-    const location = legendBoardLocation(inputLocation);
-    let state = legendBoards.get(location);
+  function loadLegendBoard(token, location = "global", force = false, limit = 200) {
+    const key = legendBoardKey(location, limit);
+    let state = legendBoards.get(key);
     if (state?.token !== token) {
       state = { token, data: null, pending: null };
-      legendBoards.set(location, state);
+      legendBoards.set(key, state);
     }
     if (state.pending) return state.pending;
     if (!force && state.data && freshLegendSnapshot(state.data.fetchedAt)) return Promise.resolve(state.data);
-    state.pending = fetchLegendLeaderboard({ token, location }).then((board) => {
-      if (window.isDestroyed() || legendBoards.get(location) !== state) {
+    state.pending = fetchLegendLeaderboard({ token, location, limit }).then((board) => {
+      if (window.isDestroyed() || legendBoards.get(key) !== state) {
         throw new Error("榜单查询已过期，请重新查询。");
       }
-      legendMetrics.setRows(token, board.rows, location);
+      legendMetrics.setRows(token, board.rows, location, limit);
       state.data = board;
       return board;
     }).finally(() => {
       state.pending = null;
-      if (!state.data && legendBoards.get(location) === state) legendBoards.delete(location);
+      if (!state.data && legendBoards.get(key) === state) legendBoards.delete(key);
     });
     return state.pending;
   }
@@ -209,10 +209,10 @@ function createWindow(database, storageWarnings) {
     const revision = legendTokenRevision;
     const token = await savedDeveloperToken();
     if (legendTokenRevision !== revision) throw new Error("开发者令牌已更新，请重新查询榜单。");
-    return loadLegendBoard(token, input?.location, input?.force === true);
+    return loadLegendBoard(token, input?.location, input?.force === true, input?.limit);
   });
   bind(window, "coc:legend-player-metrics", async (input) =>
-    legendMetrics.fetchBatch(await savedDeveloperToken(), input?.playerTags, input?.location));
+    legendMetrics.fetchBatch(await savedDeveloperToken(), input?.playerTags, input?.location, input?.limit));
   bind(window, "coc:legend-locations", async () => fetchLegendLocations({ token: await savedDeveloperToken() }));
   bind(window, "coc:temporary-query-history", database.temporaryQueries.list);
   bind(window, "coc:temporary-group-details", async (input) => {
