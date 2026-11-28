@@ -16,9 +16,11 @@ function buildNetwork(rows, metrics, strategies, width) {
   const groups = strategies.map(({ strategy, playerCount, scoredCount }, i) => {
     const right = i % 2 === 1;
     const sideCount = Math.ceil((strategies.length - (right ? 1 : 0)) / 2);
-    const t = (Math.floor(i/2) + .5) / sideCount;
-    const y = width < 520 ? 14 + t * Math.min(height * .6, Math.max(150, sideCount * 39))
-      : 26 + t * (height * .76 - 26);
+    const lane = Math.floor(i / 2);
+    const t = (lane + .5) / sideCount;
+    // Leave the two podium name/tag rows clear, even for long names on a small screen.
+    const compactY = lane < 2 ? 14 + lane * 57 : 146 + (lane - 2) * 38;
+    const y = width < 520 ? compactY : 26 + t * (height * .76 - 26);
     const inset = width < 620 ? 8 : 16;
     const labelW = 19 + strategy.length * 12;
     const sideX = width < 520 ? inset : Math.max(inset + labelW - 7, width * (.34 - .27 * t));
