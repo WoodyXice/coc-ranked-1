@@ -124,7 +124,7 @@ export default function BattleLog({ kind, battleViews, isSample, accountName, pe
                       <td className="battle-army-cell"><span className="battle-field-label">{lineupLabel}</span>{showArmy ? (
                         <div className="battle-army">
                           <span className="battle-army-strategy" title={lineup}>{lineup}</span>
-                          <ArmyLineup army={row.army} label={lineupLabel} />
+                          <ArmyLineup army={row.army} label={[row.strategy, lineupLabel].filter(Boolean).join(" · ")} />
                         </div>
                       ) : <span className="missing-lineup">{row.strategy || (row.armyShareCode ? "阵容待解析" : "暂无阵容")}</span>}</td>
                     </tr>

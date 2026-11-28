@@ -20,6 +20,7 @@
 .workspace-tools { gap: 14px; margin-left: auto; }
 .workspace-tools .legend-player-search, .drill-header .legend-player-search { width: clamp(160px, 19vw, 270px); margin: 0; }
 .workspace-content { margin-top: 20px; }
+.workspace-footer { position: fixed; right: 12px; bottom: 4px; z-index: 5; }
 .workspace-content [hidden], .report-dialog [hidden] { display: none !important; }
 .report-dialog {
   width: min(1480px, calc(100% - clamp(22px, 5vw, 85px)));
@@ -57,7 +58,10 @@
 .drill-layer .legend-player { margin-top: 0; }
 .battle-log { container-type: inline-size; }
 .battle-mobile-sort, .battle-field-label { display: none; }
-@container (max-width: 720px) {
+@container (min-width: 901px) and (max-width: 1160px) {
+  .personal-battle-table .battle-army { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+}
+@container (max-width: 900px) {
   .battle-mobile-sort { display: block; }
   .battle-log .personal-battle-table { display: block; }
   .personal-battle-table colgroup, .personal-battle-table thead { display: none; }
@@ -81,7 +85,6 @@
 @media (max-width: 500px) {
   .workspace-header h1 { font-size: 17px; }
   .workspace-tools .legend-player-search { width: clamp(104px, 30vw, 150px); }
-  .workspace-tools .update-trigger { flex-wrap: nowrap; font-size: 12px; padding: 6px; }
   .workspace-content { margin-top: 14px; }
   .workspace-nav button { padding-inline: 9px; }
   .drill-header { gap: 5px; padding-inline: 8px; }

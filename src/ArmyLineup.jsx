@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useLayoutEffect, useRef, useState } from "react";
 import catalog from "./army-icons.json";
 import "./army-lineup.css";
 
@@ -6,9 +6,9 @@ const groups = [
   { key: "troops", type: "troops", label: "部队" },
   { key: "spells", type: "spells", label: "法术" },
   { key: "siegeMachines", type: "siegeMachines", label: "攻城机器" },
-  { key: "clanCastleTroops", alternate: "reinforcements", type: "troops", label: "部落城堡援军" },
-  { key: "clanCastleSpells", alternate: "reinforcementSpells", type: "spells", label: "部落城堡法术" },
-  { key: "clanCastleSiegeMachines", type: "siegeMachines", label: "部落城堡攻城机器" },
+  { key: "clanCastleTroops", alternate: "reinforcements", type: "troops", label: "部落城堡", kind: "援军" },
+  { key: "clanCastleSpells", alternate: "reinforcementSpells", type: "spells", label: "部落城堡", kind: "法术" },
+  { key: "clanCastleSiegeMachines", type: "siegeMachines", label: "部落城堡", kind: "攻城机器" },
   { key: "pets", type: "pets", label: "战宠" },
 ];
 
@@ -63,13 +63,68 @@ function UnitTile({ unit, type, category }) {
   );
 }
 
-function ArmyGroup({ units, type, label }) {
-  if (units.length === 0) return null;
-  return (
-    <span className="lineup-group" role="group" aria-label={label}>
-      {units.map((unit, index) => <UnitTile key={`${unitKey(unit)}:${index}`} unit={unit} type={type} category={label} />)}
-    </span>
-  );
+function lineupSections(army) {
+  const sections = [];
+  for (const { key, alternate, type, label, kind } of groups) {
+    const units = armyUnits(army, key, alternate);
+    if (!units.length) continue;
+    const entries = units.map(unit => ({ unit, type, kind }));
+    if (sections.at(-1)?.label === label) sections.at(-1).entries.push(...entries);
+    else sections.push({ label, entries });
+  }
+  const equipped = new Set();
+  for (const hero of armyUnits(army, "heroes")) {
+    const entries = [{ unit: hero, type: "heroes" }];
+    if (hero.pet) entries.push({ unit: hero.pet, type: "pets", kind: "战宠" });
+    for (const unit of armyUnits(hero, "equipment")) {
+      entries.push({ unit, type: "equipment", kind: "装备" });
+      equipped.add(unitKey(unit));
+    }
+    sections.push({ label: `英雄 · ${unitName(hero, "heroes")}`, hero: true, entries });
+  }
+  const gear = armyUnits(army, "equipment").filter(unit => !equipped.has(unitKey(unit)));
+  if (gear.length) sections.push({ label: "英雄装备", entries: gear.map(unit => ({ unit, type: "equipment" })) });
+  return sections;
+}
+
+function DetailUnits({ section }) {
+  return <ul className={section.hero ? "lineup-detail-team" : "lineup-detail-units"} aria-label={section.label}>
+    {section.entries.map(({ unit, type, kind }, index) => <li key={index}>
+      <UnitTile unit={unit} type={type} category={kind ? `${section.label} · ${kind}` : section.label} />
+      <span className="lineup-detail-name">{unitName(unit, type)}</span>
+    </li>)}
+  </ul>;
+}
+
+function LineupDetail({ sections, label, onDismiss, trigger }) {
+  const heading = useId();
+  const dialog = useRef(null);
+  useLayoutEffect(() => {
+    const panel = dialog.current;
+    const opener = trigger.current;
+    panel.showModal();
+    return () => {
+      panel.close();
+      if (opener?.isConnected) opener.focus({ preventScroll: true });
+    };
+  }, [trigger]);
+  const teams = sections.filter(section => section.hero);
+  return <dialog ref={dialog} className="lineup-detail" aria-labelledby={heading}
+    onCancel={event => { event.preventDefault(); event.stopPropagation(); onDismiss(); }}>
+    <header className="lineup-detail-heading">
+      <h3 id={heading}>{label}</h3>
+      <button type="button" aria-label="关闭阵容详情" onClick={onDismiss}>关闭</button>
+    </header>
+    <div className="lineup-detail-body">
+      {sections.filter(section => !section.hero).map(section => <section key={section.label} className="lineup-detail-section">
+        <h4>{section.label}</h4><DetailUnits section={section} />
+      </section>)}
+      {teams.length > 0 && <section className="lineup-detail-section lineup-detail-heroes">
+        <h4>英雄配装</h4>
+        <div className="lineup-detail-teams">{teams.map((team, index) => <DetailUnits key={index} section={team} />)}</div>
+      </section>}
+    </div>
+  </dialog>;
 }
 
 export function ArmyAttribution() {
@@ -77,32 +132,23 @@ export function ArmyAttribution() {
 }
 
 export default function ArmyLineup({ army, label = "阵容", showAttribution = false }) {
-  if (!hasLineup(army)) return null;
-  const heroes = armyUnits(army, "heroes");
-  const heroGear = new Set(heroes.flatMap((hero) => armyUnits(hero, "equipment").map(unitKey)));
-  const extraGear = armyUnits(army, "equipment").filter((unit) => !heroGear.has(unitKey(unit)));
+  const [expanded, setExpanded] = useState(false);
+  const trigger = useRef(null);
+  const sections = lineupSections(army);
+  if (!sections.length) return null;
 
   return (
     <div className="lineup-block">
-      <div className="lineup-strip" role="group" aria-label={label} tabIndex={0}>
-        {groups.map(({ key, alternate, type, label: title }) => (
-          <ArmyGroup key={key} units={armyUnits(army, key, alternate)} type={type} label={title} />
-        ))}
-        {heroes.length > 0 && (
-          <span className="lineup-group" role="group" aria-label="英雄、战宠与装备">
-            {heroes.map((hero, index) => (
-              <span className="lineup-hero" key={`${unitKey(hero)}:${index}`} role="group" aria-label={unitName(hero, "heroes")}>
-                <UnitTile unit={hero} type="heroes" category="英雄" />
-                {hero.pet && <UnitTile unit={hero.pet} type="pets" category={`${unitName(hero, "heroes")}的战宠`} />}
-                {armyUnits(hero, "equipment").map((unit, gearIndex) => (
-                  <UnitTile key={`${unitKey(unit)}:${gearIndex}`} unit={unit} type="equipment" category={`${unitName(hero, "heroes")}的装备`} />
-                ))}
-              </span>
-            ))}
+      <button type="button" ref={trigger} className="lineup-strip" aria-haspopup="dialog"
+        aria-label={`放大查看${label}`} title={`放大查看${label}`} onClick={() => setExpanded(true)}>
+        {sections.map(({ label: section, entries }, groupIndex) =>
+          <span key={groupIndex} className="lineup-group">
+            {entries.map(({ unit, type, kind }, index) =>
+              <UnitTile key={index} unit={unit} type={type} category={kind ? `${section} · ${kind}` : section} />)}
           </span>
         )}
-        <ArmyGroup units={extraGear} type="equipment" label="英雄装备" />
-      </div>
+      </button>
+      {expanded && <LineupDetail sections={sections} label={label} trigger={trigger} onDismiss={() => setExpanded(false)} />}
       {showAttribution && <ArmyAttribution />}
     </div>
   );

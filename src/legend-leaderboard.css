@@ -108,7 +108,7 @@
 .legend-own-row { background: var(--tint); }
 .legend-own-row > :first-child { box-shadow: inset 3px 0 0 var(--blue); }
 .legend-metric-cell { white-space: nowrap; }
-.legend-metric-cell.legend-strategy-value { overflow: hidden; text-overflow: ellipsis; }
+.legend-metric-cell.legend-strategy-value { white-space: normal; overflow-wrap: anywhere; }
 .legend-metric-sample { margin-inline-start: 4px; color: var(--muted); font-size: 11px; white-space: nowrap; }
 .legend-compact-metrics { display: none; }
 .legend-table tbody .legend-compact-clan { display: none; }

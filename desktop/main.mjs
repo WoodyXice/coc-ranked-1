@@ -79,7 +79,7 @@ function bind(window, channel, handler) {
 
 function createWindow(database, storageWarnings) {
   const window = new BrowserWindow({
-    title: "部落冲突排位助手",
+    title: "coc查询工具",
     icon,
     width: 1280,
     height: 900,

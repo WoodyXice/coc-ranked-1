@@ -146,8 +146,9 @@ export default function UpdatePanel({ busy }) {
   return (
     <>
       <details className="update-panel" ref={updatePanel}>
-        <summary ref={updateTrigger} className={hasUpdate ? "update-trigger update-trigger-available" : "update-trigger"}>
-          {hasUpdate ? "有新版本" : "软件更新"}{version && <span>{version}</span>}
+        <summary ref={updateTrigger} className={hasUpdate ? "update-trigger update-trigger-available" : "update-trigger"}
+          aria-label={["软件更新", version, hasUpdate && "有新版本"].filter(Boolean).join("，")} title="软件更新">
+          {version || "版本信息"}{hasUpdate && <span>有新版本</span>}
         </summary>
         <section className="update-card" aria-label="软件更新">
           {nextVersion && hasUpdate && <p className="update-version">新版本 <strong>{nextVersion}</strong></p>}

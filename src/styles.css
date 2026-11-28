@@ -37,26 +37,30 @@ body { margin: 0; }
 .update-trigger {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 7px 10px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: var(--surface);
+  gap: 6px;
+  padding: 4px 6px;
+  color: var(--muted);
+  background: var(--page);
+  border-radius: 3px;
+  font-size: 12px;
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
   list-style: none;
   cursor: pointer;
   white-space: nowrap;
 }
 .update-trigger::-webkit-details-marker { display: none; }
-.update-trigger:hover, .update-panel[open] .update-trigger { background: #eff5f7; border-color: var(--control-line); }
+.update-trigger:hover, .update-panel[open] .update-trigger { color: var(--blue-strong); text-decoration: underline; }
 .update-trigger:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
-.update-trigger span { color: var(--muted); font-variant-numeric: tabular-nums; }
-.update-trigger-available { color: var(--blue-strong); background: var(--tint); border-color: var(--selected-line); }
+.update-trigger-available span { color: var(--blue-strong); }
 .update-card {
   position: absolute;
   z-index: 4;
   right: 0;
-  top: calc(100% + 8px);
+  bottom: calc(100% + 6px);
   width: min(310px, calc(100vw - 34px));
+  max-height: calc(100dvh - 54px);
+  overflow-y: auto;
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -282,7 +286,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
   align-items: center;
   gap: 8px;
 }
-.battle-army-strategy { overflow: hidden; text-overflow: ellipsis; }
+.battle-army-strategy { white-space: normal; overflow-wrap: anywhere; }
 .missing-lineup { color: var(--muted); font-size: 14px; }
 .lineup-button {
   position: relative;
@@ -308,7 +312,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .lineup-button[aria-expanded="true"]::after { top: 14px; transform: rotate(225deg); }
 .lineup-button[aria-expanded="true"] { background: var(--tint); border-color: var(--selected-line); }
 .battle-table .army-expanded-row > td { text-align: left; white-space: normal; padding: 12px; background: var(--page); }
-.group-army-history h3 { margin: 0 0 8px; font-size: 15px; }
+.group-army-history { container-type: inline-size; }
+.group-army-history > h3 { margin: 0 0 8px; font-size: 15px; }
 .army-history-row {
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr);
@@ -321,17 +326,20 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .army-history-label {
   display: flex;
   align-items: baseline;
+  flex-wrap: wrap;
   gap: 4px;
-  white-space: nowrap;
+  white-space: normal;
   min-width: 0;
 }
 .army-history-label strong {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
   font-size: 14px;
 }
 .army-history-label > span { color: var(--muted); font-size: 12px; }
+@container (max-width: 680px) {
+  .group-army-history .army-history-row { grid-template-columns: minmax(0, 1fr); gap: 2px; padding-block: 6px; }
+}
 .standings-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin-bottom: 6px; }
 .standings-heading h2 { margin: 0; }
 .standings-league-badge { display: inline-flex; align-items: center; gap: 6px; min-width: 0; color: var(--soft); font-size: 14px; line-height: 1.4; }
@@ -422,8 +430,6 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .sort-indicator { margin-left: 4px; color: var(--blue); }
 
 @media (max-width: 970px) {
-  .army-history-row { grid-template-columns: clamp(154px, 48vw, 240px) minmax(0, 1fr); }
-  .army-history-label { overflow: hidden; }
   .battle-player-column { width: 122px; }
   .battle-time-column { width: 112px; }
   .battle-duration-column { width: 47px; }

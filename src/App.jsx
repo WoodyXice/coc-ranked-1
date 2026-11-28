@@ -188,12 +188,12 @@ export default function App() {
     ? { rank: battles.currentLegendRank, trophies: battles.currentLegendTrophies } : null;
   return <main className="page workspace">
     <header className="workspace-header">
-      <h1>排位助手</h1>
+      <h1>coc查询工具</h1>
       <nav className="workspace-nav" aria-label="主导航">
         {Object.entries(sections).map(([key, label]) => <button type="button" key={key} aria-current={page === key ? "page" : undefined}
           onClick={() => choosePage(key)}>{label}</button>)}
       </nav>
-      <div className="workspace-tools"><UpdatePanel busy={!!busy}/>{!top && search}</div>
+      {!top && <div className="workspace-tools">{search}</div>}
     </header>
     {accounts.storageWarnings?.length > 0 && <div className="feedback error" role="alert">{accounts.storageWarnings.join(" ")}</div>}
     {!top && status}
@@ -211,6 +211,7 @@ export default function App() {
         </div>;
       })}
     </div>
+    <footer className="workspace-footer"><UpdatePanel busy={!!busy}/></footer>
     <ReportDialog entries={entries} onBack={back} onClose={closeDialog} search={top && search} feedback={top && status}>
       {entry => entry.kind === "player" ? <TemporaryPlayer lookup={{ result: entry.result }} onLookupPlayer={canLookup ? openPlayer : undefined}
         onOpenLegend={canLookup ? () => choosePage("global") : undefined}/> :

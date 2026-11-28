@@ -127,7 +127,7 @@ function ArmyHistory({ history, player, focusEquipment }) {
                 {facts.length > 0 && " · " + facts.join(" · ")}
               </span>
             </div>
-            <ArmyLineup army={battle.army} label="进攻阵容明细" />
+            <ArmyLineup army={battle.army} label={[battle.strategy, "进攻阵容"].filter(Boolean).join(" · ")} />
           </div>
         );
       })}
