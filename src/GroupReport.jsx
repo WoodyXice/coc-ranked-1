@@ -135,6 +135,7 @@ export default function GroupReport({ report, reportRef, battleViews }) {
     ? "已获取阵容 " + formatNumber.format(total) + " / 组内已知进攻 "
       + formatNumber.format(telemetry.expectedAttacks) + " 场" : "";
   const recovered = telemetry?.recoveredFromDefense || 0;
+  const fromDefenseLogs = telemetry?.attacksFromDefenseLogs || 0;
   const failed = (telemetry?.groupLogFailures || 0) + (telemetry?.battleLogFailures || 0);
 
   return (
@@ -183,11 +184,12 @@ export default function GroupReport({ report, reportRef, battleViews }) {
           </>
         ) : <p>{personalOnly ? "传奇 I 无周排位小组。" : "本次没有取得带阵容的排位进攻记录。"}</p>}
       </section>
-      {!!(notes.length || scope) && (
+      {!!(notes.length || scope || fromDefenseLogs) && (
         <div className="report-notes">
           {showRate && <p>三星率以本次获取到星数的场次为分母。</p>}
           {notes.length > 0 && <p>{notes.join(" ")}</p>}
           {scope && <p>{scope}{recovered > 0 && "，其中 " + formatNumber.format(recovered) + " 场由防守日志补齐"}。</p>}
+          {fromDefenseLogs > 0 && <p>{formatNumber.format(fromDefenseLogs)} 场进攻在进攻方日志中缺失，已从被打玩家的防守记录补回。</p>}
           {failed > 0 && <p>{failed} 个日志请求失败。再次抓取可补充记录。</p>}
         </div>
       )}

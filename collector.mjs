@@ -724,6 +724,43 @@ function joinBattleDetails(battles, views) {
   }
 }
 
+// A ranked defender gets whatever the attacker leaves of the 40 trophies.
+function attackFromDefense(row) {
+  const trophies = Number.isFinite(row.trophies) ? 40 - row.trophies : attackerTrophies(row.stars, row.destruction);
+  return { ...row, trophies, trophySource: 'calculated', recoveredFromDefense: true };
+}
+
+// Every group attack also sits in the defender's group ledger. When an attacker's own
+// ledger is missing or short of the official count, fill it from the other members'
+// defense ledgers. Rows already known within the match window are not added again,
+// and a result that would exceed the official count is ambiguous and left alone.
+function recoverAttacksFromDefenses(groupLedgers, members) {
+  const memberByTag = new Map(members.map((member) => [member.playerTag, member]));
+  const defenses = [...groupLedgers.values()].flatMap(({ defenses: ledger }) => ledger.rows)
+    .filter((row) => memberByTag.has(row.playerTag));
+  let recovered = 0;
+  for (const [tag, rows] of groupByOwner(defenses, 'playerTag')) {
+    const ledger = groupLedgers.get(tag);
+    if (!ledger) continue;
+    const expected = memberAttackCount(memberByTag.get(tag));
+    const own = ledger.attacks.rows;
+    if (ledger.attacks.present && expected !== null && own.length >= expected) continue;
+    const known = groupByPair(own);
+    const missing = mergeBattles(rows.filter((row) => !(known.get(pairKey(row)) ?? [])
+      .some((entry) => Math.abs(entry.epoch - Date.parse(row.timestamp)) <= matchWindow)), []).rows
+      .map(attackFromDefense);
+    const total = own.length + missing.length;
+    if (!missing.length || (expected !== null && total > expected)) continue;
+    recovered += missing.length;
+    ledger.attacks = {
+      ...ledger.attacks,
+      rows: [...own, ...missing],
+      present: ledger.attacks.present || total === expected,
+    };
+  }
+  return recovered;
+}
+
 function reuseGroupBattleDetails(battles, groupAttacks, window = matchWindow) {
   const group = groupByPair(groupAttacks);
   for (const [key, bucket] of groupByPair(battles)) {
@@ -864,6 +901,7 @@ function projectBattle(battle, isDefense, opponentTag, opponentName) {
     army: decodeArmyShareCode(battle.armyShareCode) ?? battle.army ?? null,
     ...(battle.battleType ? { battleType: battle.battleType } : {}),
     ...(battle.trophySource ? { trophySource: battle.trophySource } : {}),
+    ...(battle.recoveredFromDefense ? { recoveredFromDefense: true } : {}),
   };
 }
 
@@ -1098,6 +1136,7 @@ export async function fetchRankedReport({
   const leagueTier = groupLeagueTier(request, player, playerTag, league);
 
   const { groupLedgers, malformedAttacks, groupLogFailures } = await collectGroupLedgers(members, playerTag, group, scoped);
+  const attacksFromDefenseLogs = recoverAttacksFromDefenses(groupLedgers, members);
 
   const selectedMember = members.find((member) => member.playerTag === playerTag)
     ?? { playerTag, playerName: player.name ?? playerTag };
@@ -1206,6 +1245,7 @@ export async function fetchRankedReport({
       collectedAttacks: attacks.length,
       missingArmy,
       recoveredFromDefense: attacks.filter((attack) => attack.armySource === 'defense' && attack.army?.troops.length).length,
+      attacksFromDefenseLogs,
       restoredAttacks,
       groupLogFailures,
       battleLogFailures,
@@ -1563,6 +1603,7 @@ export async function fetchTemporaryGroupDetails(
   const end = Math.min(start + 7 * day, now.getTime() + 1);
   const { groupLedgers, groupLogFailures } = await collectGroupLedgers(members, playerTag, group, scoped,
     (logs, member, defense) => readWeeklyLedger(logs, member, defense, start, end));
+  recoverAttacksFromDefenses(groupLedgers, members);
   let cached;
   try {
     cached = await snapshots?.read(league);

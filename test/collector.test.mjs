@@ -398,3 +398,71 @@ test("Legend I can show a badge without assigning a weekly attack limit", async 
   assert.equal(result.battleViews.personalOnly, true);
   assert.deepEqual(result.standings, []);  assert.equal(result.groupBattles, undefined);
 });
+
+// Member B's attacks on A also appear in A's defense ledger.
+function defenseRecoveryFetch({ ownAttacks, attackCount, calls }) {
+  const attacker = { ...members[1], attackWinCount: attackCount, attackLoseCount: 0, leagueTrophies: 30 };
+  const defender = { ...members[0], attackWinCount: 0, attackLoseCount: 0, defenseWinCount: 0, defenseLoseCount: 2 };
+  const hit = (creationTime, stars, destructionPercentage, trophies) =>
+    ({ opponentPlayerTag: opponentTag, opponentName: "Fixture Opponent", stars, destructionPercentage, trophies, creationTime });
+  return async (address) => {
+    const url = new URL(address);
+    const path = decodeURIComponent(url.pathname);
+    calls?.push(path);
+    if (path === `/v1/players/${playerTag}`) return Response.json({ currentLeagueGroupTag: groupTag, currentLeagueSeasonId: seasonId });
+    if (path.endsWith("/leaguehistory") || path.startsWith("/v1/leaguetiers/")) return new Response(null, { status: 404 });
+    if (path === `/v1/leaguegroup/${groupTag}/${seasonId}`) {
+      if (url.searchParams.get("playerTag") === playerTag) {
+        return Response.json({ members: [defender, attacker], attackLogs: [], defenseLogs: [
+          hit("2026-11-24T18:00:00.000Z", 3, 100, 0),
+          hit("2026-11-25T09:30:00.000Z", 1, 73, 27),
+        ] });
+      }
+      return ownAttacks === null ? new Response(null, { status: 503 }) : Response.json({
+        members: [defender, attacker], defenseLogs: [],
+        attackLogs: ownAttacks.map((creationTime) => ({
+          opponentPlayerTag: playerTag, opponentName: "Fixture Village", stars: 3, destructionPercentage: 100, trophies: 40, creationTime,
+        })),
+      });
+    }
+    if (path.endsWith("/battlelog")) return Response.json({ items: [] });
+    assert.fail(`Unexpected API request: ${path}`);
+  };
+}
+
+function collectDefenseRecovery(options) {
+  return fetchRankedReport({
+    token: "fixture-developer-token", playerTag, week,
+    includeBattleViews: true, requestIntervalMs: 0, fetchImpl: defenseRecoveryFetch(options),
+  });
+}
+
+test("attacks missing from the attacker's ledger are recovered from the defender's ledger", async () => {
+  const result = await collectDefenseRecovery({ ownAttacks: null, attackCount: 2 });
+  const standing = result.standings.find((row) => row.playerTag === opponentTag);
+  assert.equal(standing.attackCount, 2);
+  assert.equal(standing.attackStars, 4);
+  assert.equal(standing.attackTrophies, 40 + 13);
+  assert.equal(result.telemetry.attacksFromDefenseLogs, 2);
+  const recovered = result.groupBattles[opponentTag].attacks;
+  assert.equal(recovered.length, 2);
+  assert(recovered.every((battle) => battle.recoveredFromDefense && battle.opponentTag === playerTag));
+  assert.equal(result.groupBattles[playerTag].defenses.length, 2);
+});
+
+test("a partial attacker ledger only gains the attack it is missing", async () => {
+  // The attacker's copy is a few seconds off the defender's copy of the same battle.
+  const result = await collectDefenseRecovery({ ownAttacks: ["2026-11-24T18:00:04.000Z"], attackCount: 2 });
+  const attacks = result.groupBattles[opponentTag].attacks;
+  assert.equal(attacks.length, 2);
+  assert.equal(attacks.filter((battle) => battle.recoveredFromDefense).length, 1);
+  assert.equal(result.telemetry.attacksFromDefenseLogs, 1);
+  assert.equal(result.standings.find((row) => row.playerTag === opponentTag).attackStars, 4);
+});
+
+test("recovery that would exceed the official attack count is left out", async () => {
+  const result = await collectDefenseRecovery({ ownAttacks: null, attackCount: 1 });
+  assert.equal(result.telemetry.attacksFromDefenseLogs, 0);
+  assert.equal(result.groupBattles[opponentTag].attacks.length, 0);
+  assert.equal(result.standings.find((row) => row.playerTag === opponentTag).attackStars, null);
+});

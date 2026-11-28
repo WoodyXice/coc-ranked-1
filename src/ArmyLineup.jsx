@@ -109,8 +109,22 @@ function LineupDetail({ sections, label, onDismiss, trigger }) {
     };
   }, [trigger]);
   const teams = sections.filter(section => section.hero);
+  // Clicks on the backdrop target the dialog itself, outside its box. Require the press
+  // to start there too, so a text selection that ends outside does not close it.
+  const pressedOutside = useRef(false);
+  const outside = event => {
+    if (event.target !== event.currentTarget) return false;
+    const box = event.currentTarget.getBoundingClientRect();
+    return event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom;
+  };
   return <dialog ref={dialog} className="lineup-detail" aria-labelledby={heading}
-    onCancel={event => { event.preventDefault(); event.stopPropagation(); onDismiss(); }}>
+    onCancel={event => { event.preventDefault(); event.stopPropagation(); onDismiss(); }}
+    onPointerDown={event => { pressedOutside.current = outside(event); }}
+    onClick={event => {
+      event.stopPropagation();
+      if (pressedOutside.current && outside(event)) onDismiss();
+      pressedOutside.current = false;
+    }}>
     <header className="lineup-detail-heading">
       <h3 id={heading}>{label}</h3>
       <button type="button" aria-label="关闭阵容详情" onClick={onDismiss}>关闭</button>

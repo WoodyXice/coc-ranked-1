@@ -115,6 +115,7 @@ export default function BattleLog({ kind, battleViews, isSample, accountName, pe
                             onClick={() => onLookupPlayer(row.opponentTag)}>{opponent}</button>
                         ) : <span className="battle-opponent-name" title={opponent}>{opponent}</span>}
                         {row.opponentTag && row.opponentName && <small>{row.opponentTag}</small>}
+                        {offense && row.recoveredFromDefense && <span className="battle-source-note" title="进攻方日志缺少这场，取自被打玩家的防守记录">取自对方防守记录</span>}
                         {defenseRank && <span className="defense-rank-badge" title="按本周小组防守得杯计算">组内防守第 {defenseRank} 名</span>}
                       </th>
                       <td><span className="battle-field-label">对战时间</span><time dateTime={timestamp || undefined}>{formatTime(timestamp)}</time></td>

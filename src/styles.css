@@ -442,6 +442,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .defense-top-hit > :first-child { box-shadow: inset 3px 0 0 var(--gold-line); }
 .defense-top-hit.standing-selected { background: var(--gold-tint); }
 .my-result { display: block; white-space: nowrap; font-size: 13px; }
+.battle-source-note { display: block; font-size: 12px; color: var(--muted); }
 .defense-rank-badge { display: block; font-size: 12px; color: var(--muted); }
 .defense-top-hit .defense-rank-badge { color: var(--gold-text); }
 .gear-badge { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 4px; background: var(--gold-tint); color: var(--gold-text); font-size: 12px; font-weight: 600; }
