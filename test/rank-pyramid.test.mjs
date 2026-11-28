@@ -24,3 +24,30 @@ test("the pyramid keeps all 200 actual ranks in widening, separated bands at mob
     assert.deepEqual(buildRankPyramid([rows[0]], width).players, [players[199]]);
   }
 });
+
+test("affinity groups players horizontally without moving the podium, unknown players or rank bands", () => {
+  const rows = Array.from({ length: 200 }, (_, index) => ({ rank: index + 1, playerTag: `#${index + 1}` }));
+  const grouped = rows.map(row => ({ ...row, affinity: row.rank % 5 === 0 ? null : row.rank % 2 }));
+  for (const width of [320, 960]) {
+    const original = buildRankPyramid(rows, width).players;
+    const placed = buildRankPyramid(grouped, width).players;
+    assert.deepEqual(placed, buildRankPyramid(grouped.toReversed(), width).players);
+    for (const [i, player] of placed.entries()) {
+      assert.equal(player.playerTag, rows[i].playerTag);
+      assert.equal(player.tier, original[i].tier);
+      assert.equal(player.affinity, grouped[i].affinity);
+      if (player.rank <= 3 || player.affinity === null) {
+        assert.equal(player.x, original[i].x);
+        assert.equal(player.y, original[i].y);
+      }
+    }
+    const lower = placed.filter(p => p.tier >= 3);
+    const meanX = affinity => {
+      const members = lower.filter(p => p.affinity === affinity);
+      return members.reduce((total, p) => total + p.x, 0) / members.length;
+    };
+    assert.ok(meanX(1) - meanX(0) > width * .20);
+    // Lower tiers use a continuous vertical spread instead of rows of aligned dots.
+    assert.ok(new Set(lower.map(p => Math.round(p.y))).size > lower.length / 2);
+  }
+});
